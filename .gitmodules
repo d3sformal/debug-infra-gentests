@@ -1,0 +1,3 @@
+[submodule "sandbox/00-clang-ast/llvm-project"]
+	path = sandbox/00-clang-ast/llvm-project
+	url = https://github.com/llvm/llvm-project.git
