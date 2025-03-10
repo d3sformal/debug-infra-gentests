@@ -23,7 +23,7 @@
 ### Notes - syntax tree manipulation
 
 GCC seems extremely complicated. Clang AST might be a good candidate, although it is also complex.
-Will try on smaller example.
+Will try on smaller example. 
 
 #### CLANG AST : [talk - 2013 - about the AST](https://www.youtube.com/watch?v=VqCkCDFLSsc)
 
@@ -35,7 +35,7 @@ Will try on smaller example.
 * `clang -Xclang -ast-dump srcfile`
 
 
-Progress: **sandbox-00-clang-ast** demonstrates how to inject code to a source-available binary.
+Progress: **sandbox-00-clang-ast** demonstrates how to inject code to a source-available project.
 
 <details>
 <summary>
@@ -125,7 +125,8 @@ int main() {
 
 TODOs:
 * "reporting framework" injection
-* optionaly don't perform syntax/compilation checks?
+* optionaly don't perform syntax/compilation checks? (for large projects)
+* clang TOOL vs clang PLUGIN (use tool, recompile vs perfrom changes as a compiler pass)
 
 <details>
 <summary>
@@ -168,13 +169,18 @@ Limitations/requirements:
 * x86-only
 * debug symbols
 
+<details>
+<summary>
+Pin issue that might be useful to know about later
+</summary>
 > There is a known limitation of using Pin on Linux systems that prevent the use of ptrace attach via the sysctl /proc/sys/kernel/yama/ptrace_scope. Pin will still work when launching applications with the pin command line. However, Pin will fail in attach mode (that is, using the -pid knob). To resolve this, do the following (as root):
 
     $ echo 0 > /proc/sys/kernel/yama/ptrace_scope
+</details>
 
-> A C++ runtime. Please note that the current version does not support C++11 and RTTI (Run-Time Type Information).
+> Tools must refrain from using any native system calls, and use PinCRT APIs for any needed functionality.
 
-> Pin identifies system calls at the actual system call trap instruction, not the libc function call wrapper. Tools need to be aware of oddities like this when interpreting system call arguments, etc.
+> A C++ runtime. Please note that the current version **does not support C++11 and RTTI** (Run-Time Type Information).
 
 Pin Instrumentation Granularity:
 
@@ -200,7 +206,7 @@ Not supported by Pin directly - only symbol names.
 
 1. Have Debug Symbols as a requirement, parse debug symbols using a library (`libdwarf`) & generate instrumentation based on the function's arguments
 
-2. (C++-ONLY) (UNRELIABLE) De-mangle function names to determine the function arguments & generate instrumentation based on it
+2. (C++-only) (UNRELIABLE) De-mangle function names to determine the function arguments & generate instrumentation based on it
 
 **Important for multithreaded programs**
 > Pin provides its own locking and thread management API's, which the Pintool should use. (and not regular system tools!) 
@@ -209,7 +215,7 @@ Not supported by Pin directly - only symbol names.
 
 > Pin provides call-backs when each thread starts and ends (see `PIN_AddThreadStartFunction` and `PIN_AddThreadFiniFunction`).
 
-Pin-specific thread-local storage.
+(Pin also provides) Pin-specific thread-local storage.
 
 **Logging:**
 
@@ -220,19 +226,19 @@ Problems:
 Collecting a stack trace (can we correclty capture a thread's ID? Can we access the stack trace? Do we even need the stack trace?)
 
 **Capturing program state** for running test (what is the mechanism?)
-    - `-pin_memory-range`
+    - `-pin_memory-range` to contain Pin in a certain address range - may help woth reproduction
     - JIT mode
 
-> On Linux IA-32 architectures, Pintools are built non-PIC (Position Independent Code), which allows the compiler to inline both local and global functions. Tools for Linux Intel(R) 64 architectures are built PIC, but the compiler will not inline any globally visible function due to function pre-emption. Therefore, it is advisable to declare the subroutines called by the analysis function as 'static' on Linux Intel(R) 64 architectures.
+> On Linux IA-32 architectures, Pintools are built **non-PIC** (Position Independent Code), which allows the compiler to inline both local and global functions. Tools for Linux Intel(R) **64 architectures are built PIC**, but the compiler will not inline any globally visible function due to function pre-emption. Therefore, it is advisable to declare the subroutines called by the analysis function as 'static' on Linux Intel(R) 64 architectures.
 
-How do we deal with this (PIE/non-PIE)
+How do we deal with this (PIE/non-PIE)? (dynamic object tree dump - IMO requires full instrumentation of all memory accesses inside every function call)
 
 
 # Thoughts on Architecture
 
 ## Capturing arguments & return values
 
-* to consider: if we will be dealing with anything other than built-in types (primitives), would it even be possible to reliably instrument a function for return-value retreival?
+* to consider: if dealing with anything other than built-in types (primitives), would it even be possible to reliably (statically) instrument a function for return-value retreival?
     * returning a temporary uses things like copy/move elision, NRVO, ... (compiler-specific tricks for inlined functions, ...)
     * if we cannot reliably capture those kinds of objects, we would need dynamic instrumentation to inspect every single branch (linked call) **after** it happens, registering the returned value
     * this could boil down to just calling the proper ctor before a `return` 
@@ -242,7 +248,7 @@ How do we deal with this (PIE/non-PIE)
 Objects of interest, their inputs, outputs:
 
 1. Free-stadning functions
-* IN: arguments, global/thread-local state (possibly object grap)
+* IN: arguments, global/thread-local state (possibly large object graph)
 * OUT: retval, global state modification
 
 2. Object methods
@@ -253,6 +259,7 @@ Objects of interest, their inputs, outputs:
 
 `???` locks... program state may hold information on synchronization - process isolation inside a unit test may catastrophically interact with synchronization primitives:
 
+
 1. N-threaded program (N > 1) running (on N threads)
 2. Capture the state of thread X before executing fn `foo`
 3. Generate unit tests, ...
@@ -260,7 +267,9 @@ Objects of interest, their inputs, outputs:
 
 If `foo` e.g. waits on a barrier expecting N threads, N > 1. If `foo` does not spawn tasks on other threads that execute this same function, only 1 thread (unit-test thread) appears at the barrier, never finishing.
 
-This implies two things: unit-test timeouts are needed, multi-threaded execution is hazardous for this approach.
+`???` IO/system resources - unit test? should? be testing a fairly isolated function
+
+This implies two things: unit-test timeouts are needed, multi-threaded execution is hazardous for this approach and it is extra tricky to ensure OS resources (IO/networking, ...) are handled correctly by external unit test. 
 
 Approaches for program state capture:
 
@@ -274,8 +283,10 @@ Approaches for program state capture:
     * "deactivated" process would wait for messages (IPC) with commands
         * for every command (e.g. function arguments and expected values), the process will be forked further, injecting/rewriting/using supplied arguments to continue function execution
         * furhtermore, in the forked process, the return statements will get replaced by saving a return value and sending it to the parrent process, this sequence terminates the child process (unit test executed, return value would be inspected in the parent)  
-        
-2. capture-only-necessary - probably very lightweight but I think it is too difficult to pull off (library depdnencies, ABI, the inability to introspect C/C++ programs at runtime, statically dumping object representation may require arcane compiler knowledge)
+    * we have to prohibit recursive `clone` for any type of recursion (direct/indirect)
+    * how to integrate (if possible, with a testing framework)
+    * unknowns - never used `clone` - thread-locals? limitations coming from the parent process (`MADV_DONTFORK`)
+2. capture-only-necessary - probably very lightweight but I think it is too difficult to pull off (library depdnencies, ABI, the inability to introspect C/C++ programs at runtime, statically dumping object representation may require arcane compiler knowledge, dynamic dumping presents the challenge of injection into a unit test - relocation of code, proper page mapping)
 
 ### Discussion on `clone` method
 
@@ -344,8 +355,12 @@ int target__impl(float arg) {
  
 #### Limitations
 
-* `pin` cannot be used for this stage as it requires a syscall (`clone`)
+* `pin` might not be a viable candidate for this stage as it requires a syscall (`clone`)
 
 ## Other tools/references
 
-* `https://github.com/yotamr/traces` - static (`clang` plugin) type-aware funciton tracing
+* [traces](https://github.com/yotamr/traces) - static (`clang` plugin) "type-aware" funciton tracing
+    * particularly [Architecture](https://github.com/yotamr/traces/wiki/Architecture)
+
+* [gcc instrumentation](https://www.kernel.org/doc/html/v5.6/core-api/gcc-plugins.html)
+    * [usage](https://www.codingwiththomas.com/blog/accessing-gccs-abstract-syntax-tree-with-a-gcc-plugin)
