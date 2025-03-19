@@ -9,9 +9,11 @@
 #include "clang/Tooling/Tooling.h"
 
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/raw_ostream.h"
 #include <cassert>
-#include <iostream>
 #include <utility>
+#include <set>
+#include <fstream>
 
 using namespace clang::tooling;
 using namespace llvm;
@@ -19,7 +21,10 @@ using namespace clang;
 
 // Apply a custom category to all command-line options so that they are the
 // only ones displayed.
-static llvm::cl::OptionCategory MyToolCategory("my-tool options");
+static llvm::cl::OptionCategory MyToolCategory("Tool options");
+
+static cl::opt<bool> ProduceFileList("F",cl::desc("Produce a list of modified files"),
+cl::cat(MyToolCategory));
 
 // CommonOptionsParser declares HelpMessage with a description of the common
 // command-line options related to the compilation database and input files.
@@ -31,13 +36,20 @@ static cl::extrahelp MoreHelp("\nMore help text...\n");
 
 bool visitFunctionDecl(const FunctionDecl *Func, Rewriter &Rewriter) {
   bool Result = false;
-  if (Func->hasBody()) {
+  llvm::outs() << "Visiting " << Func->getQualifiedNameAsString() << '\n';
+  if (!Func->hasBody()) {
+    llvm::errs() << "\tno body\n";
     return Result;
   }
+  llvm::outs() << "\tParameters\n";
   for (unsigned int I = 0; I < Func->getNumParams(); I++) {
     std::string VarString = Func->parameters()[I]->getQualifiedNameAsString();
+    llvm::outs() << "\t\t" << VarString  << "\n";
+    if (Func->getBody() == nullptr) {
+      continue;
+    }
     Result = !Rewriter.InsertTextAfterToken(Func->getBody()->getBeginLoc(),
-                                           "::__framework::Reporter::report(" +
+                                           "\n::__framework::Reporter::report(" +
                                                VarString + ", \"" + VarString +
                                                "\");\n");
   }
@@ -48,8 +60,8 @@ using namespace clang;
 using namespace clang::ast_matchers;
 
 DeclarationMatcher FunctionMatcher =
-    functionDecl(anyOf(hasAnyParameter(hasType(asString("float"))),
-                       hasAnyParameter(hasType(asString("int")))))
+    functionDecl(allOf(isExpansionInMainFile(), anyOf(hasAnyParameter(hasType(asString("float"))),
+                       hasAnyParameter(hasType(asString("int"))))))
         .bind("functionDecl");
 
 using RewDb = std::map<FileID, Rewriter>;
@@ -66,22 +78,31 @@ class FunctionDeclRewriter : public MatchFinder::MatchCallback {
     return &MRewDb[Id];
   }
 
+  std::set<std::string> MFileNames;
+  bool MCollectFiles{false};
 public:
-  FunctionDeclRewriter(RewDb &RewDb) : MRewDb(RewDb) {}
+  FunctionDeclRewriter(RewDb &RewDb, bool CollectFiles = false) : MRewDb(RewDb), MCollectFiles(CollectFiles) {}
 
   virtual void run(const MatchFinder::MatchResult &Result) override {
     assert(Result.SourceManager != nullptr);
-    std::cout << "Trying!!\n";
     if (const FunctionDecl *FS =
             Result.Nodes.getNodeAs<clang::FunctionDecl>("functionDecl")) {
       // file id
-      auto FileId = Result.SourceManager->getFileID(FS->getLocation());
-      Rewriter *Rew = getRewPtr(FileId, Result.SourceManager);
-      if (visitFunctionDecl(FS, *Rew)) {
-        std::cout << "Modified " << FS->getNameAsString() << "\n";
-        ;
+      auto* SrcMgr = Result.SourceManager;
+      auto FileId = SrcMgr->getFileID(FS->getLocation());
+      llvm::outs() << "Trying file: [" << FileId.getHashValue() << "] " << FS->getLocation().printToString(*SrcMgr) << '\n';
+      Rewriter *Rew = getRewPtr(FileId, SrcMgr);
+      if (visitFunctionDecl(FS, *Rew) && MCollectFiles) {
+        const FileEntry* Entry = SrcMgr->getFileEntryForID(FileId);
+        const auto FileName = Entry->tryGetRealPathName();
+        MFileNames.insert(FileName.str());
       }
     }
+    llvm::outs() << "Done\n";
+  }
+
+  std::vector<std::string> fetchCollectedFiles() const {
+    return std::vector(MFileNames.cbegin(), MFileNames.cend());
   }
 };
 
@@ -93,12 +114,10 @@ public:
   Callbacks(RewDb &RewriterDb) : MRewriterDb(RewriterDb) {}
 
   void handleEndSource() override {
-    std::cout << "End source \n";
     for (auto &&Rew : MRewriterDb) {
+      llvm::outs() << "Ending file: [" << Rew.first.getHashValue() << "]\n";
       if (Rew.second.overwriteChangedFiles()) {
-        std::cout << "failed to flush \n";
-      } else {
-        std::cout << "flushed\n";
+        llvm::outs() << "Failed to flush " << Rew.first.getHashValue() << '\n';
       }
     }
   }
@@ -117,10 +136,21 @@ int main(int argc, const char **argv) {
 
   RewDb Rewriters = {};
   Callbacks Db(Rewriters);
-
-  FunctionDeclRewriter Rewriter(Rewriters);
+  FunctionDeclRewriter Rewriter(Rewriters, ProduceFileList.getValue());
   MatchFinder Finder;
   Finder.addMatcher(FunctionMatcher, &Rewriter);
 
-  return Tool.run(newFrontendActionFactory(&Finder, &Db).get());
+  auto Result =  Tool.run(newFrontendActionFactory(&Finder, &Db).get());
+  
+  if (ProduceFileList.getValue()) {
+    auto Files = Rewriter.fetchCollectedFiles();
+    const auto *ListPath = "modified-files.txt";
+    std::ofstream Out(ListPath);
+    for (auto&& Fname : Files) {
+      Out << Fname << '\n';
+    }
+    llvm::outs() << "Written file list into " << ListPath << '\n';
+  }
+
+  return Result;
 }
