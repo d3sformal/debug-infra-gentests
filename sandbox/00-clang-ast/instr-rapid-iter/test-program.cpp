@@ -1,30 +1,67 @@
+#include <cassert>
 #include <iostream>
 
-namespace __framework {
-
-    class Reporter {
-        public:
-        template<class T>
-        static void report(T val, const char* info) {
-            std::cout << "recorded value: " << val << " " << info << '\n';
-        }
-    };
+void foo(int, float) {
+    // just ReturnStmt (no children!)
+    return;
 }
-    
+
+float x = 1;
+float& retRef() {
+    return x;
+}
+
+void baz(int i) {
+    assert(i > 0);
+}
+
 
 int int_called_with_int_float(int i, float f) {
-    return i * f;
-}
+    // Var (x, builtintype::int) -> ImplicitCast
+    int x = i * f;
 
+    // Var (y, auto) -> -> BinaryOperator
+    auto y = i * f;
+    // ReturnStmt -> ImplicitCast -> BinaryOperator
+    return i * f;
+    // ImplicitCast -> BinaryOperator
+    return y;
+
+    // =>
+    // return (stmt);
+    
+    // should be transformable to
+
+    // auto x = (stmt);
+    // ... instrument fn return ...
+    // return x;
+
+    // If -> Compound -> Return
+    if (true) {
+        return x;
+    }
+
+    // If -> Return
+    if (false) 
+        return y;
+    if (false) 
+        return y;
+
+    // NOT part of compound expression?
+    // replace Return with Compound, insert Return into Compound
+    // replace
+
+    return retRef();
+}
 
 float float_called_with_double_int(double d, int i) {
     return d * i;
 }
 
-int everything() {
+int everything(int ) {
     return int_called_with_int_float(0, 3.2f) + float_called_with_double_int(4.4, 32);
 }
 
 int main() {
-    return everything();
+    return everything(0);
 }
