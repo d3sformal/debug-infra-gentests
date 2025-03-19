@@ -1,39 +1,61 @@
 #include "../include/funTrace.hpp"
+#include <cassert>
+#include <fstream>
 #include <iostream>
 
-void dumpEnter(const char* prefix, const char* name, u64 id) {
-    std::cout << "Enter [" << prefix << "]: " << name << ' ' << id << '\n';
-}
-
-void dumpLeave(const char* prefix, const char* name, u64 id) {
-    std::cout << "Leave [" << prefix << "]: " << name << ' ' << id << '\n';
-}
+enum class funTraceLib::ETraceEvent : u8 {
+    ENTER_SCOPE = 0,
+    LEAVE_BY_RET,
+    LEAVE_BY_SCOPE
+};
 
 funTraceLib::ScopeDumper::ScopeDumper(const char* fnName, u64 fnId)
 : fnName(fnName), fnId(fnId) {
-    dumpEnter("scope", fnName, fnId);
+    funTraceLib::TraceLogger::get()->dumpTraceEvent(fnId, funTraceLib::ETraceEvent::ENTER_SCOPE);
 }
-
-funTraceLib::ScopeDumper::ScopeDumper(const char* fnName)
-: funTraceLib::ScopeDumper::ScopeDumper(fnName, getNewId()) {
-}
-
 
 funTraceLib::ScopeDumper::~ScopeDumper() {
-    dumpLeave("scope", this->fnName, this->fnId);
+    if (!returned) {
+        funTraceLib::TraceLogger::get()->dumpTraceEvent(fnId, funTraceLib::ETraceEvent::LEAVE_BY_SCOPE);
+    }
 }
 
 void funTraceLib::ScopeDumper::registerReturn() {
-    dumpLeave("ret", this->fnName, this->fnId);
+    this->returned = true;
+    funTraceLib::TraceLogger::get()->dumpTraceEvent(fnId, funTraceLib::ETraceEvent::LEAVE_BY_RET);
 }
 
-std::ostream* s_outstream = nullptr;
+funTraceLib::TraceLogger* funTraceLib::TraceLogger::s_logger = nullptr;
 
-static void funTraceLib::initializeDumpOutput(const char* filename) {
-    // TODO
-    if (s_outstream != nullptr) {
-        *outputStream << "ERROR, ALREADY INITIALIZED";
-        exit(-1);
+funTraceLib::TraceLogger::TraceLogger(const char* name) {
+    assert(s_logger == nullptr);
+    this->m_out = std::make_unique<std::ofstream>(name);
+    assert((*m_out));
+    s_logger = this;
+}
+
+funTraceLib::TraceLogger* funTraceLib::TraceLogger::get() {
+    assert(s_logger != nullptr);
+    return s_logger;
+}
+
+funTraceLib::TraceLogger::~TraceLogger() {
+    s_logger = nullptr;
+    this->m_out->flush();
+}
+
+const char * etraceEvtToStr(funTraceLib::ETraceEvent e) {
+    switch (e) {
+        case funTraceLib::ETraceEvent::ENTER_SCOPE: return "enter scope";
+        case funTraceLib::ETraceEvent::LEAVE_BY_SCOPE: return "leave scope";
+        case funTraceLib::ETraceEvent::LEAVE_BY_RET: return "leave return";
     }
-    s_outstream = outputStream;
+    return nullptr;
+}
+
+void funTraceLib::TraceLogger::dumpTraceEvent(u64 fnId, funTraceLib::ETraceEvent evt) {
+    assert((*m_out));
+    auto s = etraceEvtToStr(evt);
+    assert(s != nullptr);
+    *m_out << fnId << " " << s << '\n';
 }

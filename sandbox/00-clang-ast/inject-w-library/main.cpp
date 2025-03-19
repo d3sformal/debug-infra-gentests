@@ -1,17 +1,31 @@
 #include <iostream>
 #include "lib/include/funTrace.hpp"
 
-const char* getHello() {
-    auto dumper = funTraceLib::ScopeDumper("getHello");
+const char* getHello(bool fail) {
+    auto INJECT_dumper = funTraceLib::ScopeDumper("getHello", 0);
     
-    dumper.registerReturn();
+    if (fail) {
+        throw 1;
+    }
+
+    INJECT_dumper.registerReturn();
     return "world!";
 }
 
 int main() {
-    auto dumper = funTraceLib::ScopeDumper("main");
-    std::cout << "hello, " << getHello() << std::endl;
+    auto INJECT_MAIN_ONLY_log = funTraceLib::TraceLogger("./trace.log");
 
-    dumper.registerReturn();
+    auto INJECT_dumper = funTraceLib::ScopeDumper("main", 1);
+    std::cout << "hello, ";
+    try {
+        std::cout << getHello(true) << std::endl;
+    } catch (...) {
+        std::cout << "wrld" << std::endl;
+    }
+
+    getHello(false);
+    getHello(false);
+
+    INJECT_dumper.registerReturn();
     return 0;
 }
