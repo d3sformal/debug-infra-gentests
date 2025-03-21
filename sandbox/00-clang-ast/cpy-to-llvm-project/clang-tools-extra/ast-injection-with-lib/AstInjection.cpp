@@ -25,18 +25,23 @@
 using namespace clang::tooling;
 using namespace llvm;
 using namespace clang;
+using namespace ast_matchers;
+
+template <class T> using vec = std::vector<T>;
+using str = std::string;
 
 // Apply a custom category to all command-line options so that they are the
 // only ones displayed.
-static llvm::cl::OptionCategory MyToolCategory("Tool options");
+static cl::OptionCategory MyToolCategory("Tool options");
 
-static cl::opt<bool>
-    ProduceFileList("F", cl::desc("Produce a list of modified files"),
+static cl::opt<str>
+    ProduceFileList("M",
+                    cl::desc("Output a list of modified files into a file"),
                     cl::cat(MyToolCategory));
 
-static cl::opt<std::string>
-    ProduceFnIdMap("I", cl::desc("Output function id mapping to a file"),
-                      cl::cat(MyToolCategory));
+static cl::opt<str>
+    ProduceFnIdMap("I", cl::desc("Output function id mapping into a file"),
+                   cl::cat(MyToolCategory));
 
 static cl::opt<bool> Verbose("v", cl::desc("More detailed logging"),
                              cl::cat(MyToolCategory));
@@ -49,7 +54,7 @@ static cl::extrahelp CommonHelp(CommonOptionsParser::HelpMessage);
 // A help message for this specific tool can be added afterwards.
 static cl::extrahelp MoreHelp("\nMore help text...\n");
 
-static CFunctionRegistry<uint64_t, std::string> FunctionIdProvider;
+static CFunctionRegistry<uint64_t, str> FunctionIdProvider;
 
 static bool injectScopeTrackingFragments(const FunctionDecl *Func,
                                          Rewriter &Rewriter) {
@@ -57,23 +62,24 @@ static bool injectScopeTrackingFragments(const FunctionDecl *Func,
   auto FnFilePath = Func->getLocation().printToString(Rewriter.getSourceMgr());
   return !Rewriter.InsertTextAfterToken(
       Func->getBody()->getBeginLoc(),
-      Fragments::scopeStartTrackFragment(FnName, FunctionIdProvider.getFunctionId(FnFilePath + ' ' + FnName)));
+      Fragments::scopeStartTrackFragment(
+          FnName, FunctionIdProvider.getFunctionId(FnFilePath + ' ' + FnName)));
 }
 
-class ReturnCollector : public clang::RecursiveASTVisitor<ReturnCollector> {
+class ReturnCollector : public RecursiveASTVisitor<ReturnCollector> {
 public:
   // shouldVisitLambdaBody
   // shouldVisitTemplateInstantiations
   static constexpr auto RetStmtBuffSize = 5;
-  using Returns = llvm::SmallVector<clang::ReturnStmt *, RetStmtBuffSize>;
+  using Returns = SmallVector<ReturnStmt *, RetStmtBuffSize>;
 
-  static Returns collect(const clang::FunctionDecl *Func) {
+  static Returns collect(const FunctionDecl *Func) {
     ReturnCollector ActualCollector;
-    ActualCollector.TraverseDecl(const_cast<clang::FunctionDecl *>(Func));
+    ActualCollector.TraverseDecl(const_cast<FunctionDecl *>(Func));
     return ActualCollector.Visited;
   }
 
-  bool VisitReturnStmt(clang::ReturnStmt *R) {
+  bool VisitReturnStmt(ReturnStmt *R) {
     Visited.push_back(R);
     return true;
   }
@@ -109,7 +115,7 @@ static bool injectReturnTrackingFragments(const FunctionDecl *Func,
       auto *Parent = Parents.getParent(Ret);
       auto Target = std::find_if(
           Parent->child_begin(), Parent->child_end(), [Ret](auto *C) {
-            if (auto *RetChild = dyn_cast<clang::ReturnStmt>(C)) {
+            if (auto *RetChild = dyn_cast<ReturnStmt>(C)) {
               return RetChild == Ret;
             }
             return false;
@@ -119,7 +125,7 @@ static bool injectReturnTrackingFragments(const FunctionDecl *Func,
           Fragments::returnSaveTraceFragment(Ret, Rewriter, RetStmtCounter);
 
       if (!isa<CompoundStmt>(*Parent)) {
-        std::string Replacement = "{\n" + InnerFragment + "}";
+        str Replacement = "{\n" + InnerFragment + "}";
 
         Rewriter.ReplaceText(Target->getSourceRange(), Replacement);
       } else {
@@ -133,9 +139,9 @@ static bool injectReturnTrackingFragments(const FunctionDecl *Func,
 static bool visitFunctionDecl(const FunctionDecl *Func, Rewriter &Rewriter) {
   bool Result = false;
   if (Verbose.getValue())
-    llvm::errs() << "Visiting " << Func->getQualifiedNameAsString() << '\n';
+    errs() << "Visiting " << Func->getQualifiedNameAsString() << '\n';
   if (!Func->hasBody()) {
-    llvm::errs() << Func->getQualifiedNameAsString() << ": no body\n";
+    errs() << Func->getQualifiedNameAsString() << ": no body\n";
     return Result;
   }
 
@@ -147,7 +153,7 @@ static bool visitFunctionDecl(const FunctionDecl *Func, Rewriter &Rewriter) {
 static bool visitMainDecl(const FunctionDecl *Func, Rewriter &Rewriter) {
   // TODO make this error if called twice
   if (!Func->hasBody()) {
-    llvm::errs() << Func->getQualifiedNameAsString() << ": no body\n";
+    errs() << Func->getQualifiedNameAsString() << ": no body\n";
     // TODO terminate
     return false;
   }
@@ -157,9 +163,6 @@ static bool visitMainDecl(const FunctionDecl *Func, Rewriter &Rewriter) {
                       Fragments::libraryInitFragment("./log.txt"));
   return true;
 }
-
-using namespace clang;
-using namespace clang::ast_matchers;
 
 static DeclarationMatcher FunctionMatcher =
     anyOf(functionDecl(allOf(isExpansionInMainFile(),
@@ -182,7 +185,7 @@ class FunctionDeclRewriter : public MatchFinder::MatchCallback {
     return &MRewDb[Id];
   }
 
-  std::set<std::string> MFileNames;
+  std::set<str> MFileNames;
   bool MCollectFiles{false};
 
 public:
@@ -193,13 +196,13 @@ public:
     // TODO deduplicate
     assert(Result.SourceManager != nullptr);
     if (const FunctionDecl *FS =
-            Result.Nodes.getNodeAs<clang::FunctionDecl>("functionDecl")) {
+            Result.Nodes.getNodeAs<FunctionDecl>("functionDecl")) {
       // file id
       auto *SrcMgr = Result.SourceManager;
       auto FileId = SrcMgr->getFileID(FS->getLocation());
       if (Verbose.getValue())
-        llvm::errs() << "Trying file: [" << FileId.getHashValue() << "] "
-                     << FS->getLocation().printToString(*SrcMgr) << '\n';
+        errs() << "Trying file: [" << FileId.getHashValue() << "] "
+               << FS->getLocation().printToString(*SrcMgr) << '\n';
       Rewriter *Rew = getRewPtr(FileId, SrcMgr);
       if (visitFunctionDecl(FS, *Rew) && MCollectFiles) {
         const FileEntry *Entry = SrcMgr->getFileEntryForID(FileId);
@@ -207,13 +210,12 @@ public:
         MFileNames.insert(FileName.str());
       }
     } else if (const FunctionDecl *FS =
-                   Result.Nodes.getNodeAs<clang::FunctionDecl>("mainDecl")) {
+                   Result.Nodes.getNodeAs<FunctionDecl>("mainDecl")) {
       auto *SrcMgr = Result.SourceManager;
       auto FileId = SrcMgr->getFileID(FS->getLocation());
       if (Verbose.getValue())
-        llvm::errs() << "File where we found main: [" << FileId.getHashValue()
-                     << "] " << FS->getLocation().printToString(*SrcMgr)
-                     << '\n';
+        errs() << "File where we found main: [" << FileId.getHashValue() << "] "
+               << FS->getLocation().printToString(*SrcMgr) << '\n';
       Rewriter *Rew = getRewPtr(FileId, SrcMgr);
       if (visitMainDecl(FS, *Rew) && MCollectFiles) {
         const FileEntry *Entry = SrcMgr->getFileEntryForID(FileId);
@@ -222,11 +224,11 @@ public:
       }
     }
     if (Verbose.getValue())
-      llvm::errs() << "Done\n";
+      errs() << "Done\n";
   }
 
-  std::vector<std::string> fetchModifiedFiles() const {
-    return std::vector(MFileNames.cbegin(), MFileNames.cend());
+  vec<str> fetchModifiedFiles() const {
+    return vec<str>(MFileNames.cbegin(), MFileNames.cend());
   }
 };
 
@@ -240,19 +242,27 @@ public:
   void handleEndSource() override {
     for (auto &&Rew : MRewriterDb) {
       if (Verbose.getValue())
-        llvm::errs() << "Ending file: [" << Rew.first.getHashValue() << "]\n";
+        errs() << "Ending file: [" << Rew.first.getHashValue() << "]\n";
       if (Rew.second.overwriteChangedFiles()) {
-        llvm::errs() << "Failed to flush " << Rew.first.getHashValue() << '\n';
+        errs() << "Failed to flush " << Rew.first.getHashValue() << '\n';
       }
     }
   }
 };
 
+void dumpVec(const vec<str> &Vec, const str &FileName) {
+  if (dumpLines(Vec, FileName)) {
+    errs() << "Written modified file list into " << FileName << '\n';
+  } else {
+    errs() << "Failed to write modified file list into " << FileName << '\n';
+  }
+}
+
 int main(int argc, const char **argv) {
   auto ExpectedParser = CommonOptionsParser::create(argc, argv, MyToolCategory);
   if (!ExpectedParser) {
     // Fail gracefully for unsupported options.
-    llvm::errs() << ExpectedParser.takeError();
+    errs() << ExpectedParser.takeError();
     return 1;
   }
   CommonOptionsParser &OptionsParser = ExpectedParser.get();
@@ -261,32 +271,35 @@ int main(int argc, const char **argv) {
 
   RewDb Rewriters = {};
   Callbacks Db(Rewriters);
-  FunctionDeclRewriter Rewriter(Rewriters, ProduceFileList.getValue());
+  FunctionDeclRewriter Rewriter(Rewriters, ProduceFileList.hasArgStr());
   MatchFinder Finder;
   Finder.addMatcher(FunctionMatcher, &Rewriter);
 
   auto Result = Tool.run(newFrontendActionFactory(&Finder, &Db).get());
 
-  if (ProduceFileList.getValue()) {
-    auto* ListPath = "modified-files.txt";
-    if (dumpLines(Rewriter.fetchModifiedFiles(), ListPath) ) {
-      llvm::errs() << "Written modified file list into " << ListPath << '\n';
+  if (ProduceFileList.hasArgStr()) {
+    auto FileName = ProduceFileList.getValue();
+    if (dumpLines(Rewriter.fetchModifiedFiles(), FileName)) {
+      errs() << "Written modified file list into " << FileName << '\n';
     } else {
-      llvm::errs() << "Failed to write modified file list into " << ListPath << '\n';
+      errs() << "Failed to write modified file list into " << FileName << '\n';
     }
   }
 
   if (ProduceFnIdMap.hasArgStr()) {
     auto FileName = ProduceFnIdMap.getValue();
-    const auto Pairs = FunctionIdProvider.fetchFunctionIdMapping(); 
-    std::vector<std::string> Lines;
+    const auto Pairs = FunctionIdProvider.fetchFunctionIdMapping();
+    vec<str> Lines;
     Lines.reserve(Pairs.size());
-    std::transform(Pairs.begin(), Pairs.end(), std::back_inserter(Lines), [](const std::pair<std::string, int64_t> p) { return p.first + ',' + std::to_string(p.second); });
+    std::transform(Pairs.begin(), Pairs.end(), std::back_inserter(Lines),
+                   [](const std::pair<str, uint64_t> &P) {
+                     return P.first + ',' + std::to_string(P.second);
+                   });
 
-    if (dumpLines(Lines, FileName) ) {
-      llvm::errs() << "Written function ID csv into" << FileName << '\n';
+    if (dumpLines(Lines, FileName)) {
+      errs() << "Written function ID csv into" << FileName << '\n';
     } else {
-      llvm::errs() << "Failed to write function ID csv into " << FileName << '\n';
+      errs() << "Failed to write function ID csv into " << FileName << '\n';
     }
   }
 
