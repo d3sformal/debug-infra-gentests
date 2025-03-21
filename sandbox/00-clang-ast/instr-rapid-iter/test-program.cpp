@@ -67,6 +67,35 @@ int everything(int ) {
     return int_called_with_int_float(0, 3.2f) + float_called_with_double_int(4.4, 32);
 }
 
+template<typename T>
+T templateTest(T x) {
+    return x;
+}
+
+class CX {
+    public:
+
+    int pubFoo(float f) {
+        return 0; 
+    }
+
+    private:
+
+    int privBar(int x) {
+        return x;
+    }   
+};
+
 int main() {
+    templateTest<std::string>("");
+    // current impl would insert code inside a template
+    // instantiated with matching argumnets
+    // this approach however modifies the template body
+    // which could break for other types
+    // (e.g. string above, if we're unable to dump it)
+    // templateTest<float>(0.0);
+
+    CX c;
+    c.pubFoo(3.14);
     return everything(0);
 }
