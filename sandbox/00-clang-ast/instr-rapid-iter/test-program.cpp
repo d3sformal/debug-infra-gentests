@@ -1,20 +1,25 @@
 #include <cassert>
 #include <iostream>
 
-void foo(int, float) {
-    // just ReturnStmt (no children!)
-    return;
+
+namespace foo_namespace {
+    namespace bar_namespace {
+        void foo(int, float) {
+            // just ReturnStmt (no children!)
+            return;
+        }
+    }
+
+    void baz(int i) {
+        assert(i > 0);
+    }
+    
 }
 
 float x = 1;
 float& retRef() {
     return x;
 }
-
-void baz(int i) {
-    assert(i > 0);
-}
-
 
 int int_called_with_int_float(int i, float f) {
     // Var (x, builtintype::int) -> ImplicitCast

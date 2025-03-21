@@ -17,7 +17,6 @@
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cassert>
-#include <fstream>
 #include <map>
 #include <set>
 #include <string>
@@ -35,8 +34,8 @@ static cl::opt<bool>
     ProduceFileList("F", cl::desc("Produce a list of modified files"),
                     cl::cat(MyToolCategory));
 
-static cl::opt<std::optional<std::string>>
-    FunctionIdMapping("I", cl::desc("Output function id mapping to a file"),
+static cl::opt<std::string>
+    ProduceFnIdMap("I", cl::desc("Output function id mapping to a file"),
                       cl::cat(MyToolCategory));
 
 static cl::opt<bool> Verbose("v", cl::desc("More detailed logging"),
@@ -50,24 +49,15 @@ static cl::extrahelp CommonHelp(CommonOptionsParser::HelpMessage);
 // A help message for this specific tool can be added afterwards.
 static cl::extrahelp MoreHelp("\nMore help text...\n");
 
-static uint64_t getFunctionId(const std::string &Name) {
-  static uint64_t SId = 0;
-  static std::map<std::string, uint64_t> SValues;
-  auto Found = SValues.find(Name);
-  if (Found != SValues.end()) {
-    return Found->second;
-  }
-  SId += 1;
-  SValues[Name] = SId;
-  return SId;
-}
+static CFunctionRegistry<uint64_t, std::string> FunctionIdProvider;
 
 static bool injectScopeTrackingFragments(const FunctionDecl *Func,
                                          Rewriter &Rewriter) {
   auto FnName = Func->getQualifiedNameAsString();
+  auto FnFilePath = Func->getLocation().printToString(Rewriter.getSourceMgr());
   return !Rewriter.InsertTextAfterToken(
       Func->getBody()->getBeginLoc(),
-      Fragments::scopeStartTrackFragment(FnName, getFunctionId(FnName)));
+      Fragments::scopeStartTrackFragment(FnName, FunctionIdProvider.getFunctionId(FnFilePath + ' ' + FnName)));
 }
 
 class ReturnCollector : public clang::RecursiveASTVisitor<ReturnCollector> {
@@ -143,7 +133,7 @@ static bool injectReturnTrackingFragments(const FunctionDecl *Func,
 static bool visitFunctionDecl(const FunctionDecl *Func, Rewriter &Rewriter) {
   bool Result = false;
   if (Verbose.getValue())
-    llvm::outs() << "Visiting " << Func->getQualifiedNameAsString() << '\n';
+    llvm::errs() << "Visiting " << Func->getQualifiedNameAsString() << '\n';
   if (!Func->hasBody()) {
     llvm::errs() << Func->getQualifiedNameAsString() << ": no body\n";
     return Result;
@@ -208,7 +198,7 @@ public:
       auto *SrcMgr = Result.SourceManager;
       auto FileId = SrcMgr->getFileID(FS->getLocation());
       if (Verbose.getValue())
-        llvm::outs() << "Trying file: [" << FileId.getHashValue() << "] "
+        llvm::errs() << "Trying file: [" << FileId.getHashValue() << "] "
                      << FS->getLocation().printToString(*SrcMgr) << '\n';
       Rewriter *Rew = getRewPtr(FileId, SrcMgr);
       if (visitFunctionDecl(FS, *Rew) && MCollectFiles) {
@@ -221,7 +211,7 @@ public:
       auto *SrcMgr = Result.SourceManager;
       auto FileId = SrcMgr->getFileID(FS->getLocation());
       if (Verbose.getValue())
-        llvm::outs() << "File where we found main: [" << FileId.getHashValue()
+        llvm::errs() << "File where we found main: [" << FileId.getHashValue()
                      << "] " << FS->getLocation().printToString(*SrcMgr)
                      << '\n';
       Rewriter *Rew = getRewPtr(FileId, SrcMgr);
@@ -232,10 +222,10 @@ public:
       }
     }
     if (Verbose.getValue())
-      llvm::outs() << "Done\n";
+      llvm::errs() << "Done\n";
   }
 
-  std::vector<std::string> fetchCollectedFiles() const {
+  std::vector<std::string> fetchModifiedFiles() const {
     return std::vector(MFileNames.cbegin(), MFileNames.cend());
   }
 };
@@ -250,7 +240,7 @@ public:
   void handleEndSource() override {
     for (auto &&Rew : MRewriterDb) {
       if (Verbose.getValue())
-        llvm::outs() << "Ending file: [" << Rew.first.getHashValue() << "]\n";
+        llvm::errs() << "Ending file: [" << Rew.first.getHashValue() << "]\n";
       if (Rew.second.overwriteChangedFiles()) {
         llvm::errs() << "Failed to flush " << Rew.first.getHashValue() << '\n';
       }
@@ -278,14 +268,26 @@ int main(int argc, const char **argv) {
   auto Result = Tool.run(newFrontendActionFactory(&Finder, &Db).get());
 
   if (ProduceFileList.getValue()) {
-    auto Files = Rewriter.fetchCollectedFiles();
-    const auto *ListPath = "modified-files.txt";
-    std::ofstream Out(ListPath);
-    for (auto &&Fname : Files) {
-      Out << Fname << '\n';
+    auto* ListPath = "modified-files.txt";
+    if (dumpLines(Rewriter.fetchModifiedFiles(), ListPath) ) {
+      llvm::errs() << "Written modified file list into " << ListPath << '\n';
+    } else {
+      llvm::errs() << "Failed to write modified file list into " << ListPath << '\n';
     }
+  }
 
-    llvm::outs() << "Written file list into " << ListPath << '\n';
+  if (ProduceFnIdMap.hasArgStr()) {
+    auto FileName = ProduceFnIdMap.getValue();
+    const auto Pairs = FunctionIdProvider.fetchFunctionIdMapping(); 
+    std::vector<std::string> Lines;
+    Lines.reserve(Pairs.size());
+    std::transform(Pairs.begin(), Pairs.end(), std::back_inserter(Lines), [](const std::pair<std::string, int64_t> p) { return p.first + ',' + std::to_string(p.second); });
+
+    if (dumpLines(Lines, FileName) ) {
+      llvm::errs() << "Written function ID csv into" << FileName << '\n';
+    } else {
+      llvm::errs() << "Failed to write function ID csv into " << FileName << '\n';
+    }
   }
 
   return Result;
