@@ -43,6 +43,10 @@ static cl::opt<str>
     ProduceFnIdMap("I", cl::desc("Output function id mapping into a file"),
                    cl::cat(MyToolCategory));
 
+static cl::opt<bool>
+    TestInstrumentation("T", cl::desc("Perform TEST instrumentation"),
+                        cl::cat(MyToolCategory));
+
 static cl::opt<bool> Verbose("v", cl::desc("More detailed logging"),
                              cl::cat(MyToolCategory));
 
@@ -136,6 +140,55 @@ static bool injectReturnTrackingFragments(const FunctionDecl *Func,
   return true;
 }
 
+static bool visitDeclToTest(const FunctionDecl *Func, Rewriter &Rewriter) {
+  // TODO deduplicate
+  if (!Func->hasBody()) {
+    errs() << Func->getQualifiedNameAsString() << ": no body\n";
+    // TODO terminate
+    return false;
+  }
+
+  auto &SM = Rewriter.getSourceMgr();
+
+  auto FnStr = rangeToString(Func->getSourceRange(), SM).str();
+  auto FnBody = rangeToString(Func->getBody()->getSourceRange(), SM).str();
+  auto IsVoid = Func->getReturnType()->isVoidType();
+
+  std::string NewBody =
+      "{\n std::cout << \"Executes before the function body starts\\n\";\n" +
+      FnBody + "\n" + (!IsVoid ? "" : "return;") + " }";
+
+  Rewriter.ReplaceText(Func->getBody()->getSourceRange(), NewBody);
+  return true;
+
+  /* NOT VIABLE (function duplication)
+
+  // this omits qualifiers & other info (see docs of rettypesrcrange) ...
+  // templates broken again, deduciton guides could be ignored, ...
+  auto FnType = rangeToString(Func->getReturnTypeSourceRange(), SM).str();
+  auto FnExcSpec = rangeToString(Func->getExceptionSpecSourceRange(), SM).str();
+  auto FnBody = rangeToString(Func->getBody()->getSourceRange(), SM).str();
+
+
+  str ArgList = "";
+  for (auto&& arg : Func->parameters()) {
+    ArgList += arg->getIdentifier()->token;
+    ArgList += ", ";
+  }
+  ArgList.pop_back();
+
+
+  str newFnName = "__copy_of__" + Func->getName().str();
+  auto isVoid = Func->getReturnType()->isVoidType();
+  str newFnBody = "{ " + (isVoid ? "" : "return ") + Func->getName().str() + "(
+  " + ArgList +  "); }";
+
+  Rewriter.ReplaceText(Func->getTypeSourceInfo()->)
+  */
+
+  return true;
+}
+
 static bool visitFunctionDecl(const FunctionDecl *Func, Rewriter &Rewriter) {
   bool Result = false;
   if (Verbose.getValue())
@@ -146,6 +199,17 @@ static bool visitFunctionDecl(const FunctionDecl *Func, Rewriter &Rewriter) {
   }
 
   Result |= injectScopeTrackingFragments(Func, Rewriter);
+  // RN this injects variable around a return statement, calls the
+  // "register_return"
+  //  - alternatives: leave scope-only via ctor/dtor =
+  //      (-) lose info about exceptions
+  //      (-) completely lose compat with C code
+  //      (+) simpler
+  //  - "save to variable => goto return" (line A: return x; => { TYPE retval;
+  //  ... A: retval = x; goto endfn; ... endfn: (return callback); return
+  //  retval; });
+  //     (-) issues with variable initializaton
+  //     (+) good compat with C code
   Result |= injectReturnTrackingFragments(Func, Rewriter);
   return Result;
 }
@@ -225,6 +289,26 @@ public:
     }
     if (Verbose.getValue())
       errs() << "Done\n";
+  }
+
+  // TODO use this along with the TestInstrumentation option (CLI)
+  void testInstrumentation(const MatchFinder::MatchResult &Result) {
+    assert(Result.SourceManager != nullptr);
+    if (const FunctionDecl *FS =
+            Result.Nodes.getNodeAs<FunctionDecl>("functionDecl")) {
+      // TODO: discriminate based on function ID
+      auto *SrcMgr = Result.SourceManager;
+      auto FileId = SrcMgr->getFileID(FS->getLocation());
+      if (Verbose.getValue())
+        errs() << "Trying file: [" << FileId.getHashValue() << "] "
+               << FS->getLocation().printToString(*SrcMgr) << '\n';
+      Rewriter *Rew = getRewPtr(FileId, SrcMgr);
+      if (visitDeclToTest(FS, *Rew) && MCollectFiles) {
+        const FileEntry *Entry = SrcMgr->getFileEntryForID(FileId);
+        const auto FileName = Entry->tryGetRealPathName();
+        MFileNames.insert(FileName.str());
+      }
+    }
   }
 
   vec<str> fetchModifiedFiles() const {
