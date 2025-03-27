@@ -7,6 +7,8 @@
 #include <string>
 
 #include "util.hpp"
+#ifndef VSTR_ASTINJ_FRAGMENTS_HPP
+#define VSTR_ASTINJ_FRAGMENTS_HPP
 
 namespace Fragments {
 static constexpr const char *SScopeDumperVarName = "__function_tracking_scope";
@@ -68,4 +70,32 @@ inline std::string libraryInitFragment(const std::string &LogTarget) {
   return "auto __funtraceLibLogger = funTraceLib::TraceLogger(\"" + LogTarget +
          "\");\n";
 }
+
+inline std::string
+libraryDumpFnWithIdParamFragment(uint64_t Id, const clang::FunctionDecl *Fn) {
+  std::string DumpParams =
+      "funTraceLib::dump::dumpValuesWithId(" + std::to_string(Id);
+  bool AtLeasOneNamedParam = false;
+  for (auto &&Arg : Fn->parameters()) {
+    auto Name = Arg->getNameAsString();
+    if (Name.empty()) {
+      continue;
+    }
+    AtLeasOneNamedParam = true;
+
+    DumpParams += ", " + Name;
+  }
+  DumpParams += ");\n";
+  return AtLeasOneNamedParam ? DumpParams : "";
+}
+
+inline std::string libraryDumpFnParamFragment(const clang::ParmVarDecl &Param) {
+  auto Name = Param.getNameAsString();
+  // log?
+  if (Name.empty()) {
+    return "";
+  }
+  return "funTraceLib::dump::dumpValue(" + Param.getNameAsString() + ");\n";
+}
 }; // namespace Fragments
+#endif // VSTR_ASTINJ_FRAGMENTS_HPP

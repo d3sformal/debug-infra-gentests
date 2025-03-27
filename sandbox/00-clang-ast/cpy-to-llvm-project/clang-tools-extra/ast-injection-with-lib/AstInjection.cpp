@@ -60,14 +60,23 @@ static cl::extrahelp MoreHelp("\nMore help text...\n");
 
 static CFunctionRegistry<uint64_t, str> FunctionIdProvider;
 
+static std::string getFunctionIdKey(const FunctionDecl *Func,
+                                    const Rewriter &Rewriter) {
+  auto FnName = Func->getQualifiedNameAsString();
+  // TODO: this includes line & column numbers - i think fully qualified name +
+  // file path is sufficient
+  auto FnFilePath = Func->getLocation().printToString(Rewriter.getSourceMgr());
+  return FnFilePath + ' ' + FnName;
+}
+
 static bool injectScopeTrackingFragments(const FunctionDecl *Func,
                                          Rewriter &Rewriter) {
   auto FnName = Func->getQualifiedNameAsString();
-  auto FnFilePath = Func->getLocation().printToString(Rewriter.getSourceMgr());
+  auto FnIdKey = getFunctionIdKey(Func, Rewriter);
   return !Rewriter.InsertTextAfterToken(
       Func->getBody()->getBeginLoc(),
       Fragments::scopeStartTrackFragment(
-          FnName, FunctionIdProvider.getFunctionId(FnFilePath + ' ' + FnName)));
+          FnName, FunctionIdProvider.getFunctionId(FnIdKey)));
 }
 
 class ReturnCollector : public RecursiveASTVisitor<ReturnCollector> {
@@ -154,8 +163,11 @@ static bool visitDeclToTest(const FunctionDecl *Func, Rewriter &Rewriter) {
   auto FnBody = rangeToString(Func->getBody()->getSourceRange(), SM).str();
   auto IsVoid = Func->getReturnType()->isVoidType();
 
-  std::string NewBody =
-      "{\n std::cout << \"Executes before the function body starts\\n\";\n" +
+  str NewBody =
+      "{\n" +
+      Fragments::libraryDumpFnWithIdParamFragment(
+          FunctionIdProvider.getFunctionId(getFunctionIdKey(Func, Rewriter)),
+          Func) +
       FnBody + "\n" + (!IsVoid ? "" : "return;") + " }";
 
   Rewriter.ReplaceText(Func->getBody()->getSourceRange(), NewBody);
@@ -257,10 +269,14 @@ public:
       : MRewDb(RewDb), MCollectFiles(CollectFiles) {}
 
   virtual void run(const MatchFinder::MatchResult &Result) override {
-    // TODO deduplicate
+    // TODO deduplicate "else if" branches
     assert(Result.SourceManager != nullptr);
-    if (const FunctionDecl *FS =
-            Result.Nodes.getNodeAs<FunctionDecl>("functionDecl")) {
+
+    if (TestInstrumentation.getValue()) {
+      // TODO: arch
+      testInstrumentation(Result);
+    } else if (const FunctionDecl *FS =
+                   Result.Nodes.getNodeAs<FunctionDecl>("functionDecl")) {
       // file id
       auto *SrcMgr = Result.SourceManager;
       auto FileId = SrcMgr->getFileID(FS->getLocation());
@@ -291,7 +307,6 @@ public:
       errs() << "Done\n";
   }
 
-  // TODO use this along with the TestInstrumentation option (CLI)
   void testInstrumentation(const MatchFinder::MatchResult &Result) {
     assert(Result.SourceManager != nullptr);
     if (const FunctionDecl *FS =
