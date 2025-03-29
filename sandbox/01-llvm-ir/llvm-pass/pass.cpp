@@ -7,6 +7,11 @@
 #include "llvm/Passes/PassPlugin.h"
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Demangle/Demangle.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/GlobalVariable.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Type.h>
 #include <llvm/Passes/OptimizationLevel.h>
 
 #include <bits/stdc++.h>
@@ -16,12 +21,11 @@ using namespace llvm;
 
 namespace {
 
-
 // there is no way to tell built-ins from user functions in the IR
 // we can only query external linkage and whether a function is a "declaration"
 // this function examines the mangled name of a function and tells (nonportably)
-// which function is and is not in the std:: namespace (_Z*St/i/c/a/o/e/s) or has
-// a reserved name (two underscores)
+// which function is and is not in the std:: namespace (_Z*St/i/c/a/o/e/s) or
+// has a reserved name (two underscores)
 bool isStdFnDanger(const StringRef mangled) {
   return mangled.starts_with("_ZNSt") || mangled.starts_with("_ZZNSt") ||
          mangled.starts_with("_ZSt") || mangled.starts_with("_ZNSo") ||
@@ -30,49 +34,123 @@ bool isStdFnDanger(const StringRef mangled) {
          mangled.starts_with("_ZNSa") || mangled.starts_with("__");
 }
 
+GlobalVariable *createGlobalStr(Module &M, StringRef Val, StringRef Id) {
+  LLVMContext &Ctx = M.getContext();
+
+  Constant *StrConst = ConstantDataArray::getString(Ctx, Val, true);
+  GlobalVariable *GV = new GlobalVariable(
+      M, StrConst->getType(), true, GlobalValue::PrivateLinkage, StrConst, Id);
+
+  GV->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+  GV->setAlignment(Align(1));
+  return GV;
+}
+
+void insertFnEntryLog(IRBuilder<> &Builder, Function &F, Module &M,
+                      GlobalVariable *Message) {
+  auto *IRStrPtr = Builder.CreateBitCast(Message, Builder.getPtrTy());
+  auto Callee = M.getOrInsertFunction(
+      "hook_start", FunctionType::get(Type::getVoidTy(M.getContext()),
+                                      {Builder.getPtrTy()}, false));
+  Builder.CreateCall(Callee, {IRStrPtr});
+}
+void callCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg) {
+  auto &Ctx = M.getContext();
+  auto ArgT = Arg->getType();
+
+  auto CallInt32 = M.getOrInsertFunction(
+      "hook_int32",
+      FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt32Ty(Ctx)}, false));
+  auto CallInt64 = M.getOrInsertFunction(
+      "hook_int64",
+      FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt64Ty(Ctx)}, false));
+  auto CallFloat = M.getOrInsertFunction(
+      "hook_float",
+      FunctionType::get(Type::getVoidTy(Ctx), {Type::getFloatTy(Ctx)}, false));
+  auto CallDouble = M.getOrInsertFunction(
+      "hook_double",
+      FunctionType::get(Type::getVoidTy(Ctx), {Type::getDoubleTy(Ctx)}, false));
+
+  if (ArgT->isIntegerTy(32)) {
+    Builder.CreateCall(CallInt32, {Arg});
+  } else if (ArgT->isIntegerTy(64)) {
+    Builder.CreateCall(CallInt64, {Arg});
+  } else if (ArgT->isFloatTy()) {
+    Builder.CreateCall(CallFloat, {Arg});
+  } else if (ArgT->isDoubleTy()) {
+    Builder.CreateCall(CallDouble, {Arg});
+  } else {
+    outs() << "Skipping\n";
+    Arg->dump();
+  }
+}
+
 struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
     LLVMContext &Context = M.getContext();
-    outs() << "Ran Pass!\n";
-    // Declare or create the function to insert
-    Function *HookFunc = M.getFunction("my_hook");
-    if (!HookFunc) {
-      FunctionType *HookType =
-          FunctionType::get(Type::getVoidTy(Context), false);
-      HookFunc =
-          Function::Create(HookType, Function::ExternalLinkage, "my_hook", M);
-    }
+
+    outs() << "Running pass!\n";
 
     auto &FAM =
         AM.getResult<llvm::FunctionAnalysisManagerModuleProxy>(M).getManager();
-    // Iterate through functions
-    for (Function &F : M) {
-      auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
 
-      LibFunc func;
+    for (auto &F : M) {
+      LibFunc OutFunc;
+      auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
       // for skipping builtin functions
-      std::set<StringRef> builtins;
+      std::set<StringRef> Builtins;
       for (auto &F2 : M) {
-        if (TLI.getLibFunc(F2, func)) {
-          builtins.insert(F2.getFunction().getName());
-          // outs() << '\t' << F2.getFunction().getName() << '\n';
+        if (TLI.getLibFunc(F2, OutFunc)) {
+          Builtins.insert(F2.getFunction().getName());
         }
       }
 
-      auto name = F.getFunction().getName();
-      if (F.isDeclaration() || isStdFnDanger(name))
-        continue; // Skip library functions (and templates that use std lirbary
-                  // types...)
+      // Skip builtins
+      if (F.isDeclaration()) {
+        continue;
+      }
 
-      auto demangled = llvm::demangle(name);
-      outs() << name << '\n';
-      outs() << demangled << '\n';
+      // Skip library functions
+      auto Name = F.getFunction().getName();
+      if (isStdFnDanger(Name)) {
+        continue;
+      }
+
+      auto DemangledName = llvm::demangle(Name);
+      auto *IRGlobalDemangledName =
+          createGlobalStr(M, DemangledName, F.getName().str() + "string");
+
       BasicBlock &EntryBB = F.getEntryBlock();
-      IRBuilder<> Builder(&EntryBB.front()); // Insert at the start
-      Builder.CreateCall(HookFunc);
-    }
+      IRBuilder<> Builder(&EntryBB.front());
+      insertFnEntryLog(Builder, F, M, IRGlobalDemangledName);
 
+      // TODO: record parameters
+      std::set<llvm::Type::TypeID> AllowedTypes;
+      {
+        using llvm::Type;
+        for (auto &&t :
+             {Type::FloatTyID, Type::IntegerTyID, Type::DoubleTyID}) {
+          AllowedTypes.insert(t);
+        }
+      }
+
+      bool viable = !F.arg_empty();
+      if (viable) {
+        for (auto Arg = F.arg_begin(); Arg != F.arg_end(); ++Arg) {
+          if (AllowedTypes.find(Arg->getType()->getTypeID()) ==
+              AllowedTypes.end()) {
+            viable = false;
+            break;
+          }
+        }
+      }
+
+      outs() << "argument dump for " << DemangledName << '\n';
+      for (auto Arg = F.arg_begin(); Arg != F.arg_end(); ++Arg) {
+        callCaptureHook(Builder, M, Arg);
+      }
+    }
     return PreservedAnalyses::none();
   }
 };
