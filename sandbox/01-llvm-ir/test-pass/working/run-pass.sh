@@ -1,2 +1,3 @@
-cp ../test-program.cpp ./
-clang++ -fpass-plugin=../../llvm-pass/libfn-pass.so ./test-program.cpp -S -emit-llvm -o ./bitcode.ll
+cp ../"$2" ./
+mkdir -p ./build
+$1 -fpass-plugin=../../llvm-pass/libfn-pass.so "$2" -S -emit-llvm -o ./build/bitcode.ll
