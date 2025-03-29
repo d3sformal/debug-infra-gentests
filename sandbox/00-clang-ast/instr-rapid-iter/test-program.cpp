@@ -76,6 +76,19 @@ class CX {
     public:
 
     int pubFoo(float f) {
+
+        std::cout << "f " << f << std::endl;
+
+        {
+            float f = 31;
+            std::cout << "f2 " << f << std::endl;
+
+            {
+                float f = f * 2;
+                std::cout << "f3 " << f << std::endl;
+            }
+        }
+
         return 0; 
     }
 
