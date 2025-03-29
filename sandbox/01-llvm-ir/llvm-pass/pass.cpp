@@ -16,6 +16,12 @@ using namespace llvm;
 
 namespace {
 
+
+// there is no way to tell built-ins from user functions in the IR
+// we can only query external linkage and whether a function is a "declaration"
+// this function examines the mangled name of a function and tells (nonportably)
+// which function is and is not in the std:: namespace (_Z*St/i/c/a/o/e/s) or has
+// a reserved name (two underscores)
 bool isStdFnDanger(const StringRef mangled) {
   return mangled.starts_with("_ZNSt") || mangled.starts_with("_ZZNSt") ||
          mangled.starts_with("_ZSt") || mangled.starts_with("_ZNSo") ||
@@ -37,11 +43,6 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
       HookFunc =
           Function::Create(HookType, Function::ExternalLinkage, "my_hook", M);
     }
-
-    // does not work: this pass precedes the target library analysis pass -> TLI
-    // is not available
-
-    // IDEA: modify LLVM IR to contain this information?
 
     auto &FAM =
         AM.getResult<llvm::FunctionAnalysisManagerModuleProxy>(M).getManager();
