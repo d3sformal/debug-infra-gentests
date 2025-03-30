@@ -1,21 +1,10 @@
 # TODO:
 
-* prepare examples for function tracing porototype
+* prepare examples for function tracing prototype
 * prepare examples for parameter capture prototype
 * think about non-deterministic traces
     * do we permit relying on function call determinism?
 * think about C++ objects - capturing inside of them, this, ...
-
-* ??? inserting log expressions that would report into the framework? (additional info) 
-```c++
-    RET_T foo(PT p1, PT p2) { 
-        /* start of static instrumentation */
-        /* user-provided expression that can be serialized/logged */
-        // e.g. p1 * p2 / (p1 - p2) / ...
-        /* end of static instrumentation */
-        // body...
-    }
-```
 # TOPIC: Data Capture Library
 
 ## Capturing funciton arguments
@@ -62,4 +51,18 @@
     * property-checking tools (unsinged over/underflow, no-progress loops, suspicious iteration counts, recording & analysis of comparisons at particular location)
     * GCOV - coverage
 * aggregate mode of the tools - run test cases with multiple failing instances to allow cross-checking (by the user)
+* custom "log expressions" that would report into the framework? (additional info) 
+    * ! compatibility with LLVM IR
+```c++
+    RET_T foo(PT p1, PT p2) { 
+
+        /* start of static instrumentation */
+        
+        /* user-provided expression that can be serialized/logged 
+           e.g. p1 * p2 / (p1 - p2) / ... */
+        /* end of static instrumentation */
+        
+        // function body...
+    }
+```
 
