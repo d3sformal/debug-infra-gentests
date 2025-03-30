@@ -46,7 +46,7 @@
 
 # TOPIC: C++ support
 
-* methods of objects (TODO)
+* methods of objects with AST modification (abandoned?)
 
 # TOPIC: LLVM IR approach
 
@@ -54,4 +54,12 @@
 * trouble with filtering (non) library funcitons - information not available in the IR
     * **Idea**: add metadata to the functions in the IR that could tell the LLVM pass if the function is "#include"d, library, intrinsic, ...
         * [LLVM Discussion](https://discourse.llvm.org/t/how-to-distinguish-between-user-defined-function-in-a-program-and-library-functions/54401/7)
+* capturing inside a lambda, overall lambda instrumentation
+
+# TOPIC: Extras
+* attachment to external tools
+    * Valgrind, GDB - obvious candidates (instrument to conditionally trigger a breakpoint?)
+    * property-checking tools (unsinged over/underflow, no-progress loops, suspicious iteration counts, recording & analysis of comparisons at particular location)
+    * GCOV - coverage
+* aggregate mode of the tools - run test cases with multiple failing instances to allow cross-checking (by the user)
 

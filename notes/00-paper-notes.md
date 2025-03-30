@@ -49,3 +49,41 @@
 - Does not handle assembly, function pointers without user input, different build configurations, floating point operations, aliasing (?? This could be extreme) and cyclic DSs
 - “Find Set of heap object that are reachable from function’s call arguments using a precise approach based on pointer referents”
 - To avoid path explosion, library functions were replaced (“we elide further details due to space”)
+
+# Test-Case Reduction for C Compiler Bugs
+* [source](https://users.cs.utah.edu/~regehr/papers/pldi12-preprint.pdf)
+
+- kinda interesting ideas when it comes to source code modifications
+    - source simplifications like removing fn arguments, replacing aggregates with member scalars
+- kinda specific to compiler bugs -> no external inputs, limited to a single binary that "crashes"
+- KCC and Frama-C as standard-checking tools / UB-sanitizers
+
+# MIMIC: Locating and Understanding Bugs by Analyzing Mimicked Executions
+* [source](https://dl.acm.org/doi/10.1145/2642937.2643014)
+
+- anomaly detection based on passing and failing test cases
+- interesting angle of attach: inspect properties during execution (simple integer comparisons, unsigned integer types of over/underflows, no-progress loops, suspiciously many loop iterations, ...)
+    - better to integrate this with a debugger?
+- expensive (tracking program properties - explosion)
+    - even with optimizations, one example program took an entire day to be analyzed
+- integrates with many tools (GCOV, GDB)
+- authors admit their results might not generalize (pesimism - justified?) 
+
+# Symbolic execution with SymCC: Don't interpret, compile!
+* [source](https://www.usenix.org/conference/usenixsecurity20/presentation/poeplau)
+
+- single-execution path symbolic execution (concolic)
+- main "breakthrough" is usage of LLVM IR instrumentation as a lightweight (both sLOC footprint and runtime overhead)
+    - ~2k sLOC, near-native performance compared to interpretation techniques (not sure if normalized for omni-path vs single-path symbolic execution)
+    - compared to techniques above, they handle binary-only libraries & inline assembly "gracefully" (skip but do not harm execution)
+- SYMCC generates new input during the symbolic execution, increasing coverage
+- mentioned other techniques for IR manipulation/generation:
+    - Valgrind's VEX
+    - LLVM IR generated from QEMU's internal represenataion
+- comparisons with dynamic instrumentation techniques
+- nice examples of LLVM IR (wrt. the paper's topic & even as a sort of introductory material)
+- calls to a symbolic execution library - the EXACT thing I've proposed (for syntactic version)
+    - this (and above) prompted me to implement LLVM IR experiment
+    - simple, what remains is the execution forking
+# AURORA: Statistical Crash Analysis for Automated Root Cause Explanation
+* [source](https://www.usenix.org/conference/usenixsecurity20/presentation/blazytko)

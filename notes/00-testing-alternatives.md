@@ -18,7 +18,7 @@
     * attempt to compile
     * [should be rare: resolve conflicts (clashes in variable names) & recompile]
 
-2. LLVM IR manipulation - TODO -however seems too low level for our purposes
+2. LLVM IR manipulation
 
 ### Notes - syntax tree manipulation
 
@@ -125,8 +125,12 @@ int main() {
 
 TODOs:
 * "reporting framework" injection
+    * solution: linked library, MAJOR ISSUE: `#include` of the library header needed for recompilation to succceed
 * optionaly don't perform syntax/compilation checks? (for large projects)
+    * no idea what exactly was meant by this...
 * clang TOOL vs clang PLUGIN (use tool, recompile vs perfrom changes as a compiler pass)
+    * semi-decided: LLVM IR pass seems better as the current AST modification would perform way too many risky operations
+        * (syntactic) errors when rewriting the AST 
 
 <details>
 <summary>
@@ -364,3 +368,48 @@ int target__impl(float arg) {
 
 * [gcc instrumentation](https://www.kernel.org/doc/html/v5.6/core-api/gcc-plugins.html)
     * [usage](https://www.codingwiththomas.com/blog/accessing-gccs-abstract-syntax-tree-with-a-gcc-plugin)
+
+# UPDATE end of March 2025
+
+## Implementation (issues with): AST rewriting
+
+* initial prototypes looked promising
+* when delving into finer implementation details, I discovered that the approach is, however, infeasable due to the following
+
+1. `C` and `C++` discrepancy
+    * altering syntax when targeting multiple languages requires syntactic rewriting to consider supoprted languages
+    * this requires near-expert knowledge to be certain that modified programs won't be rejected by C and C++ compiler
+    * passing arguments to our argument-capturing library, for example, could become a major issue when attempting to support more complex types
+        * rule-of-five-type nuances
+        * ensuring global uniqueness of possible temporary identifiers, ...
+    * Templates are entirely unsupported due to the possibility of instantiations which take unsupported types as arguments (e.g `tempalte<class T> foo(const T& x)` and `foo<int>`, `foo<CustomWeirdClass>`)
+        * this would either require specialization or compile-time magic to be injected to the template body, complicating the code modifications & rule adherence even further
+    * NOT investigated (maybe TODO?): lambda support
+        * how to visit with the AST Matcher
+        * how to inspect - CAPTURED varaibles 
+
+2. Clang's AST manipulation is not as flexible as expected
+    * AST rewriting does not (to my knowledge) expose an API to "create" valid functions
+    * moreover, deep return type inspection of functions omits qualifiers and return type deduction would probably also not yield any information
+        * this mainly complicates the `clone` approaches' function duplication
+
+3. Library Calls Require Additional risky step
+    * for the modified source to be recompiled again, it must ensure the `#include` of a library header we would use to trace execution
+    * this is impossible within the AST API, furthermore, adding `#include`s "wherever" is not safe
+        * e.g. precompiled headers, some domain-specific requirements, ...
+
+The current implementation instruments the sample (C++-only) code to "record" function entry/exit or function arguments (although with dodgy or outright dangerous syntax). The current AST instrumentation also leverages C++'s destructors to differentiate between "regular" returns and exceptions (as an exercise/in initial stages, it this has been a simpler way to track the function scope than inspecting and modifying `return` statements and possibly their vicinity - due to e.g. single-non-compound-statement `if (cond) return x;` ).
+
+The only positive compared to a custom LLVM IR pass would be the ability to easily differentiate between 
+
+## Runtime overhead and possible speedup by recording in two passes
+
+It might come in handy to perform a two-phase execution before test-case generation:
+1. Run Function Tracing Instrumented code - generates simply put a list of called (and exited) functions
+    * then let developer select a funciton whose input values should be recorded
+2. Run Function Argument Recording Instrumented code - no user interaction needed
+3. Run Function Unit-Testing code using recorded Arguments
+
+This introduces a overhead of recompilation for each different function to be examined. Results could be cached though or the instrumentation could be "conditional" based on a function identifier.
+
+## 
