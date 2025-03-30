@@ -41,8 +41,9 @@
 
 * shows more promise than AST modification
 * trouble with filtering (non) library funcitons - information not available in the IR
-    * **Idea**: add metadata to the functions in the IR that could tell the LLVM pass if the function is "#include"d, library, intrinsic, ...
+    * **Idea**: add metadata to the functions in the IR that could tell the LLVM pass if the function is `#include`d, library, intrinsic, ...
         * [LLVM Discussion](https://discourse.llvm.org/t/how-to-distinguish-between-user-defined-function-in-a-program-and-library-functions/54401/7)
+    * more metadata could help with a GUI integration later (emitting line informatio metadata, ...)
 * capturing inside a lambda, overall lambda instrumentation
 
 # TOPIC: Extras
