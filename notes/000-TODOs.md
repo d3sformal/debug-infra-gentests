@@ -46,6 +46,9 @@
         * [LLVM Discussion](https://discourse.llvm.org/t/how-to-distinguish-between-user-defined-function-in-a-program-and-library-functions/54401/7)
     * more metadata could help with a GUI integration later (emitting line informatio metadata, ...)
 * capturing inside a lambda, overall lambda instrumentation
+* LLVM [intrinsics](http://llvm.org/docs/LangRef.html#intrinsics) - can they be used?
+    * **warning, can affect code generation**
+
 
 # TOPIC: Papers
 
