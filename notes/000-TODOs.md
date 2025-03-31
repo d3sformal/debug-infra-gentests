@@ -5,6 +5,7 @@
 * think about non-deterministic traces
     * do we permit relying on function call determinism?
 * think about C++ objects - capturing inside of them, this, ...
+
 # TOPIC: Data Capture Library
 
 ## Capturing funciton arguments
@@ -45,6 +46,11 @@
         * [LLVM Discussion](https://discourse.llvm.org/t/how-to-distinguish-between-user-defined-function-in-a-program-and-library-functions/54401/7)
     * more metadata could help with a GUI integration later (emitting line informatio metadata, ...)
 * capturing inside a lambda, overall lambda instrumentation
+
+# TOPIC: Papers
+
+* investigate memory instruction instrumentation via Pin from the AURORA tool
+    * [repo](https://github.com/RUB-SysSec/aurora)
 
 # TOPIC: Extras
 * attachment to external tools

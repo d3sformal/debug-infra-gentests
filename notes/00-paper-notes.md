@@ -85,5 +85,25 @@
 - calls to a symbolic execution library - the EXACT thing I've proposed (for syntactic version)
     - this (and above) prompted me to implement LLVM IR experiment
     - simple, what remains is the execution forking
+
 # AURORA: Statistical Crash Analysis for Automated Root Cause Explanation
 * [source](https://www.usenix.org/conference/usenixsecurity20/presentation/blazytko)
+
+- uses *AFL* fuzzer to generate inputs that do (not) trigger a crash
+- uses *Pin* to record information about (all) the executions (one execution per generated input) - generates predicates from information about:
+    - Control Flow
+    - Register & Memory values (maxima, minima)
+    - Flag register changes
+- predicates and crash/noncrash are statistically processed to produce a predicate's "score"
+- predicates are sorted by score and the time they appear in their execution (earliest first)
+- what exactly is the use in the binary-only mode?
+    - unmaintained source-not-available programs?
+- requires: 
+    - x86 (*Pin*)
+    - (non)crashes to be generatable by a fuzzer, fuzzer should support (domain specific) the inputs "enough" to generate large amounts of different crashing and non-crashing inputs (issues with highly-structured inputs - AFL limitation)
+    - I am curious about the way they captured memory values to be written from Pin (from my experiments with this tool, there is no guarantee that the values are "correct")
+    - up to hours of runtime (though all automated)
+- interesting mentions:
+    - **stack hashing** - never heard of this technique, last n stack entries hashed
+    - avoidance of stack and heap pointers (high number of false-positive predicates) 
+    
