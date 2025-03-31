@@ -400,7 +400,14 @@ int target__impl(float arg) {
 
 The current implementation instruments the sample (C++-only) code to "record" function entry/exit or function arguments (although with dodgy or outright dangerous syntax). The current AST instrumentation also leverages C++'s destructors to differentiate between "regular" returns and exceptions (as an exercise/in initial stages, it this has been a simpler way to track the function scope than inspecting and modifying `return` statements and possibly their vicinity - due to e.g. single-non-compound-statement `if (cond) return x;` ).
 
-The only positive compared to a custom LLVM IR pass would be the ability to easily differentiate between 
+### Relevant source files:
+
+* [library interface](../sandbox/00-clang-ast/inject-w-library/lib/include/funTrace.hpp)
+* [AST rewriter](../sandbox/00-clang-ast/cpy-to-llvm-project/clang-tools-extra/ast-injection-with-lib/AstInjection.cpp)
+* [test program - raw](../sandbox/00-clang-ast/instr-rapid-iter/test-program.cpp)
+* to perform instrumentation, run either `ftrace-program-instr.sh` for function tracing or `program-instr.sh` for parameter tracing (in `sandbox/00-clang-ast/instr-rapid-iter/working` directory)
+
+The only positive compared to a custom LLVM IR pass would be the ability to easily differentiate between built-in/library/`#include`d functions from "user" functions.
 
 ## Runtime overhead and possible speedup by recording in two passes
 
@@ -412,4 +419,32 @@ It might come in handy to perform a two-phase execution before test-case generat
 
 This introduces a overhead of recompilation for each different function to be examined. Results could be cached though or the instrumentation could be "conditional" based on a function identifier.
 
-## 
+## LLVM IR instrumentation
+
+Approach similar to the AST rewriting: instrument functions & call to a runtime library.
+
+### Relevant source files:
+
+* [custom compiler pass](../sandbox/01-llvm-ir/llvm-pass/pass.cpp)
+    * injects IR with various calls to our library
+* [skeleton of a support library](../sandbox/01-llvm-ir/test-pass/hooklib/hook.c)
+    * provides a simple interface as a proof-of-concept
+* [code to instrument in C](../sandbox/01-llvm-ir/test-pass/test-program.c)
+* [code to instrument in C++](../sandbox/01-llvm-ir/test-pass/test-program.cpp)
+
+* [how to instrument the sample code and outputs for the instrumented code](../sandbox/01-llvm-ir/test-pass/working/HOWTO.md)
+    * instrumented IR 
+
+### Issues:
+* library vs non-library functions
+    * so far relies on specific mangling (unstable)
+    * could be solved by passing aditional metadata from the previous compilation phase into the IR
+* cannot distinguish between signed & unsigned integers - overall, support of types limited to LLVM IR types
+    * could be solved by the same technique as above (exporting more metadata to the IR) - would introduce language-specific requirements
+    * could be possible to write type-specific handlers of LLVM IR function parameters (e.g. a pointer to `std::string`, ...)
+
+### Advantages over AST technique
+* no messy `#include`ing - only linker errors
+* no C/C++ syntax/type system/move semantics quirks and failure vectors
+* no danger of being incompatible with certain language constructs
+* generally more language-agnostic
