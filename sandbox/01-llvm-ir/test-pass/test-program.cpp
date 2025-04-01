@@ -87,9 +87,22 @@ private:
   int privBar(int x) { return x; }
 };
 
+long overload1(long x) {
+  return x;
+}
+
+long overload1(short x) {
+  return x;
+}
+
+
 int main() {
+  short num = 17;
+
   templateTest<std::string>("");
   templateTest<float>(0.0);
+  
+  overload1(overload1(num));
 
   CX c;
   c.pubFoo(3.14);
