@@ -262,9 +262,104 @@ Inspecting `pubFoo`:
 
 We clearly see the `this` pointer passed as `DW_TAG_pointer_type` with flags `DIFlagArtificial | DIFlagObjectPointer` and the correspondign class type (`CX`).
 
+#### Lambdas
+
+As I have forgotten about instrumenting lambdas in general, this section will have more information regarding them. See [test-program.cpp](../sandbox/01-llvm-ir/test-pass/test-program.cpp)
+
+The dump library skeleton reports their corresponding `operator()`:
+
+```
+[HOOK] start: main::$_0::operator()(int) const
+[HOOK] int: 0
+[HOOK] start: main::$_1::operator()(int&) const
+[HOOK] start: main::$_2::operator()() const
+[HOOK] start: main::$_3::operator()(float*) const
+```
+
+The following is the metadata (`types`):
+
+```
+// Noncapturing lambda that takes and returns an `int`
+
+_ZZ4mainENK3$_0clEi main::$_0::operator()(int) const
+<0x33511980> = distinct !DISubprogram(name: "operator()", linkageName: "_ZZ4mainENK3$_0clEi", scope: <0x33195e78>, file: <0x324ec940>, line: 119, type: <0x335105a0>, scopeLine: 119, flags: DIFlagPrototyped, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: <0x32514848>, declaration: <0x33511900>, retainedNodes: <0x32692020>)
+test-program.cpp
+<0x325f4d48> = !DIBasicType(name: "int", size: 32, encoding: DW_ATE_signed)
+<0x32f80790> = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: <0x33577750>, size: 64, flags: DIFlagArtificial | DIFlagObjectPointer)
+<0x325f4d48> = !DIBasicType(name: "int", size: 32, encoding: DW_ATE_signed)
+
+// capture-by-value lambda that takes an `int&`, return `MyTypeT`
+
+_ZZ4mainENK3$_1clERi main::$_1::operator()(int&) const
+<0x32c56a50> = distinct !DISubprogram(name: "operator()", linkageName: "_ZZ4mainENK3$_1clERi", scope: <0x3278b018>, file: <0x324ec940>, line: 123, type: <0x33511ca0>, scopeLine: 123, flags: DIFlagPrototyped, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: <0x32514848>, declaration: <0x32c569d0>, retainedNodes: <0x32692020>)
+test-program.cpp
+<0x334e98c0> = !DIDerivedType(tag: DW_TAG_typedef, name: "MyTypeT", file: <0x324ec940>, line: 100, baseType: <0x334e9840>)
+<0x3350f9b0> = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: <0x3350f8b0>, size: 64, flags: DIFlagArtificial | DIFlagObjectPointer)
+<0x32f80c90> = !DIDerivedType(tag: DW_TAG_reference_type, baseType: <0x325f4d48>, size: 64)
 
 
-Observations:
+// lambda with a generic capture list returning `MyTypeT`
+
+_ZZ4mainENK3$_2clEv main::$_2::operator()() const
+<0x3355e000> = distinct !DISubprogram(name: "operator()", linkageName: "_ZZ4mainENK3$_2clEv", scope: <0x3350c2d8>, file: <0x324ec940>, line: 133, type: <0x32ec9ab0>, scopeLine: 133, flags: DIFlagPrototyped, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: <0x32514848>, declaration: <0x3355df80>, retainedNodes: <0x32692020>)
+test-program.cpp
+<0x334e98c0> = !DIDerivedType(tag: DW_TAG_typedef, name: "MyTypeT", file: <0x324ec940>, line: 100, baseType: <0x334e9840>)
+<0x32ec9a40> = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: <0x32c56ac0>, size: 64, flags: DIFlagArtificial | DIFlagObjectPointer)
+
+
+// capture-by-reference lambda taking a `float*` arugment returning `int`
+
+_ZZ4mainENK3$_3clEPf main::$_3::operator()(float*) const
+<0x33260ad0> = distinct !DISubprogram(name: "operator()", linkageName: "_ZZ4mainENK3$_3clEPf", scope: <0x33122f78>, file: <0x324ec940>, line: 129, type: <0x33263080>, scopeLine: 129, flags: DIFlagPrototyped, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: <0x32514848>, declaration: <0x33260a50>, retainedNodes: <0x32692020>)
+test-program.cpp
+<0x325f4d48> = !DIBasicType(name: "int", size: 32, encoding: DW_ATE_signed)
+<0x332609c0> = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: <0x33263010>, size: 64, flags: DIFlagArtificial | DIFlagObjectPointer)
+<0x3355e070> = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: <0x32510c48>, size: 64)
+```   
+
+##### Polymorphic lambdas
+
+Consider:
+
+```c++
+  auto auto_lambda = [](auto x) {
+    return x * 2;
+  };
+
+  float autofloat = auto_lambda(3.14f);
+  int autoint = auto_lambda(static_cast<int>(12));
+```
+
+This creates `template<class T> S operator()(T)` that gets instantiated twice: once for `int` and once for `float`. (`S` is the type of the result of the multiplication of `T` by an `int`)
+
+As of the last commit of the `llvm-project` submodule, the mangled name of this language construct - `_ZZ4mainENK3$_0clIiEEDaT_` and `_ZZ4mainENK3$_0clIfEEDaT_` cannot be demangled via `llvm::Demangle`. This is also true for `GNU c++filt (GNU Binutils) 2.43.1`. Apparently the last part of the name `DaT_` stands for return type dedcuction with a placeholder for the returned type (which is available in the IR metadata). Resources for this:
+* [warning! "sort-of-WTF" information ahead](https://quuxplusone.github.io/blog/2019/08/08/why-default-order-failed/)
+* [llvm-project/clang/lib/AST/ItaniumMangle.cpp](https://github.com/llvm/llvm-project/blob/2c0b888359c6c5976054bb423ba1d7b37bae9f1a/clang/lib/AST/ItaniumMangle.cpp#L4558)
+    * `::= Da # auto`
+    * can't support for this be added to the `llvm::Demangle`?
+    * digging further in [a dedicated document](./0x-llvm-demangling.md)
+
+`types` metadata:
+
+```
+_ZZ4mainENK3$_0clIfEEDaT_ _ZZ4mainENK3$_0clIfEEDaT_
+<0x4842e150> = distinct !DISubprogram(name: "operator()<float>", linkageName: "_ZZ4mainENK3$_0clIfEEDaT_", scope: <0x4888a5e8>, file: <0x47866940>, line: 146, type: <0x4842e000>, scopeLine: 146, flags: DIFlagPrototyped, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: <0x4788e8d8>, templateParams: <0x488e2078>, declaration: <0x485db9f0>, retainedNodes: <0x47a0b4a0>)
+// Types:
+<0x4788ac48> = !DIBasicType(name: "float", size: 32, encoding: DW_ATE_float)
+<0x4842df90> = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: <0x485da540>, size: 64, flags: DIFlagArtificial | DIFlagObjectPointer)
+<0x4788ac48> = !DIBasicType(name: "float", size: 32, encoding: DW_ATE_float)
+
+
+_ZZ4mainENK3$_0clIiEEDaT_ _ZZ4mainENK3$_0clIiEEDaT_
+<0x4842f910> = distinct !DISubprogram(name: "operator()<int>", linkageName: "_ZZ4mainENK3$_0clIiEEDaT_", scope: <0x4888a5e8>, file: <0x47866940>, line: 146, type: <0x4842e420>, scopeLine: 146, flags: DIFlagPrototyped, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: <0x4788e8d8>, templateParams: <0x4842e3d8>, declaration: <0x4842f880>, retainedNodes: <0x47a0b4a0>)
+// Types:
+<0x4796edd8> = !DIBasicType(name: "int", size: 32, encoding: DW_ATE_signed)
+<0x4842df90> = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: <0x485da540>, size: 64, flags: DIFlagArtificial | DIFlagObjectPointer)
+<0x4796edd8> = !DIBasicType(name: "int", size: 32, encoding: DW_ATE_signed)
+```
+
+**Observations**
+
 * (off-topic?) file `checksum` provided in the `DIFile` metadata - could be useful 
 * reference type is wrapped in `!DIDerivedType(tag: DW_TAG_reference_type, ...` with the obvious `baseType`
     * pointer type is wrapped in a `DIDerivedType` with `DW_TAG_pointer_type`
@@ -280,6 +375,8 @@ e.g.
     <0xd2a5c48> = !DIBasicType(name: "float", size: 32, encoding: DW_ATE_float)
 ```
 * metadata of `C` functions has the same structure
+* arguments of a lambda are delimited by 2 `type` metadata values (return value and the pointer to the lambda object), i.e. lambda argument list begins after `DIFlagArtificial | DIFlagObjectPointer` type metadata object
+
 
 # Snippets
 
@@ -290,7 +387,7 @@ e.g.
 if (auto* subprogram = F.getSubprogram(); subprogram) {
     subprogram->dump();
     outs() << subprogram->getFilename() << '\n';
-    // change "overload1" to anything you'd like or remove the clause (beware that some trees get extremely large)
+    // change the "overload1" part to any filtering predicate (beware that some trees get extremely large)
     if (auto* type = subprogram->getType(); subprogram->getName() == "overload1" && type) {
         type->dumpTree();
     }

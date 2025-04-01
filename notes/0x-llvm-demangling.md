@@ -108,6 +108,6 @@ Produces `_ZNK4abcdMUlT_E_clIiEEDaS0_` for `abcd` which is demangled to:
 Meanwhile `efgh`: `efgh::'lambda'(int)::operator()(int) const`.
 
 Witout `inline` the mangling reverts to `auto $_0::operator()<int>(int) const` for `abcd`
-and similarly for `efgh`. The point is that `abcd` **outside** of `main` gets demangled while `auto_lambda` **inside** main doesn't. 
+and similarly for `efgh`. The point is that `abcd` **outside** of `main` gets demangled while `auto_lambda` **inside** main doesn't.
 
-I leave this issue for later to be polished and reported.
+I leave this issue for later to be polished and reported. As even the `c++filt` cannot demangle this, mangling itself remains a suspect.
