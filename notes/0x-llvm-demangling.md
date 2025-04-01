@@ -54,7 +54,7 @@ index b0363c1a7a7..b03692f7006 100644
 ```
 
 but it fails to demangle `_Z7addAutoIiEDaT_S0_` for example, which stands for
-`auto addAuto<int>(int, int)`.
+`auto addAuto<int>(int, int)` (and is demangled correctly before applying this patch).
 
 Suddenly `DaT_` became suspect (removing it from the mangled string `_ZZ4mainENK3$_0clIfEEDaT_`, turning it to `_ZZ4mainENK3\$_0clIfEE` gave correct result: `main::$_0::operator()<int>`).
 
