@@ -11,9 +11,9 @@ Map the possibilities of LLVM IR metadata, specifically:
 
 ## Concrete Why-s
 
-* *LLVM pass, function "classification":* in clang's AST Matchers, we can query whether a function is built-in / library /`#include`d, in LLVM IR, this information is not available (not in a stable way)
+**WHY1**: *LLVM pass, function "classification":* in clang's AST Matchers, we can query whether a function is built-in / library /`#include`d, in LLVM IR, this information is not available (not in a stable way)
 
-* *LLVM pass, function argument capture:* exporting specific type information into the IR would allow the LLVM IR pass and accompanying library to support more types, easing extensions of the envisioned tools
+**WHY2**: *LLVM pass, function argument capture:* exporting specific type information into the IR would allow the LLVM IR pass and accompanying library to support more types, easing extensions of the envisioned tools
 
 * ??? who knows what we'll find!
 
@@ -73,3 +73,115 @@ ret void, !dbg !9
 > A potential future use case is to support Type-Based Alias Analysis (TBAA). TBAA is an optimization to know that "float *P1" and "int *P2" can never alias (in GCC, this is enabled with -fstrict-aliasing). The trick with this is that it isn't safe to implement TBAA in terms of LLVM IR types, you really need to be able to encode and express a type-subset graph according to the complex source-level rules (e.g. in C, "char*" can alias anything).
 
 Custom analysis of such "aliasing" pointers could yield invalid programs (if `char *` aliases non-null-terminated data, for example, sending it to our library would cause huge issues)
+
+### Documentation
+
+* `DISubprogram` nodes that represent functions contain unmangled functuion names
+
+## Exploration
+
+When compiled with debug information (`-g`), `DISubprogram` is available via:
+
+```c++
+if (DISubprogram* subprogram = F.getSubprogram(); subprogram) {
+    subprogram->dump();
+} 
+```
+
+A possible hint into the function's origin (as per **WHY1**) is the `subprogram->getFilename()`.
+
+**Examples**
+
+* the file name output is the last line of each snippet
+
+Example template function:
+
+```
+_Z12templateTestIfET_S0_
+<0x426b8de0> = distinct !DISubprogram(name: "templateTest<float>", linkageName: "_Z12templateTestIfET_S0_", scope: <0x41526940>, file: <0x41526940>, line: 65, type: <0x426ce8c0>, scopeLine: 65, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: <0x4154e558>, templateParams: <0x426cbdc8>, retainedNodes: <0x421b8de0>)
+test-program.cpp
+```
+
+Example member function
+
+```
+<0x4153bfa0> = distinct !DISubprogram(name: "pubFoo", linkageName: "_ZN2CX6pubFooEf", scope: <0x41a2b328>, file: <0x41526940>, line: 69, type: <0x4253ae70>, scopeLine: 69, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: <0x4154e558>, declaration: <0x4253af00>, retainedNodes: <0x421b8de0>)
+test-program.cpp
+```
+
+Example template funcion and a destructor (both coming out of the library)
+
+```
+_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEC2IS3_EEPKcRKS3_
+<0x423243b0> = distinct !DISubprogram(name: "basic_string<std::allocator<char> >", linkageName: "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEC2IS3_EEPKcRKS3_", scope: <0x42642508>, file: <0x418f1340>, line: 646, type: <0x426422c0>, scopeLine: 648, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: <0x4154e558>, templateParams: <0x418f14b8>, declaration: <0x42649ec0>, retainedNodes: <0x421b8de0>)
+/usr/lib/gcc/x86_64-redhat-linux/14/../../../../include/c++/14/bits/basic_string.h
+
+_ZNSaIcED2Ev
+<0x4263c490> = distinct !DISubprogram(name: "~allocator", linkageName: "_ZNSaIcED2Ev", scope: <0x4229a8c8>, file: <0x42299db0>, line: 182, type: <0x4229a700>, scopeLine: 182, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: <0x4154e558>, declaration: <0x420ef360>, retainedNodes: <0x421b8de0>)
+/usr/lib/gcc/x86_64-redhat-linux/14/../../../../include/c++/14/bits/allocator.h
+```
+
+One option is to compare the `subprogram->getFilename()` path to the files of all compiled files (by parsing e.g. `compile_commands.json` that can be generated). Or we could "export" the paths used to look up library functions (note that this is different than "all include paths"). It could be tricky, though to generalize the approach to work accross toolchains (Make vs CMake) and filesytem structures (links, more complex directory structure, ...).
+
+### Metadata of overloaded functions
+
+Considering:
+
+```c++
+long overload1(long x) {
+  return x;
+}
+
+long overload1(short x) {
+  return x;
+}
+```
+
+The metadata generated is as follows:
+
+```
+// overload1(long)
+<0x24ca40e0> = distinct !DISubprogram(name: "overload1", linkageName: "_Z9overload1l", scope: <0x23c9f940>, file: <0x23c9f940>, line: 90, type: <0x240590c0>, scopeLine: 90, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: <0x23cc75d8>, retainedNodes: <0x243df690>)
+
+// overload1(short)
+<0x24c9df10> = distinct !DISubprogram(name: "overload1", linkageName: "_Z9overload1s", scope: <0x23c9f940>, file: <0x23c9f940>, line: 94, type: <0x24c13580>, scopeLine: 94, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: <0x23cc75d8>, retainedNodes: <0x243df690>)
+```
+
+Notice that `name` is just a name. There is no demangling going on. Dumping the only differing
+metadata: `type`:
+
+```
+overload1(long)
+<0x37f288c0> = !DISubroutineType(types: <0x37963960>)
+  <0x37963960> = !{<0x3778c7b8>, <0x3778c7b8>} // 2 references to the same object (long type metadata)
+    <0x3778c7b8> = !DIBasicType(name: "long", size: 64, encoding: DW_ATE_signed)
+
+overload1(short)
+<0x385ca030> = !DISubroutineType(types: <0x3865a0f0>)
+  <0x3865a0f0> = !{<0x3778c7b8>, <0x386531a8>}
+    <0x3778c7b8> = !DIBasicType(name: "long", size: 64, encoding: DW_ATE_signed)
+    <0x386531a8> = !DIBasicType(name: "short", size: 16, encoding: DW_ATE_signed)
+```
+
+This means multiple things:
+
+We can query this metadata for **precise** argument type information (in addition to the IR type)!
+
+There is a possibility to create custom function descriptions as we do not have to parse the demangled name (`foo(int, short, char*)`). What remains to be seen is the behaviour of templated code, `class`es and `typedef`s.
+
+
+# Snippets
+
+## Metadata Dump
+
+```c++
+// Assumes Function& F in scope
+if (auto* subprogram = F.getSubprogram(); subprogram) {
+    subprogram->dump();
+    outs() << subprogram->getFilename() << '\n';
+    // change "overload1" to anything you'd like (some trees get extremely large)
+    if (auto* type = subprogram->getType(); subprogram->getName() == "overload1" && type) {
+        type->dumpTree();
+    }
+}
+```
