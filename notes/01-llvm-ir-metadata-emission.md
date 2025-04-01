@@ -32,7 +32,6 @@ Map the possibilities of LLVM IR metadata, specifically:
     * http://llvm.org/docs/LangRef.html#t_metadata
     * http://llvm.org/docs/LangRef.html#metadata
     * http://llvm.org/docs/LangRef.html#namedmetadatastructure
-    * http://llvm.org/doxygen/Metadata_8h-source.html
 * *metadata is not a first-class type*
     * operand of an instrinsic or an operand to another metadata or attached to an instruction 
 * `MDString` - string data
