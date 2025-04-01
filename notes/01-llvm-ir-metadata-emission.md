@@ -29,7 +29,6 @@ Map the possibilities of LLVM IR metadata, specifically:
 
 * motivations seem to overlap: **extensible**, for **front-end** writers to do whatever they want, should not interfere with optimizations and should be easily **decodable**
 * Links
-    * http://llvm.org/docs/LangRef.html#t_metadata
     * http://llvm.org/docs/LangRef.html#metadata
     * http://llvm.org/docs/LangRef.html#namedmetadatastructure
 * *metadata is not a first-class type*
