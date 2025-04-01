@@ -2,11 +2,11 @@ To compile and run everything (apart from LLVM):
 
 `test-program.cpp`
 
-    ./rebuild-pass.sh && ./run-pass.sh clang++ test-program.cpp && ./ir-to-bin.sh clang++ && ./export_lib_path.sh && ./build/a.out
+    ./build-and-run.sh clang++ test-program.cpp
 
 `test-program.c`
 
-    ./rebuild-pass.sh && ./run-pass.sh clang test-program.c && ./ir-to-bin.sh clang && ./export_lib_path.sh && ./build/a.out
+    ./build-and-run.sh clang test-program.c
 
 Example output for `test-program.cpp`:
 
