@@ -95,13 +95,25 @@ long overload1(short x) {
   return x;
 }
 
+using MyTypeX = float;
+
+using MyTypeT = MyTypeX;
+
+MyTypeT myTypeTFoo(MyTypeT& ref) {
+  return ref;
+}
+
 
 int main() {
   short num = 17;
-
+  foo_namespace::bar_namespace::foo(1, 3.14);
   templateTest<std::string>("");
   templateTest<float>(0.0);
   
+  myTypeTFoo(retRef());
+  MyTypeT x = 4.53;
+  myTypeTFoo(x);
+
   overload1(overload1(num));
 
   CX c;

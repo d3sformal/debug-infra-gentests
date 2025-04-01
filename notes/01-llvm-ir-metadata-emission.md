@@ -163,12 +163,123 @@ overload1(short)
     <0x386531a8> = !DIBasicType(name: "short", size: 16, encoding: DW_ATE_signed)
 ```
 
+#### notable discrepancy when using `clang` vs `clang++` (to keep in mind)
+
+output of execution (accidentally) compiled with `clang++`:
+
+```
+[HOOK] start: main
+[HOOK] start: foo(int)
+[HOOK] int: 3
+C FOO: 3
+[HOOK] start: baz(int, float)
+...
+```
+
+now with `clang`:
+
+```
+[HOOK] start: main
+[HOOK] start: foo
+[HOOK] int: 3
+C FOO: 3
+[HOOK] start: baz
+...
+```
+The function names printed out come from demangling the function names. Obviously the `C` compiler does not mangle the names, therefore there is less information in the final function name present in the IR. 
+
+This further hints at the need to inspect metadata to ensure that uniquely identifying information about functions is exported/retained after instrumentation.
+
 This means multiple things:
 
-We can query this metadata for **precise** argument type information (in addition to the IR type)!
+We should query this metadata for **precise** argument type information (in addition to the IR type)!
 
-There is a possibility to create custom function descriptions as we do not have to parse the demangled name (`foo(int, short, char*)`). What remains to be seen is the behaviour of templated code, `class`es and `typedef`s.
+There is a possibility of creating custom function descriptions as we can avoid parsing the demangled name (`foo(int, short, char*)`). What remains to be seen is the behaviour of templated code, `class`es and `typedef`s.
 
+#### Templates, Classes, Typedefs
+
+* **Template functions** - expose the same argument metadata as normal functions (example for `templateTest<float>`)
+
+```
+<0x3bf41cf0> = !DISubroutineType(types: <0x3bf41ca0>)
+  <0x3bf41ca0> = !{<0x3adbac48>, <0x3adbac48>}
+    <0x3adbac48> = !DIBasicType(name: "float", size: 32, encoding: DW_ATE_float)
+```
+
+* **using** type aliases
+
+Function `MyTypeT myTypeTFoo(MyTypeT&)` uses a alias `using MyTypeT = float`, the metadata looks thus:
+
+```
+<0x20f53140> = !DISubroutineType(types: <0x20f4e590>)
+  <0x20f4e590> = !{<0x20f53050>, <0x20f530d0>}
+    <0x20f53050> = !DIDerivedType(tag: DW_TAG_typedef, name: "MyTypeT", file: <0x1ff51940>, line: 65, baseType: <0x1ff75c48>)
+      <0x1ff51940> = !DIFile(filename: "test-program.cpp", directory: "SNIPPED", checksumkind: CSK_MD5, checksum: "b6ae8206e3dcc197329da2927c91a308")
+      <0x1ff75c48> = !DIBasicType(name: "float", size: 32, encoding: DW_ATE_float)
+    <0x20f530d0> = !DIDerivedType(tag: DW_TAG_reference_type, baseType: <0x20f53050>, size: 64)
+```
+
+* nested **using** type alias
+
+setup:
+
+```c++
+using MyTypeX = float;
+
+using MyTypeT = MyTypeX;
+
+MyTypeT myTypeTFoo(MyTypeT& ref) {
+  return ref;
+}
+```
+
+Metadata:
+
+```
+<0x130a4cb0> = !DISubroutineType(types: <0x1309ffe0>)
+  <0x1309ffe0> = !{<0x130a4bc0>, <0x130a4c40>}
+    <0x130a4bc0> = !DIDerivedType(tag: DW_TAG_typedef, name: "MyTypeT", file: <0x120a4940>, line: 100, baseType: <0x130a4b40>)
+      <0x120a4940> = !DIFile(SNIPPED, SEE ABOVE)
+      <0x130a4b40> = !DIDerivedType(tag: DW_TAG_typedef, name: "MyTypeX", file: <0x120a4940>, line: 98, baseType: <0x120c8c48>)
+        <0x120c8c48> = !DIBasicType(name: "float", size: 32, encoding: DW_ATE_float)
+    <0x130a4c40> = !DIDerivedType(tag: DW_TAG_reference_type, baseType: <0x130a4bc0>, size: 64)
+```
+
+* `C` `typedef`s - from my POV they behave the same as `using`s
+
+* **classes - member functions**
+
+Inspecting `pubFoo`:
+
+```
+<0x2e2016b0> = !DISubroutineType(types: <0x2e201668>)
+  <0x2e201668> = !{<0x2d2f2ba8>, <0x2e201600>, <0x2d20ec48>}
+    <0x2d2f2ba8> = !DIBasicType(name: "int", size: 32, encoding: DW_ATE_signed)
+    <0x2e201600> = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: <0x2d38fa18>, size: 64, flags: DIFlagArtificial | DIFlagObjectPointer)
+      <0x2d38fa18> = distinct !DICompositeType(tag: DW_TAG_class_type, name: "CX", SNIP CX METADATA)
+    <0x2d20ec48> = !DIBasicType(name: "float", size: 32, encoding: DW_ATE_float)
+```
+
+We clearly see the `this` pointer passed as `DW_TAG_pointer_type` with flags `DIFlagArtificial | DIFlagObjectPointer` and the correspondign class type (`CX`).
+
+
+
+Observations:
+* (off-topic?) file `checksum` provided in the `DIFile` metadata - could be useful 
+* reference type is wrapped in `!DIDerivedType(tag: DW_TAG_reference_type, ...` with the obvious `baseType`
+    * pointer type is wrapped in a `DIDerivedType` with `DW_TAG_pointer_type`
+* type alias (using/typedef) is wrapped in `!DIDerivedType(tag: DW_TAG_typedef, name: "MyTypeT", ... ` with the `baseType` referencing the aliased type (`!DIBasicType` of `float` or other alias - nested `using` - `!DIDerivedType`), suggesting a clear walk algorithm to get to the bottom-most type to determine the viability of the parameter capture
+
+* `void` metadata return type is shown as `null` member of the `types` metadata tuple
+e.g.
+```
+// void foo(int, float)
+<0xe0d7760> = !DISubroutineType(types: <0xd6cb5b8>)
+  <0xd6cb5b8> = !{null, <0xd389b08>, <0xd2a5c48>}
+    <0xd389b08> = !DIBasicType(name: "int", size: 32, encoding: DW_ATE_signed)
+    <0xd2a5c48> = !DIBasicType(name: "float", size: 32, encoding: DW_ATE_float)
+```
+* metadata of `C` functions has the same structure
 
 # Snippets
 
@@ -179,7 +290,7 @@ There is a possibility to create custom function descriptions as we do not have 
 if (auto* subprogram = F.getSubprogram(); subprogram) {
     subprogram->dump();
     outs() << subprogram->getFilename() << '\n';
-    // change "overload1" to anything you'd like (some trees get extremely large)
+    // change "overload1" to anything you'd like or remove the clause (beware that some trees get extremely large)
     if (auto* type = subprogram->getType(); subprogram->getName() == "overload1" && type) {
         type->dumpTree();
     }
