@@ -1,11 +1,13 @@
 #!/bin/sh
 
-# expects llvm-project repository
+# expects the llvm-project submodule
 
-mkdir llvm-project/clang-tools-extra/ast-injection
+TARGET_TOOL_FOLDER=llvm-project/clang-tools-extra/ast-injection-with-lib/
 
-cp -r ./cpy-to-llvm-project/clang-tools-extra/ast-injection/* llvm-project/clang-tools-extra/ast-injection/
+mkdir $TARGET_TOOL_FOLDER
 
-echo "add_subdirectory(ast-injection)" >> llvm-project/clang-tools-extra/CMakeLists.txt
+cp -r ./cpy-to-llvm-project/clang-tools-extra/ast-injection-with-lib/* $TARGET_TOOL_FOLDER
+
+echo "add_subdirectory(ast-injection-with-lib)" >> llvm-project/clang-tools-extra/CMakeLists.txt
 
 echo "Run make in the build directory now"
