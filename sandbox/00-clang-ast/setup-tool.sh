@@ -10,4 +10,4 @@ cp -r ./cpy-to-llvm-project/clang-tools-extra/ast-injection-with-lib/* $TARGET_T
 
 echo "add_subdirectory(ast-injection-with-lib)" >> llvm-project/clang-tools-extra/CMakeLists.txt
 
-echo "Run make in the build directory now"
+echo "OK - run ninja in the ./build directory now"
