@@ -378,6 +378,60 @@ e.g.
 * arguments of a lambda are delimited by 2 `type` metadata values (return value and the pointer to the lambda object), i.e. lambda argument list begins after `DIFlagArtificial | DIFlagObjectPointer` type metadata object
 
 
+## Custom LLVM IR Metadata
+
+The following `llvm-project` diff allows "custom" metadata emission (unsafe first version)
+
+```diff
+diff --git a/clang/lib/CodeGen/CodeGenFunction.cpp b/clang/lib/CodeGen/CodeGenFunction.cpp
+index dcf523f56bf..397a5b229b9 100644
+--- a/clang/lib/CodeGen/CodeGenFunction.cpp
++++ b/clang/lib/CodeGen/CodeGenFunction.cpp
+@@ -31,6 +31,7 @@
+ #include "clang/AST/StmtObjC.h"
+ #include "clang/Basic/Builtins.h"
+ #include "clang/Basic/CodeGenOptions.h"
++#include "clang/Basic/SourceManager.h"
+ #include "clang/Basic/TargetBuiltins.h"
+ #include "clang/Basic/TargetInfo.h"
+ #include "clang/CodeGen/CGFunctionInfo.h"
+@@ -1117,6 +1118,15 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
+         getLLVMContext(), VScaleRange->first, VScaleRange->second));
+   }
+ 
++  if (FD && (getLangOpts().CPlusPlus || getLangOpts().C11 || getLangOpts().C17 || getLangOpts().C23 || getLangOpts().C2y || getLangOpts().C99)) {
++    auto &SourceManager = FD->getASTContext().getSourceManager();
++    bool InMainFile = SourceManager.isInMainFile(
++        SourceManager.getExpansionLoc(FD->getBeginLoc()));
++
++    Fn->addMetadata(InMainFile ? "VSTR_LOCAL" : "VSTR_INCLUDED", *llvm::MDNode::get(Fn->getContext(),
++    llvm::MDString::get(Fn->getContext(), "dummy_value")));
++  }
++
+   llvm::BasicBlock *EntryBB = createBasicBlock("entry", CurFn);
+ 
+   // Create a marker to make it easy to insert allocas into the entryblock
+```
+`FD` is `FunctionDecl`, a familiar type from the AST-modification attemtps.
+`Fn` is an `llvm::Function*`.
+
+I chose to create different metadata keys based on whether the `FunctionDecl` "is in main file" - I copied code from `isExpansionInMainFile` AST Matcher macro.
+
+The relevant LLVM IR this modification produced on `test-program.cpp`:
+
+```
+!1597 = !{!"dummy_value"}
+
+... SNIP ...
+
+!dbg !1801 !VSTR_LOCAL !1597 {
+  call void @hook_start(ptr 
+
+... SNIP ...
+
+unnamed_addr #3 comdat align 2 personality ptr @__gxx_personality_v0 !dbg !1810 !VSTR_INCLUDED !1597 {
+```
+
 # Snippets
 
 ## Metadata Dump
@@ -393,3 +447,4 @@ if (auto* subprogram = F.getSubprogram(); subprogram) {
     }
 }
 ```
+
