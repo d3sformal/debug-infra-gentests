@@ -26,7 +26,7 @@ ninja
 # sudo ninja install
 ```
 
-Or build & install via `sandbox/00-clang-ast/build.sh`
+Or build & install via [`sandbox/00-clang-ast/build.sh`](./sandbox/00-clang-ast/build.sh)
 
 ### Re-building, modification
 
@@ -60,18 +60,16 @@ Folder naming:
 * `build` - most output artifacts will end up here
 
 
-1. `notes` subdirectory generally unorganized notes
-    * `00-paper-notes` - related papers
-    * `00-testing-alternatives` - bulletpoint-style thoughts on, pros/cons of and issues with various methods 
-2. `sandbox`
-    * `00-clang-ast` - explores source-level modification of the Clang's AST
+1. [`notes`](./notes/) subdirectory generally unorganized notes
+    * [`00-paper-notes`](./notes/00-paper-notes.md) - related papers
+    * [`00-testing-alternatives`](./notes/00-testing-alternatives.md) - bulletpoint-style thoughts on, pros/cons of and issues with various methods 
+2. [`sandbox`](./sandbox/)
+    * [`00-clang-ast`](./sandbox/00-clang-ast/) - explores source-level modification of the Clang's AST
         * idea: 
             * modify source code by inspecting and rewriting the AST
             * recompile modified source code with an instrumentation library
-    * `01-llvm-ir` - explores LLVM IR modification
+    * [`01-llvm-ir`](./sandbox/01-llvm-ir/) - explores LLVM IR modification
         * idea:
             * compile source into LLVM Bitcode
             * inspect and modify generated Bitcode by adding instructions (mostly just calls into instrumentation library functions)
             * compile modified Bitcode with an instrumentation library
-        * commands and results in `sandbox/01-llvm-ir/test-pass/working`
-
