@@ -52,7 +52,7 @@ cmake \
 ## Organization
 
 Code style in most sources that `#include` LLVM headers is (auto)formatted by `clangd`.
-Other files have no code style enforced (so far).
+Other files have no code style enforced (so far). Most of the time, running `cmake ./ && make` should result in a successful build. 
  
 Folder naming: 
 
@@ -65,10 +65,13 @@ Folder naming:
     * `00-testing-alternatives` - bulletpoint-style thoughts on, pros/cons of and issues with various methods 
 2. `sandbox`
     * `00-clang-ast` - explores source-level modification of the Clang's AST
-        * modify source code by inspecting and rewriting the AST
-        * recompile modified source code with an instrumentation library
+        * idea: 
+            * modify source code by inspecting and rewriting the AST
+            * recompile modified source code with an instrumentation library
     * `01-llvm-ir` - explores LLVM IR modification
-        * compile source into LLVM Bitcode
-        * inspect and modify generated Bitcode by adding instructions (mostly just calls into an instrumentation library functions)
-        * compile modified Bitcode with an instrumentation library
-        * commands and results in `sandbox/01-llvm-ir/test-pass/working` 
+        * idea:
+            * compile source into LLVM Bitcode
+            * inspect and modify generated Bitcode by adding instructions (mostly just calls into instrumentation library functions)
+            * compile modified Bitcode with an instrumentation library
+        * commands and results in `sandbox/01-llvm-ir/test-pass/working`
+
