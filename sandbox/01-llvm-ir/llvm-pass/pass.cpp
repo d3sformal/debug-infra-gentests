@@ -46,7 +46,7 @@ GlobalVariable *createGlobalStr(Module &M, StringRef Val, StringRef Id) {
   return GV;
 }
 
-void insertFnEntryLog(IRBuilder<> &Builder, Function &F, Module &M,
+void insertFnEntryLog(IRBuilder<> &Builder, Module &M,
                       GlobalVariable *Message) {
   auto *IRStrPtr = Builder.CreateBitCast(Message, Builder.getPtrTy());
   auto Callee = M.getOrInsertFunction(
@@ -88,8 +88,6 @@ void callCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg) {
 struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
-    LLVMContext &Context = M.getContext();
-
     outs() << "Running pass!\n";
 
     auto &FAM =
@@ -123,9 +121,8 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 
       BasicBlock &EntryBB = F.getEntryBlock();
       IRBuilder<> Builder(&EntryBB.front());
-      insertFnEntryLog(Builder, F, M, IRGlobalDemangledName);
+      insertFnEntryLog(Builder, M, IRGlobalDemangledName);
 
-      // TODO: record parameters
       std::set<llvm::Type::TypeID> AllowedTypes;
       {
         using llvm::Type;
