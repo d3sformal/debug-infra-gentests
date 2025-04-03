@@ -1,3 +1,6 @@
+#!/bin/sh
+set -e
+
 mkdir build
 cd build
 cmake \
@@ -5,7 +8,7 @@ cmake \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra" \
     -DCMAKE_BUILD_TYPE=Release \
-    -DLLVM_BUILD_TESTS=OFF \
+    -DLLVM_BUILD_TESTS=ON \
     -DLLDB_INCLUDE_TESTS=OFF \
     -DCLANG_INCLUDE_TESTS=OFF \
     -DLLVM_TARGETS_TO_BUILD=host \

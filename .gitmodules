@@ -1,3 +1,6 @@
 [submodule "sandbox/00-clang-ast/llvm-project"]
-	path = sandbox/00-clang-ast/llvm-project
+	path = sandbox/llvm-project
 	url = https://github.com/llvm/llvm-project.git
+[submodule "sandbox/llvm-project-cir"]
+	path = sandbox/llvm-project-cir
+	url = https://github.com/llvm/clangir.git

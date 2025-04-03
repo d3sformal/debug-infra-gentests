@@ -2,17 +2,16 @@
 
 ## Setup & build 
 
-* see the root [README](../../README.md)
-
-* the setup of [`llvm-project`](./llvm-project/) is **also** needed for other parts of the project
+* requires the `llvm-project` to be built according to the root [README](../../README.md)
 
 ## Contents
 
-The term `tracing library` refers to a piece of code that enables us to trace function entry & capture teh values of simple function paramters.
+> [!note]
+> The term `tracing library` refers to a piece of code that enables us to trace function entry & capture the values of simple function paramters.
 
 * [`cpy-to-llvm-project`](./cpy-to-llvm-project/)
     * contains clang `ASTMatchers`-based tools
-    * is supposed to be copied into the `llvm-project/clang-tools-extra` directory (for easier build - see the root [README](../../README.md) or the [`setup-tool.sh`](./setup-tool.sh) script)
+    * is supposed to be copied into the `../llvm-project/clang-tools-extra` directory (for easier build - see the root [README](../../README.md) or the [`setup-tool.sh`](./setup-tool.sh) script)
     * [`ast-injection`](./cpy-to-llvm-project/clang-tools-extra/ast-injection/) - initial prototype
     * [`ast-injection-with-lib`](./cpy-to-llvm-project/clang-tools-extra/ast-injection-with-lib/) - a refinement of the initial prototype, exploration of injecting calls to our tracing library
 

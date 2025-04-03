@@ -1,52 +1,70 @@
 # Research Project
 
-**This repo requires LLVM (large submodule)**, to perform a shallow clone, run:
+> [!note]
+> This repo requires up to 2 (**large**) LLVM submodules. To perform a shallow clone, run:
 
     git clone --recurse-submodules --shallow-submodules
 
+> [!tip]
+> Currently, the `llvm-project-cir` submodule is **not** required, you can pull even less data by:
+
+    git submodule update --depth=1 ./sandbox/llvm-project
+
 ## Setup & Build
+
+> [!note] Prerequisites: 
+> `cmake`, C/C++ toolchain, `ninja`, `xargs`
 
 ### Setup LLVM
 
+The following sets up the `ninja` build system:
+
 ```sh
-cd sandbox/00-clang-ast/
-# optionally for AST modification demonstration
-# ./setup-tool.sh
+cd sandbox/
 ./setup-llvm-build.sh
 ```
 
+For ClangIR-enabled LLVM:
+
+```sh
+cd sandbox/
+./setup-llvm-build-cir.sh
+```
 
 ### Building
 
-
 ```sh
-cd sandbox/00-clang-ast/build
-ninja
-# if you need to install LLVM again
-# sudo ninja install
+cd sandbox/build
 ```
 
-Or build & install via [`sandbox/00-clang-ast/build.sh`](./sandbox/00-clang-ast/build.sh)
-
-### Re-building, modification
-
-Perform those inside `build` folder.
-Assumes setup.
-
-**To (re)generate makefiles via CMake**
+or for ClangIR-enabled LLVM:
 
 ```sh
-cmake \
-    -G Ninja ../llvm-project/llvm \
-    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-    -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DLLVM_BUILD_TESTS=OFF \
-    -DLLDB_INCLUDE_TESTS=OFF \
-    -DCLANG_INCLUDE_TESTS=OFF \
-    -DLLVM_TARGETS_TO_BUILD=host \
-    -DLLVM_INSTALL_UTILS=ON \
-    -DLLVM_ENABLE_DUMP=ON
+cd sandbox/build-cir
+```
+
+Then:
+
+```sh
+ninja
+# add -jN for parallelism or
+# ninja -j $(nproc)
+```
+
+To install:
+
+> [!Warning]
+> I have no robust idea how or if the `ninja install` (installation step) is reversible. I recommend setting up a VM for your testing & development environment. (possible "uninstallation" step is running `xargs rm -rf < install_manifest.txt` in the corresponding build directory)
+
+
+```sh
+sudo ninja install
+```
+
+To uninstall:
+
+```sh
+xargs rm -rf < install_manifest.txt
 ```
 
 ## Organization
@@ -57,7 +75,7 @@ Other files have no code style enforced (so far). Most of the time, running `cma
 Folder naming: 
 
 * `working` - a "working folder", a place where most of commands are executed / most files are being changed, gitignored, ...
-* `build` - most output artifacts will end up here
+* `build*` - most output artifacts will end up here
 
 
 1. [`notes`](./notes/) subdirectory generally unorganized notes
