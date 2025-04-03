@@ -3,6 +3,10 @@
 We attempt to instrument the LLVM IR with calls to a tracing library. This has the advantage of decoupling from the source language. It also means that our tracing library should be compiled
 as a C library (or that we have to deal with C++ mangling when calling the library).
 
+## Setup & build 
+
+* requires the `llvm-project` to be built according to the root [README](../../README.md)
+
 ## Structure
 
 * [`llvm-pass`](./llvm-pass/)
