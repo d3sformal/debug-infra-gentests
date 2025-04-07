@@ -68,6 +68,9 @@
 
 * add an option to metadata export plugin to use mangled name approach via a plugin option
 
+* `custom-metadata-pass` - document build steps
+
+
 # TOPIC: Testing / Isolation
 * isolation inspiration - to investigate? - (`clone`/`fork` used): [mem-isolate](https://github.com/brannondorsey/mem-isolate)
 
