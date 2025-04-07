@@ -70,7 +70,26 @@ int everything(int) {
 template <typename T> T templateTest(T x) { return x; }
 
 class CX {
+private:
+  struct NestedStruct {
+    NestedStruct(CX& cx) : cx(cx) {};
+    CX& cx;
+    float pubNestBar(float f) {
+      auto scrambler = [](float f){
+        return ((int)f) ^ 123456789;
+      };
+      return cx.pubFoo(cx.privBar(f)) + scrambler(f);
+    }
+  };
+  NestedStruct* st = nullptr;
 public:
+  float nestedWrap() {
+    if (st == nullptr) {
+      st = new NestedStruct(*this);
+    }
+    
+    return  st->pubNestBar(49.1);
+  }
   int pubFoo(float f) {
 
     std::cout << "f " << f << std::endl;
@@ -115,6 +134,19 @@ auto abcd = [](auto x) {
 auto efgh = [](int x) {
   return x * 2;
 };
+
+namespace lambda_namespace {
+  auto namespaced_lambda = [](auto x) {
+    return x * 2;
+  };
+
+  float namespacedFnWithLambda(float f) {
+    auto lmb = [](float x) {
+      return x * 3.18 * x;
+    };
+    return lmb(f);
+  }
+}
 
 
 int main() {
@@ -169,5 +201,5 @@ int main() {
   addAuto(1, 2);
   c.pubFoo(3.14);
   printf("Hellp!");
-  return everything(0);
+  return everything(0) + lambda_namespace::namespaced_lambda(1) + autofloat + autoint + lambda_namespace::namespacedFnWithLambda(11.1) + c.nestedWrap();
 }
