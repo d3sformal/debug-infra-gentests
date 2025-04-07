@@ -1,0 +1,7 @@
+#ifndef VSTR_LLVM_META
+#define VSTR_LLVM_META
+
+#define VSTR_LLVM_NON_SYSTEMHEADER_FN_KEY "VSTR-NOT-SYSTEM-HEADER" 
+#define VSTR_LVVM_NON_SYSTEMHEADER_FN_VAL "notinsystemheader"
+
+#endif

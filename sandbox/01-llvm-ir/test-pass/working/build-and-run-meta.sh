@@ -10,8 +10,9 @@ if [ -z "$COMPILER" ] || [ -z "$SOURCE_FILE" ]; then
 fi
 echo "BUILD"
 ./rebuild-pass.sh
+./rebuild-meta-plugin.sh
 echo "PASS"
-./run-pass.sh "$COMPILER" "$SOURCE_FILE"
+./run-pass-with-meta-plugin.sh "$COMPILER" "$SOURCE_FILE"
 echo "IR TO BIN"
 ./ir-to-bin.sh "$COMPILER"
 . ./export_lib_path.sh

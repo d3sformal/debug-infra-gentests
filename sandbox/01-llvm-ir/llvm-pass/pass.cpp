@@ -1,10 +1,15 @@
 #include "llvm/Pass.h"
+#include "../custom-metadata-pass/ast-meta-add/llvm-metadata.h"
+#include "llvm-c/Core.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
+#include "llvm/Support/Casting.h"
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Demangle/Demangle.h>
 #include <llvm/IR/Constants.h>
@@ -111,11 +116,28 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 
       // Skip library functions
       auto Name = F.getFunction().getName();
-      if (isStdFnDanger(Name)) {
+      auto DemangledName = llvm::demangle(Name);
+      // TODO: use an option to toggle between this and the metadata approach
+      // if (isStdFnDanger(Name)) {
+      //   continue;
+      // }
+
+      errs() << "Metadata of function " << DemangledName << '\n';
+      if (MDNode *N = F.getMetadata(VSTR_LLVM_NON_SYSTEMHEADER_FN_KEY)) {
+        if (N->getNumOperands() == 0) {
+          errs() << "Warning! Expected metadata node with no operands!\n";
+        }
+
+        if (MDString *op = dyn_cast_if_present<MDString>(N->getOperand(0));
+            op == nullptr) {
+          errs() << "Invalid metadata for node:\n";
+          N->dumpTree();
+        }
+      } else {
+        errs() << "No metadata for " << Name << ' ' << DemangledName << '\n';
         continue;
       }
 
-      auto DemangledName = llvm::demangle(Name);
       auto *IRGlobalDemangledName =
           createGlobalStr(M, DemangledName, F.getName().str() + "string");
 
