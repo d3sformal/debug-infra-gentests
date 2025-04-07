@@ -1,4 +1,4 @@
-# Research Project
+# Research Project: Locating Bugs in C/C++ Programs by Generating Directed Unit Tests 
 
 > [!note]
 > This repo requires up to 2 (**large**) LLVM submodules. To perform a shallow clone, run:
