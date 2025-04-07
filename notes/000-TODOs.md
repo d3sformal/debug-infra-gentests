@@ -9,6 +9,7 @@
 * ~~move `llvm-project` somewhere more sensible~~
 * add links to commits/READMEs/other files for every "DONE" item in this file
 * unify SOLVED vs DONE items
+* public repo?
 
 # TOPIC: Data Capture Library
 
