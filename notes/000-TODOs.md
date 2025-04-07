@@ -6,7 +6,9 @@
     * ~~do we permit relying on function call determinism?~~
 * ~~think about C++ objects - capturing inside of them, this, ...~~
 * better source organisation, READMEs where possible
-* move `llvm-project` somewhere more sensible
+* ~~move `llvm-project` somewhere more sensible~~
+* add links to commits/READMEs/other files for every "DONE" item in this file
+* unify SOLVED vs DONE items
 
 # TOPIC: Data Capture Library
 
@@ -52,16 +54,18 @@
 * LLVM [intrinsics](http://llvm.org/docs/LangRef.html#intrinsics) - can they be used?
     * **warning, can affect code generation**
 
-* **important for custom IR metadata**: `isExpansionInMainFile` vs `isExpansionInSystemHeader`
+* **[DONE]** **important for custom IR metadata**: `isExpansionInMainFile` vs `isExpansionInSystemHeader`
     * Does `isExpansionInMainFile` exclude functions in **any** header files?
         * If yes, does `isExpansionInSystemHeader` solve this?
 
-* is the custom metadata approach outlined in [](./01-llvm-ir-metadata-emission.md#custom-llvm-ir-metadata) correct?
-* is it possible to inject metadata in the AST Matching phase?
+* **[DONE]** is the custom metadata approach outlined in [](./01-llvm-ir-metadata-emission.md#custom-llvm-ir-metadata) correct?
+* **[DONE]** is it possible to inject metadata in the AST Matching phase?
     * e.g. visit every `FunctionDecl` and add data (key-value string pairs) that would later be injected as LLVM IR metadata? (this is a question because the AST itself (and `FunctionDecl`) seemed to be "`const`ant" throughout my experimentation)
 
 * investigate [Clang IR (CIR)](https://llvm.github.io/clangir/)
     * relatively new feature (doesn't seem to be used with my build of LLVM) - *ClangIR upstreaming RFC was accepted in Feb 2024,*
+
+* add an option to metadata export plugin to use mangled name approach via a plugin option
 
 
 # TOPIC: Papers
