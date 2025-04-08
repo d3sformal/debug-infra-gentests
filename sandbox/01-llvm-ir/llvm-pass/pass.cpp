@@ -1,6 +1,5 @@
 #include "llvm/Pass.h"
 #include "../custom-metadata-pass/ast-meta-add/llvm-metadata.h"
-#include "llvm-c/Core.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -10,6 +9,8 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/raw_ostream.h"
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Demangle/Demangle.h>
 #include <llvm/IR/Constants.h>
@@ -26,6 +27,14 @@ using namespace llvm;
 
 namespace {
 
+// -mllvm -llcap-filter-by-mangled
+cl::opt<bool>
+    MangleFilter("llcap-filter-by-mangled",
+                 cl::desc("Filter functions by their mangled names instead of "
+                          "their position within the AST"));
+// -mllvm -llcap-verbose
+cl::opt<bool> Verbose("llcap-verbose", cl::desc("Verbose output"));
+#define IF_VERBOSE if (Verbose.getValue())
 // there is no way to tell built-ins from user functions in the IR
 // we can only query external linkage and whether a function is a "declaration"
 // this function examines the mangled name of a function and tells (nonportably)
@@ -85,15 +94,15 @@ void callCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg) {
   } else if (ArgT->isDoubleTy()) {
     Builder.CreateCall(CallDouble, {Arg});
   } else {
-    outs() << "Skipping\n";
-    Arg->dump();
+    IF_VERBOSE errs() << "Skipping Argument\n";
+    IF_VERBOSE Arg->dump();
   }
 }
 
 struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
-    outs() << "Running pass!\n";
+    IF_VERBOSE errs() << "Running pass!\n";
 
     auto &FAM =
         AM.getResult<llvm::FunctionAnalysisManagerModuleProxy>(M).getManager();
@@ -117,25 +126,30 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
       // Skip library functions
       auto Name = F.getFunction().getName();
       auto DemangledName = llvm::demangle(Name);
-      // TODO: use an option to toggle between this and the metadata approach
-      // if (isStdFnDanger(Name)) {
-      //   continue;
-      // }
 
-      errs() << "Metadata of function " << DemangledName << '\n';
-      if (MDNode *N = F.getMetadata(VSTR_LLVM_NON_SYSTEMHEADER_FN_KEY)) {
-        if (N->getNumOperands() == 0) {
-          errs() << "Warning! Expected metadata node with no operands!\n";
-        }
-
-        if (MDString *op = dyn_cast_if_present<MDString>(N->getOperand(0));
-            op == nullptr) {
-          errs() << "Invalid metadata for node:\n";
-          N->dumpTree();
-        }
-      } else {
-        errs() << "No metadata for " << Name << ' ' << DemangledName << '\n';
+      if (MangleFilter.getValue() && isStdFnDanger(Name)) {
+        IF_VERBOSE errs() << "Mangled name " << Name
+                          << " did not pass filter. Demangled: "
+                          << DemangledName << '\n';
         continue;
+      } else if (!MangleFilter.getValue()) {
+        IF_VERBOSE errs() << "Metadata of function " << DemangledName << '\n';
+        if (MDNode *N = F.getMetadata(VSTR_LLVM_NON_SYSTEMHEADER_FN_KEY)) {
+          if (N->getNumOperands() == 0) {
+            IF_VERBOSE errs()
+                << "Warning! Expected metadata node with no operands!\n";
+          }
+
+          if (MDString *op = dyn_cast_if_present<MDString>(N->getOperand(0));
+              op == nullptr) {
+            IF_VERBOSE errs() << "Invalid metadata for node:\n";
+            N->dumpTree();
+          }
+        } else {
+          IF_VERBOSE errs()
+              << "No metadata for " << Name << ' ' << DemangledName << '\n';
+          continue;
+        }
       }
 
       auto *IRGlobalDemangledName =
@@ -165,7 +179,6 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
         }
       }
 
-      outs() << "argument dump for " << DemangledName << '\n';
       for (auto Arg = F.arg_begin(); Arg != F.arg_end(); ++Arg) {
         callCaptureHook(Builder, M, Arg);
       }
