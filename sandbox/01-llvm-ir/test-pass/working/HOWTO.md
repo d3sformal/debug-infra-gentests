@@ -8,6 +8,8 @@ To compile and run everything (apart from LLVM):
 
     ./build-and-run.sh clang test-program.c
 
+You can also append `-mllvm -llcap-verbose` option.
+
 Example output for `test-program.cpp`:
 
 ```
@@ -59,3 +61,9 @@ C FOO: 1
 C BAR: 3.141590
 [HOOK] start: constStructFunc
 ```
+
+For integration with a custom metadata-generating plugin, you can run
+
+        ./build-and-run-meta.sh clang++ test-program.cpp
+
+Again, you may append `-mllvm -llcap-verbose`. To run metadata plugin but not use it to determine instrumentation, use `-mllvm -llcap-filter-by-mangled`.
