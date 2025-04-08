@@ -53,13 +53,8 @@ void addFunctionLocationMetadata(const FunctionDecl *FD, bool log = false) {
 }
 
 class AddMetadataConsumer : public ASTConsumer {
-  CompilerInstance &Instance;
-  std::set<std::string> ParsedTemplates;
-
 public:
-  AddMetadataConsumer(CompilerInstance &Instance,
-                      std::set<std::string> ParsedTemplates)
-      : Instance(Instance), ParsedTemplates(ParsedTemplates) {}
+  AddMetadataConsumer() {}
   
   void HandleNamespaceDecl(const NamespaceDecl* ND) {
     for (auto It = ND->decls_begin(); It != ND->decls_end(); ++It) {
@@ -105,56 +100,17 @@ public:
   void HandleInlineFunctionDefinition(FunctionDecl* FD) override {
     addFunctionLocationMetadata(FD); 
   }
-
-  void HandleTranslationUnit(ASTContext &context) override {
-    if (!Instance.getLangOpts().DelayedTemplateParsing)
-      return;
-
-    // This demonstrates how to force instantiation of some templates in
-    // -fdelayed-template-parsing mode. (Note: Doing this unconditionally for
-    // all templates is similar to not using -fdelayed-template-parsig in the
-    // first place.)
-    // The advantage of doing this in HandleTranslationUnit() is that all
-    // codegen (when using -add-plugin) is completely finished and this can't
-    // affect the compiler output.
-    struct Visitor : public RecursiveASTVisitor<Visitor> {
-      const std::set<std::string> &ParsedTemplates;
-      Visitor(const std::set<std::string> &ParsedTemplates)
-          : ParsedTemplates(ParsedTemplates) {}
-      bool VisitFunctionDecl(FunctionDecl *FD) {
-        if (FD->isLateTemplateParsed() &&
-            ParsedTemplates.count(FD->getNameAsString()))
-          LateParsedDecls.insert(FD);
-        return true;
-      }
-
-      std::set<FunctionDecl *> LateParsedDecls;
-    } v(ParsedTemplates);
-
-    v.TraverseDecl(context.getTranslationUnitDecl());
-
-    clang::Sema &sema = Instance.getSema();
-    for (const FunctionDecl *FD : v.LateParsedDecls) {
-      clang::LateParsedTemplate &LPT =
-          *sema.LateParsedTemplateMap.find(FD)->second;
-      sema.LateTemplateParser(sema.OpaqueParser, LPT);
-      addFunctionLocationMetadata(FD);
-    }
-  }
 };
 
 class AddMetadataAction : public PluginASTAction {
-  std::set<std::string> ParsedTemplates;
-
 protected:
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                  llvm::StringRef) override {
-    return std::make_unique<AddMetadataConsumer>(CI, ParsedTemplates);
+    return std::make_unique<AddMetadataConsumer>();
   }
 
   bool ParseArgs(const CompilerInstance &CI,
-                 const std::vector<std::string> &args) override {
-    // TODO: library function filter via option (mangled name vs metadata)
+    const std::vector<std::string> &args) override {
     return true;
   }
   ActionType getActionType() override { return AddBeforeMainAction; }
