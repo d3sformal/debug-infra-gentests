@@ -80,7 +80,7 @@ Custom analysis of such "aliasing" pointers could yield invalid programs (if `ch
 
 ## Exploration
 
-When compiled with debug information (`-g`), `DISubprogram` is available via:
+When compiled **with debug information** (`-g`), `DISubprogram` is available via:
 
 ```c++
 if (DISubprogram* subprogram = F.getSubprogram(); subprogram) {

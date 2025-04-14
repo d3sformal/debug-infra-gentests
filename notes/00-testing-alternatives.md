@@ -448,3 +448,42 @@ Approach similar to the AST rewriting: instrument functions & call to a runtime 
 * no C/C++ syntax/type system/move semantics quirks and failure vectors
 * no danger of being incompatible with certain language constructs
 * generally more language-agnostic
+
+# UPDATE April 14
+
+* [public repo - mirror](https://git.bohdanqq.com/BohdanQQ/research-project)
+
+
+## IR Metadata
+* initial idea was to traverse AST and add metadata to functions
+    * OK since IR metadata can be attached to module/function/instruction
+    * inspection on AST level allows analysis of function arguments
+
+* **did not** find a way to attach metadata to `FunctionDecl` (AST-level representation)
+
+Remedies:
+* a simple [patch](../sandbox/01-llvm-ir/custom-metadata-pass/custom-metadata.diff) to clang/llvm
+    * add a method to `FunctionDecl` to **set** string key-value metadata pair 
+    * plus a method to **fetch** the metdata later when constructing LLVM IR
+
+* [AST plugin](../sandbox/01-llvm-ir/custom-metadata-pass/ast-meta-add/AstMetaAdd.cpp) walks the AST and injects metadata 
+    * currently only the information regarding the location of a function
+
+* modified [LLVM pass](../sandbox/01-llvm-ir/llvm-pass/pass.cpp) filters instrumentation based on metadata added by the AST plugin
+    * former version of filtering (by detecting mangled `std::` namespace) available by passing `-mllvm -llcap-filter-by-mangled`
+
+* possible **limitaitons** (not investigated):
+    * approach no longer a "drop-in", easy-to-use - metadata patch to clang/llvm needs recompilation of a core part (the AST -> IR step)
+    * wrt. argument inspection - metadata only attached to a function - is it possible to reliably encode argument position (that argument order remains the same in the IR as it was in the AST)
+    * the AST inspection code might not correctly handle all functions (intricacies of the AST structure)
+        * so far recursive namespace walkthrough + inspection of all lambda expressions (for their `operator()` - which is our desired function for in-code lambdas)
+
+### Other findings
+
+* [LLVM MLIR](../notes/02-mlir-notes.md)
+    * seems like a dead-end?
+    * idea: `MLIR` C/C++ dialect could be on a good abstraction layer for both AST-like inspection and insertion of LLVM metadata (the dialects eventually have to be transformed into IR in our case)
+
+* [separate detailed document/tutorial on LLVM metadata](../notes/01-llvm-ir-metadata-emission.md)
+
+* [a usless rabbit hole on a (de)mangling bug I encountered](../notes/0x-llvm-demangling.md)
