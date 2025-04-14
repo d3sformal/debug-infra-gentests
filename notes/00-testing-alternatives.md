@@ -472,6 +472,8 @@ Remedies:
 * modified [LLVM pass](../sandbox/01-llvm-ir/llvm-pass/pass.cpp) filters instrumentation based on metadata added by the AST plugin
     * former version of filtering (by detecting mangled `std::` namespace) available by passing `-mllvm -llcap-filter-by-mangled`
 
+[Build & run scripts / working directory](../sandbox/01-llvm-ir/test-pass/working/)
+
 * possible **limitaitons** (not investigated):
     * approach no longer a "drop-in", easy-to-use - metadata patch to clang/llvm needs recompilation of a core part (the AST -> IR step)
     * wrt. argument inspection - metadata only attached to a function - is it possible to reliably encode argument position (that argument order remains the same in the IR as it was in the AST)

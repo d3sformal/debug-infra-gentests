@@ -432,6 +432,45 @@ The relevant LLVM IR this modification produced on `test-program.cpp`:
 unnamed_addr #3 comdat align 2 personality ptr @__gxx_personality_v0 !dbg !1810 !VSTR_INCLUDED !1597 {
 ```
 
+Pre-meeting version (pre-meeting 14 Apr 2025):
+
+We can see a instrumented function and a non-instrumented one.
+
+* metadata (`!VSTR-NOT-SYSTEM-HEADER !6`) injected by AST plugin
+  * `!6 = !{!"notinsystemheader"}`
+  * defined in [a header file](../sandbox/01-llvm-ir/custom-metadata-pass/ast-meta-add/llvm-metadata.h)
+* calls to library `call void @hook_*` injected by LLVM pass
+  * the pass also created global `_ZZN2CX12NestedStruct10pubNestBarEfENKUlfE_clEfstring` strings
+
+```
+@_ZZN2CX12NestedStruct10pubNestBarEfENKUlfE_clEfstring = private unnamed_addr constant [78 x i8] c"CX::NestedStruct::pubNestBar(float)::'lambda'(float)::operator()(float) const\00", align 1
+
+; Function Attrs: mustprogress noinline nounwind optnone uwtable
+define linkonce_odr dso_local noundef i32 @_ZZN2CX12NestedStruct10pubNestBarEfENKUlfE_clEf(ptr noundef nonnull align 1 dereferenceable(1) %0, float noundef %1) #0 comdat align 2 !VSTR-NOT-SYSTEM-HEADER !6 {
+  call void @hook_start(ptr @_ZZN2CX12NestedStruct10pubNestBarEfENKUlfE_clEfstring)
+  call void @hook_float(float %1)
+  %3 = alloca ptr, align 8
+  %4 = alloca float, align 4
+  store ptr %0, ptr %3, align 8
+  store float %1, ptr %4, align 4
+  %5 = load ptr, ptr %3, align 8
+  %6 = load float, ptr %4, align 4
+  %7 = fptosi float %6 to i32
+  %8 = xor i32 %7, 123456789
+  ret i32 %8
+}
+
+; Function Attrs: mustprogress noinline nounwind optnone uwtable
+define linkonce_odr dso_local void @_ZNSt15__new_allocatorIcED2Ev(ptr noundef nonnull align 1 dereferenceable(1) %0) unnamed_addr #0 comdat align 2 {
+  %2 = alloca ptr, align 8
+  store ptr %0, ptr %2, align 8
+  %3 = load ptr, ptr %2, align 8
+  ret void
+}
+
+!6 = !{!"notinsystemheader"}
+```
+
 # Snippets
 
 ## Metadata Dump
