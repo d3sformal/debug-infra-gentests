@@ -80,7 +80,10 @@
     * ABIs that return structures by value in registers (`sret`, `structureReturn`, `StructRet`)
     * ?maybe? - dive deeper into the ABI specs and cause runtime error within the LLVM plugin if the target ABI is unknown/unhandled
 * document current approach
-* discuss possible breakage poin
+* discuss possible breakage points
+    * structures fitting 64 bits passed in registers
+    * changes in argument order
+    * ...
 
 # TOPIC: Testing / Isolation
 * isolation inspiration - to investigate? - (`clone`/`fork` used): [mem-isolate](https://github.com/brannondorsey/mem-isolate)
