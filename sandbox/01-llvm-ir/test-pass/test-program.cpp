@@ -79,14 +79,27 @@ struct Large {
 };
 
 struct Fits64Bits {
-  uint32_t first{0};
-  uint32_t second{0};
+  uint32_t first{1};
+  uint32_t second{2};
 };
+
+struct Fits128Bits {
+  uint32_t first{1};
+  uint32_t second{2};
+  uint64_t third{3};
+};
+
 
 Fits64Bits passReturnByVal64Struct(Fits64Bits s) {
   s.first += 1;
   return s;
 }
+
+void pass128Struct(Fits128Bits s) {
+  s.first += 1;
+  s.second += s.third;
+}
+
 
 Large returnLarge(uint64_t x) {
   Large l;
@@ -205,10 +218,15 @@ float namespacedFnWithLambda(float f) {
 }
 } // namespace lambda_namespace
 
+float bignum(__uint128_t f) {
+  return 0.0;
+}
+
 int main() {
   lotOfArgs(1ul << 63, 2, 3, 4, 5, 6, 7, 8, 9);
   abcd(2);
   efgh(2);
+  bignum(123);
 
   short num = 17;
   foo_namespace::bar_namespace::foo(1, 3.14);
@@ -273,6 +291,7 @@ int main() {
   justPrint(std::numeric_limits<long long>::min());
   justPrint<unsigned long long>(0xffffffffffffffff);
   passReturnByVal64Struct(Fits64Bits());
+  pass128Struct(Fits128Bits());
   return everything(sz) + lambda_namespace::namespaced_lambda(1) + autofloat +
          autoint + lambda_namespace::namespacedFnWithLambda(11.1) +
          c.nestedWrap();

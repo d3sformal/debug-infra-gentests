@@ -471,6 +471,126 @@ define linkonce_odr dso_local void @_ZNSt15__new_allocatorIcED2Ev(ptr noundef no
 !6 = !{!"notinsystemheader"}
 ```
 
+## Limitation wrt. function arguments
+
+LLVM IR encodes only basic information about the data. Function argumetns are of simple *signed* types or *pointers*. In the LLVM pass, where we intstrument (add calls to a library that exports the data), we need access to a higher-level type information. This is crucial for **unsigned** integer types and desirable for a more customizable support for other, user-defined types.
+
+I will focus on the propagation of the information about the **usnigned** of types and a support for "custom" types - for now only `std::string`. 
+
+### Support other than primitive types: how?
+
+The idea of supporting an `std::string` is to **detect** the type of an argument **in the AST phase**, *save the position* of such arguments *in the function's metadata* and later, in the **LLVM pass**, we *match the metadata* to the LLVM IR 
+function argument which we will **pass as a pointer** to our library that exposes some `export_std_string(const std::string*)` function.
+
+### Issue: Mapping argument positions from AST to LLVM IR
+
+In the AST plugin, we have access to complete type information for arguments. Combined with our custom metadata approach, we may want to export high-level type information by writing it to a custom metadata key-value pair which we will retreive later.
+
+As the AST and IR representation extremely differ in abstraction levels, several issues may arise, all related to the target ABI:
+
+* the passing of `this` pointer
+  * while invisible in the AST, member functions in the IR have an extra (first) argument - the `this` pointer
+* return-by-value
+  * in some ABIs, structures that are returned by value are passed in "output" registers
+  * this introduces another extra argument in the LLVM IR while AST remains oblivious
+  * in the LLVM IR, such arguments are marked with the `sret` attribute
+* other issues not discovered by me
+
+Both of the listed issues cause LLVM arguments to *shift* relative to their corresponding positions in the AST represenation depending on how may such problematic arguments have appeared before the AST ones.
+
+This presents difficulties for both **unsigned** propagation to the IR as well as the detection of custom types: if LLVM and AST indicies are mismatched, our instrumented code ends up either misinterpreting (for integer types) or type-confused and crashing for custom types - which we pass by pointers.
+
+#### Unperspective Solution to unsigned-ness
+
+One way information is attached to **function arguments** are **Attributes**. Attributes are more lightweight than metadata. The main reason I investigated Attributes was their relationship with function parameters.
+
+<details>
+<summary>
+Snippet: adding an attribute to a function parameter (click to expand)
+</summary>
+
+File: `llvm-project/clang/lib/CodeGen/CodeGenFunction.cpp`
+
+```c++
+llvm::AttrBuilder Builder(CurFn->getContext());
+StringRef AttrName = "VSTR-param-attr-unsigned";
+Builder.addAttribute(AttrName, "true");
+auto UnsignedAttr = Builder.getAttribute(AttrName);
+
+for (size_t ArgIdx  = 0; ArgIdx < Args.size(); ++ArgIdx) {
+  auto* Arg = Args[ArgIdx];
+  
+  if (llvm::isa<ParmVarDecl>(Arg)) {
+    auto ArgIdx = cast<ParmVarDecl>(Arg)->getFunctionScopeIndex();
+    if (cast<ParmVarDecl>(Arg)->getOriginalType()->isUnsignedIntegerType()) {
+      // +1 to account for the this pointer (which is at the end of Args but appears as the first argument in LLVM IR)
+      CurFn->addParamAttr(FD->isCXXInstanceMember() ? ArgIdx + 1 : ArgIdx, UnsignedAttr);
+    }
+  }
+}
+```
+</details>
+
+No matter what phase of the `CodeGen` function we add this snippet in though, the parameter attribute does not 'stick' to the parameter's position. By this I mean that when LLVM introduces, e.g. an `sret` parameter to an IR function, the remaining argument's attributes are NOT shifted while the arguments themselves *are*. If you attach an attribute to the **first** argument in this way and the function returns in a register by value, the attribute will actually associate with the created `sret` parameter instead the one we attached it for.
+
+The snippet correctly handles the case when the function uses `this` pointer via 
+`FD->isCXXInstanceMember() ? ArgIdx + 1`. I was unable to get a reliable conversion (AST index to LLVM IR index) from the LLVM interface.
+
+#### (probably nonportable) Solution
+
+* commit [bc9b341b959b9d32ab434900906dfd9bbd1c67bb](https://gitlab.mff.cuni.cz/vasutro/research-project/-/commit/bc9b341b959b9d32ab434900906dfd9bbd1c67bb)
+
+Another avenue towards passing information is our implemented custom metadata addition capability.
+We can encode the indicies of arguments of interest as best as we can on the AST level by adding metadata to the function. Then we may parse the metadata and make "corrections" based on the information inside the LLVM pass.
+
+This way, we implemented support for `unsigned` detection and `std::string` detection. The AST injects indicies metadata as a string (I wanted to keep changes to the metadata structure as low as possible, otherwise this can be done using integere metadata operands). The string simply encodes nonnegative numbers separated by a designated single character.
+
+LLVM inspects these metadata nodes and makes decisions about whether or how to insert instrumentation. E.g. when the LLVM IR argument on index `i` is of type `i64`, the LLVM pass inspects unsignedness metadata generated by the AST plugin. If the metadata contains `i`, the hook to `export_unsigned64` is called, otherwise a signed version is used.
+
+To account for `sret`, we pre-calculate the shift values for each function before we do the above.
+This approach detects unsigned integer types and allows us to pass `std::string` to our library.
+See [HOWTO.md](../sandbox/01-llvm-ir/test-pass/working/HOWTO.md) for output examples.
+
+The limitations of this approach are twofold:
+* unknown argument shifting by other means than `this` and `sret`
+* different argument shifting behavior
+  * both `this` and `sret` appear at the beginning of the LLVM IR function's argument list - were this to change, this approach of encoding type information will fail miserably
+
+#### Heavy yet "official" solution
+
+* [key patch](../sandbox/01-llvm-ir/custom-metadata-pass/clang-llvm-map.diff) (read further for more info)
+
+After some digging, one can find the suspiciously-named `ClangToLLVMArgMapping` class
+inside the [clang/lib/CodeGen/CGCall.cpp](../sandbox/llvm-project/clang/lib/CodeGen/CGCall.cpp) file. As the name suggests, the class provides ABI-aware conversion from Clang arguments to LLVM ones. **This is exactly what this section is about**.
+
+Conveniently enough, everything needed to create an instance of this type is available inside the
+already-patched section of `CodeGenFunction.cpp` code (as part of the custom metadata injection). Somewhat unfortunately, the `ClangToLLVMArgMapping` class is private to the unit it is defined in. To keep modifications to minimum (including the number of files modified), I decided to **copy** the implementation and its dependencies to the top of the already modified `CodeGenFunction.cpp`.
+
+From hours of browsing the machinery and details behind the argument mapping, I have not spotted any issues inside the `ClangToLLVMArgMapping` class and its dependencies.
+
+Immediately when using the class' API for the first time, an important yet so far unknown parameter
+surfaces: the possibility of the function argument spanning multiple LLVM arguments. This can be trivially verified by looking at a function accepting a `__uint128_t`:
+
+```c++
+float bignum(__uint128_t f) {
+  return 0.0;
+}
+```
+
+Which yields the following LLVM IR "declaration":
+
+```
+define dso_local noundef float @_Z6bignumo(i64 noundef %0, i64 noundef %1)
+```
+
+Similarly with larger user-defined structs that can fit into registers (e.g. 2x4B fields in one 8B register, or 2x4 + 1x8 in two 8B registers). (See [HOWTO.md](../sandbox/01-llvm-ir/test-pass/working/HOWTO.md) and look for `fits64`/`fits128`).
+
+This class exports this information, as well as skipping `sret` arguments. The only downside of it is ( and remains a mystery to me why this is the case...) that `this` pointer is NOT skipped.
+
+Side note: *// MSVC always passes `this` before the `sret` parameter.* (Yes, the class also takes care of this) *Warning* - I have not confirmed whether I handle this correctly and don't know if I ever will.
+
+As of this version of the document, the LLVM pass DOES NOT parse the "correct" argument offsets/sizes yet. (WIP - the current version only parses the new module metadata regarding separators and constants)
+
 # Snippets
 
 ## Metadata Dump

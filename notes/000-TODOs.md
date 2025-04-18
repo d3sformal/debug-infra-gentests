@@ -75,15 +75,14 @@
 * `custom-metadata-pass` - document build steps
 
 # TOPIC: Typed value capture
-* document hurdles / bypasses / alternatives to LLVM metadata approach
+* **[DONE]** document hurdles / bypasses / alternatives to LLVM metadata approach
     * `this` pointer
     * ABIs that return structures by value in registers (`sret`, `structureReturn`, `StructRet`)
-    * ?maybe? - dive deeper into the ABI specs and cause runtime error within the LLVM plugin if the target ABI is unknown/unhandled
-* document current approach
-* discuss possible breakage points
+    * **?maybe?** - dive deeper into the ABI specs and cause runtime error within the LLVM plugin if the target ABI is unknown/unhandled
+* **[DONE]** document current approach
+* **[DONE]** discuss possible breakage points
     * structures fitting 64 bits passed in registers
     * changes in argument order
-    * ...
 
 # TOPIC: Testing / Isolation
 * isolation inspiration - to investigate? - (`clone`/`fork` used): [mem-isolate](https://github.com/brannondorsey/mem-isolate)

@@ -47,7 +47,6 @@ template <class T> using Vec = std::vector<T>;
 template <class T> using Maybe = std::optional<T>;
 template <class T> using Set = std::set<T>;
 
-
 // there is no way to tell built-ins from user functions in the IR,
 // we can only query external linkage and whether a function is a "declaration"
 // this function examines the mangled name of a function and tells (nonportably)
@@ -81,13 +80,17 @@ void insertFnEntryLog(IRBuilder<> &Builder, Module &M,
                                       {Builder.getPtrTy()}, false));
   Builder.CreateCall(Callee, {IRStrPtr});
 }
-// terminology: 
-// LLVM Argument Index = 0-based index of an argument as seen directly in the LLVM IR
-// AST Argument Index  = 0-based idx as seen in the Clang AST
+// terminology:
+// LLVM Argument Index = 0-based index of an argument as seen directly in the
+// LLVM IR
 
-// key differences accounted for: this pointer & sret arguments (returning a struct in a register) 
+//  AST Argument Index  = 0-based idx as seen in the Clang AST
 
-// returns the LLVM argument indicies of Fn's arguments marked with the sret attribute
+// key differences accounted for: this pointer & sret arguments (returning a
+// struct in a register)
+
+// returns the LLVM argument indicies of Fn's arguments marked with the sret
+// attribute
 Set<size_t> getSretArgumentIndicies(const Function &Fn) {
   Set<size_t> Res;
   size_t Idx = 0;
@@ -115,10 +118,11 @@ Vec<size_t> getSretArgumentShiftVec(const Function &Fn) {
   for (size_t I = 0; I < Fn.arg_size(); ++I) {
     if (SretIndicies.find(I) != SretIndicies.end()) {
       // we accumulate shift to Shift
-      // if an AST index would collide with an sret argument's one, the AST index (A) is
-      // translated by A + (current) Shift. 
-      // Shift is incremented as EACH LLVM sret arg
-      // pushes all the remaining ones to the right
+      // if an AST index would collide with an sret argument's one, the AST
+      // index (A) is translated by A + (current) Shift.
+
+      // Shift is incremented as EACH LLVM sret arg pushes all the remaining
+      // ones to the right
       Res[I] = ++Shift;
     } else {
       Res[I] = Shift;
@@ -131,21 +135,22 @@ Vec<size_t> getSretArgumentShiftVec(const Function &Fn) {
 //
 // indicies are separated by VSTR_LLVM_CXX_SINGLECHAR_SEP and are decimal
 // numbers
-Vec<size_t> parseCustTypeIndicies(StringRef MetaValue) {
+Vec<size_t> parseCustTypeIndicies(StringRef MetaValue, bool IsInstanceMember) {
   llvm::SmallVector<StringRef> Split;
   Vec<ssize_t> Res;
 
   MetaValue.split(Split, VSTR_LLVM_CXX_SINGLECHAR_SEP, -1, false);
 
-  std::transform(Split.begin(), Split.end(), std::back_inserter(Res),
-                 [](StringRef s) {
-                   try {
-                     return std::stoll(s.str());
-                   } catch (...) {
-                     errs() << "Warning - invalid numeric value in metadata: " << s << '\n';
-                     return -1ll;
-                   }
-                 });
+  std::transform(
+      Split.begin(), Split.end(), std::back_inserter(Res), [](StringRef s) {
+        try {
+          return std::stoll(s.str());
+        } catch (...) {
+          errs() << "Warning - invalid numeric value in metadata: " << s
+                 << '\n';
+          return -1ll;
+        }
+      });
 
   auto EndRes =
       std::remove_if(Res.begin(), Res.end(), [](ssize_t i) { return i == -1; });
@@ -154,9 +159,9 @@ Vec<size_t> parseCustTypeIndicies(StringRef MetaValue) {
   RealRes.reserve(Res.size());
 
   std::transform(Res.begin(), EndRes, std::back_inserter(RealRes),
-                 [](ssize_t i) {
+                 [IsInstanceMember](ssize_t i) {
                    assert(i >= 0);
-                   return static_cast<size_t>(i);
+                   return static_cast<size_t>(i) + (IsInstanceMember ? 1 : 0);
                  });
 
   return RealRes;
@@ -164,7 +169,8 @@ Vec<size_t> parseCustTypeIndicies(StringRef MetaValue) {
 
 // TODO: generalize for custom types - "Custom" in this name means "std::string"
 Maybe<Vec<size_t>> getCustomTypeIndicies(StringRef MetadataKey,
-                                         const Function &Fn) {
+                                         const Function &Fn,
+                                         bool IsInstanceMember) {
   if (MDNode *N = Fn.getMetadata(MetadataKey)) {
     if (N->getNumOperands() == 0) {
       errs() << "Warning - unexpected string metadata node with NO operands!\n";
@@ -173,9 +179,10 @@ Maybe<Vec<size_t>> getCustomTypeIndicies(StringRef MetadataKey,
 
     if (MDString *op = dyn_cast_if_present<MDString>(N->getOperand(0));
         op != nullptr) {
-      return parseCustTypeIndicies(op->getString());
+      return parseCustTypeIndicies(op->getString(), IsInstanceMember);
     } else {
-      errs() << "Warning - unexpected string metadata node with non-MDString 0th operand!\n";
+      errs() << "Warning - unexpected string metadata node with non-MDString "
+                "0th operand!\n";
     }
   } else {
     IF_VERBOSE errs() << "No meta key " << MetadataKey << " found\n";
@@ -279,11 +286,28 @@ void callCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
 struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
-    IF_VERBOSE errs() << "Running pass!\n";
+    IF_VERBOSE errs() << "Running pass on module!\n";
+    // TODO remove
+    if (auto *Meta = M.getNamedMetadata("LLCAP-CLANG-LLVM-MAP-PRSGD")) {
+      Meta->dump();
+    } else {
+      IF_VERBOSE llvm::errs() << "Module meta no parse guide";
+    }
+    if (auto *Meta = M.getNamedMetadata("LLCAP-CLANG-LLVM-MAP-INVLD_IDX")) {
+      Meta->dump();
+    } else {
+      IF_VERBOSE llvm::errs() << "Module meta no invalid index value";
+    }
+
     for (auto &F : M) {
       // Skip library functions
       auto Name = F.getFunction().getName();
       auto DemangledName = llvm::demangle(Name);
+
+      if (MDNode *N = F.getMetadata("LLCAP-CLANG-LLVM-MAP-DATA")) {
+        outs() << DemangledName << ": \n";
+        N->dumpTree();
+      }
 
       if (MangleFilter.getValue() && isStdFnDanger(Name)) {
         continue;
@@ -335,15 +359,17 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
         }
       }
 
-      // sret arguments are arguments that serve as a return value ?inside of a
-      // register? in some cases when the function *returns a structure by value*
-      // e.g. std::string foo(void);
+      bool InstanceMember = F.getMetadata(VSTR_LLVM_CXX_THISPTR) != nullptr;
 
-      // theoretically, we can use F.returnDoesNotAlias() (noalias) as a heuristic for
-      // structReturn (sret in IR) arguments but that would need a bit more
-      // research (for all cases I've seen, the noalias attribute was set for
-      // the an sret parameter - makes sense, though I do not know if there are
-      // any contradictions to this)
+      // sret arguments are arguments that serve as a return value ?inside of a
+      // register? in some cases when the function *returns a structure by
+      // value* e.g. std::string foo(void);
+
+      // theoretically, we can use F.returnDoesNotAlias() (noalias) as a
+      // heuristic for structReturn (sret in IR) arguments but that would need a
+      // bit more research (for all cases I've seen, the noalias attribute was
+      // set for the an sret parameter - makes sense, though I do not know if
+      // there are any contradictions to this)
 
       // This map encodes at position ShiftMap[i] what shift should we consider
       // when evaluating i-th argument (i.e. how many additional argumens are
@@ -351,8 +377,8 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
       // and is accounted for)
       const auto ShiftMap = getSretArgumentShiftVec(F);
 
-      auto CustTypeIdcs =
-          getCustomTypeIndicies(VSTR_LLVM_CXX_DUMP_STDSTRING, F);
+      auto CustTypeIdcs = getCustomTypeIndicies(VSTR_LLVM_CXX_DUMP_STDSTRING, F,
+                                                InstanceMember);
       IF_VERBOSE {
         llvm::errs() << "CustType indicies: ";
         if (CustTypeIdcs) {
@@ -367,7 +393,8 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
                                                          CustTypeIdcs->end()))
                                 : std::nullopt;
 
-      auto CustUnsignedIdcs = getCustomTypeIndicies(VSTR_LLVM_UNSIGNED_IDCS, F);
+      auto CustUnsignedIdcs =
+          getCustomTypeIndicies(VSTR_LLVM_UNSIGNED_IDCS, F, InstanceMember);
       IF_VERBOSE {
         llvm::errs() << "Unsigned indicies: ";
         if (CustUnsignedIdcs) {
