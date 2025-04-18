@@ -8,5 +8,5 @@ set -x
 # or this
 cd ../../../build
 
-ninja
+ninja -j4
 cd ../01-llvm-ir/test-pass/working

@@ -1,8 +1,6 @@
-cd ../hooklib
-cmake ./
-make
+#/bin/sh
+set -ex
 
-cd ../working/build
-cp ../../hooklib/libmy-hook.so ./
+cd ./build
 $1 -fPIC ./bitcode.ll ./libmy-hook.so
 cd ../

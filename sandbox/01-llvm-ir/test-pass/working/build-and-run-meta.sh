@@ -11,6 +11,7 @@ fi
 echo "BUILD"
 ./rebuild-pass.sh
 ./rebuild-meta-plugin.sh
+./build-libs.sh
 echo "PASS"
 ./run-pass-with-meta-plugin.sh "$COMPILER" "$SOURCE_FILE" $@
 echo "IR TO BIN"
