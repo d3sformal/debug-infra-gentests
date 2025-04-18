@@ -8,52 +8,54 @@
 * better source organisation, READMEs where possible
 * ~~move `llvm-project` somewhere more sensible~~
 * add links to commits/READMEs/other files for every "DONE" item in this file
-* unify SOLVED vs DONE items
-* public repo?
+* ~~unify SOLVED vs DONE items~~
+* ~~public repo?~~
 
 # TOPIC: Data Capture Library
 
 ## Capturing funciton arguments
 
-* [SOLVED: LLVM IR] how to treat **templated** code
+* **[DONE]** how to treat **templated** code
     * let `X` be the set of types allowed for recording:
     * `template <class T>`, parameter of type `T`, where all instantiations of `T` in `X` - should be OK with naive source modification
     * not all instantiations have `T` in `X` -> compilation errors
         * how to resolve?
         * can clang provide per-instantiation decisionmaking? how will that affect compile times/feasability?
 
-* [SOLVED: LLVM IR] how to treat type aliases?
+* **[DONE]** how to treat type aliases?
     * should be doable via clang's APIs (the underlying type should be resolved, right?)
 
 ## Capturing execution trace 
 
 * use other tools?
 
-* [SOLVED: LLVM IR] C vs C++ function scope tracking
+* **[DONE]** C vs C++ function scope tracking
     * for now I only focus on C++ code, this method should allow tracing of even code which throws exceptions
     * C has no "reasonably non-colliding" namespaces
     * on the other hand: no annoying exceptions
 
-* [SOLVED: LLVM IR] use of C++'s `auto` keyword
+* **[DONE]** use of C++'s `auto` keyword
     * limits C heavily (`auto` not used widely)
     * intricacies of C++'s type system & reference semantics
         * ensuring that modified source code makes exactly the same side effects as the unmodified one
 
 # TOPIC: C++ support
 
-* [DUPLICATE TODO] ~~methods of objects with AST modification (abandoned?)~~
+*  **[DUPLICATE]** ~~methods of objects with AST modification (abandoned?)~~
 
 # TOPIC: LLVM IR approach
 
 * shows more promise than AST modification
 * trouble with filtering (non) library funcitons - information not available in the IR
-    * **Idea**: add metadata to the functions in the IR that could tell the LLVM pass if the function is `#include`d, library, intrinsic, ...
+    * **[DONE]** **Idea**: add metadata to the functions in the IR that could tell the LLVM pass if the function is `#include`d, library, ...
         * [LLVM Discussion](https://discourse.llvm.org/t/how-to-distinguish-between-user-defined-function-in-a-program-and-library-functions/54401/7)
-    * more metadata could help with a GUI integration later (emitting line informatio metadata, ...)
-    * inject custom metadata regarding (non)library/builtin functions
-* capturing inside a lambda, overall lambda instrumentation
-* LLVM [intrinsics](http://llvm.org/docs/LangRef.html#intrinsics) - can they be used?
+    * more metadata could help with a GUI integration later (emitting line informatio metadata - *using debug information metadata*, ...)
+    * **[DONE]** inject custom metadata regarding (non)library/builtin functions
+* **[DONE]** capturing inside a lambda, overall lambda instrumentation
+* **[DONE]** LLVM [intrinsics](http://llvm.org/docs/LangRef.html#intrinsics) - can they be used?
     * **warning, can affect code generation**
+    * lack of documentation (e.g. `llvm.memcpy`)
+    * even then, seem inconsequential
 
 * **[DONE]** **important for custom IR metadata**: `isExpansionInMainFile` vs `isExpansionInSystemHeader`
     * Does `isExpansionInMainFile` exclude functions in **any** header files?
@@ -63,13 +65,22 @@
 * **[DONE]** is it possible to inject metadata in the AST Matching phase?
     * e.g. visit every `FunctionDecl` and add data (key-value string pairs) that would later be injected as LLVM IR metadata? (this is a question because the AST itself (and `FunctionDecl`) seemed to be "`const`ant" throughout my experimentation)
 
-* investigate [Clang IR (CIR)](https://llvm.github.io/clangir/)
+* **[DONE]** investigate [Clang IR (CIR)](https://llvm.github.io/clangir/)
     * relatively new feature (doesn't seem to be used with my build of LLVM) - *ClangIR upstreaming RFC was accepted in Feb 2024,*
+    * conclusion: probably useful in far future (dialect augmentation)
 
-* add an option to metadata export plugin to use mangled name approach via a plugin option
+* **[DONE]** add an option to metadata export plugin to use mangled name approach via a plugin option
+    * supply LLVM pass & use `-mllvm -llcap-filter-by-mangled` when compiling
 
 * `custom-metadata-pass` - document build steps
 
+# TOPIC: Typed value capture
+* document hurdles / bypasses / alternatives to LLVM metadata approach
+    * `this` pointer
+    * ABIs that return structures by value in registers (`sret`, `structureReturn`, `StructRet`)
+    * ?maybe? - dive deeper into the ABI specs and cause runtime error within the LLVM plugin if the target ABI is unknown/unhandled
+* document current approach
+* discuss possible breakage poin
 
 # TOPIC: Testing / Isolation
 * isolation inspiration - to investigate? - (`clone`/`fork` used): [mem-isolate](https://github.com/brannondorsey/mem-isolate)
@@ -80,6 +91,7 @@
     * [repo](https://github.com/RUB-SysSec/aurora)
 
 # TOPIC: Extras
+* so far only on x64 linux ABI - try more?
 * attachment to external tools
     * Valgrind, GDB - obvious candidates (instrument to conditionally trigger a breakpoint?)
     * property-checking tools (unsinged over/underflow, no-progress loops, suspicious iteration counts, recording & analysis of comparisons at particular location)
