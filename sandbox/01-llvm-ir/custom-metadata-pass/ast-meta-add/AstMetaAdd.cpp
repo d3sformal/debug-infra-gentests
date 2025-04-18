@@ -24,13 +24,14 @@
 #include <clang/Frontend/FrontendAction.h>
 #include <sstream>
 #include <string>
+#include <vector>
 
 using namespace clang;
 
 namespace {
 
-// used with StringRefs - StringRefs do not own data they reference => we must ensure
-// the lifetime of our metadata strings survives (at least until the IR is generated)
+// used with StringRefs - they do not own data they reference - we must ensure
+// the lifetime of our metadata strings survives up until the IR generation
 static std::set<std::string> StringBackings;
 
 bool isTargetTypeValRefPtr(const std::string &s, const std::string &tgt) {
@@ -39,37 +40,45 @@ bool isTargetTypeValRefPtr(const std::string &s, const std::string &tgt) {
 
 // Predicate :: (ParmVarDecl* param, size_t ParamIndex) -> bool
 template <typename Predicate>
-void encodeArgIndiciesSatisfying(const StringRef MetadataKey,
-                                 const FunctionDecl *FD, Predicate pred) {
-  std::stringstream ResStream("");
+std::vector<size_t> filterParmIndicies(const FunctionDecl *FD, Predicate pred) {
   std::vector<size_t> Indicies;
-
   size_t ParamIndex = 0;
   for (ParmVarDecl *const *it = FD->param_begin(); it != FD->param_end();
        ++it) {
     auto *param = *it;
     if (pred(param, ParamIndex)) {
-      Indicies.push_back(FD->isCXXInstanceMember() ? ParamIndex + 1
-                                                   : ParamIndex);
+      Indicies.push_back(ParamIndex);
     }
     ++ParamIndex;
   }
+  return Indicies;
+}
 
+void addIndiciesMetadata(const llvm::StringRef MetaKey, const FunctionDecl *FD,
+                         const std::vector<size_t> &Indicies) {
+  std::stringstream ResStream("");
   for (size_t i = 0; i < Indicies.size(); ++i) {
     ResStream << std::to_string(Indicies[i]);
     if (i != Indicies.size() - 1) {
       ResStream << VSTR_LLVM_CXX_SINGLECHAR_SEP;
     }
   }
-
-  // all this could be theoretically done in a more lightweight fashion
+  // all this could be theoretically done in a much more lightweight fashion
   // using metadata with multiple numeric operands (but I have not yet exposed
   // this through the patched API)
   auto Res = ResStream.str();
   if (Res.length() > 0) {
     StringBackings.emplace(Res);
-    FD->setIrMetadata(MetadataKey, *StringBackings.find(Res));
+    FD->setIrMetadata(MetaKey, *StringBackings.find(Res));
   }
+}
+
+// Predicate :: (ParmVarDecl* param, size_t ParamIndex) -> bool
+template <typename Predicate>
+void encodeArgIndiciesSatisfying(const StringRef MetadataKey,
+                                 const FunctionDecl *FD, Predicate Pred) {
+  auto Indicies = filterParmIndicies(FD, Pred);
+  addIndiciesMetadata(MetadataKey, FD, Indicies);
 }
 
 void addFunctionLocationMetadata(const FunctionDecl *FD, bool log = false) {
@@ -106,6 +115,9 @@ void addFunctionLocationMetadata(const FunctionDecl *FD, bool log = false) {
 
     FD->setIrMetadata(VSTR_LLVM_NON_SYSTEMHEADER_FN_KEY,
                       VSTR_LVVM_NON_SYSTEMHEADER_FN_VAL);
+    if (FD->isCXXInstanceMember()) {
+      FD->setIrMetadata(VSTR_LLVM_CXX_THISPTR, "");
+    }
   } else {
 
     if (log) {
