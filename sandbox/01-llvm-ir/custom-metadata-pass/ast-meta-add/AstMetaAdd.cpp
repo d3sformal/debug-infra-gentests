@@ -16,16 +16,62 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/Sema/Sema.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/Decl.h>
 #include <clang/Frontend/FrontendAction.h>
+#include <sstream>
+#include <string>
 
 using namespace clang;
 
 namespace {
-// TODO: remove the log debug info after finalization / decouple
+
+// used with StringRefs - StringRefs do not own data they reference => we must ensure
+// the lifetime of our metadata strings survives (at least until the IR is generated)
+static std::set<std::string> StringBackings;
+
+bool isTargetTypeValRefPtr(const std::string &s, const std::string &tgt) {
+  return s == tgt || s == tgt + " *" || s == tgt + " &" || s == tgt + " &&";
+}
+
+// Predicate :: (ParmVarDecl* param, size_t ParamIndex) -> bool
+template <typename Predicate>
+void encodeArgIndiciesSatisfying(const StringRef MetadataKey,
+                                 const FunctionDecl *FD, Predicate pred) {
+  std::stringstream ResStream("");
+  std::vector<size_t> Indicies;
+
+  size_t ParamIndex = 0;
+  for (ParmVarDecl *const *it = FD->param_begin(); it != FD->param_end();
+       ++it) {
+    auto *param = *it;
+    if (pred(param, ParamIndex)) {
+      Indicies.push_back(FD->isCXXInstanceMember() ? ParamIndex + 1
+                                                   : ParamIndex);
+    }
+    ++ParamIndex;
+  }
+
+  for (size_t i = 0; i < Indicies.size(); ++i) {
+    ResStream << std::to_string(Indicies[i]);
+    if (i != Indicies.size() - 1) {
+      ResStream << VSTR_LLVM_CXX_SINGLECHAR_SEP;
+    }
+  }
+
+  // all this could be theoretically done in a more lightweight fashion
+  // using metadata with multiple numeric operands (but I have not yet exposed
+  // this through the patched API)
+  auto Res = ResStream.str();
+  if (Res.length() > 0) {
+    StringBackings.emplace(Res);
+    FD->setIrMetadata(MetadataKey, *StringBackings.find(Res));
+  }
+}
+
 void addFunctionLocationMetadata(const FunctionDecl *FD, bool log = false) {
   auto &SourceManager = FD->getASTContext().getSourceManager();
   auto Loc = SourceManager.getExpansionLoc(FD->getBeginLoc());
@@ -33,24 +79,37 @@ void addFunctionLocationMetadata(const FunctionDecl *FD, bool log = false) {
                         SourceManager.isInExternCSystemHeader(Loc) ||
                         SourceManager.isInSystemMacro(Loc);
   if (log) {
-    llvm::outs() << FD->getDeclName() << ' '
+    llvm::errs() << FD->getDeclName() << ' '
                  << FD->getSourceRange().printToString(
                         FD->getASTContext().getSourceManager())
                  << '\n';
-    FD->getNameForDiagnostic(llvm::outs(), PrintingPolicy(LangOptions()), true);
-    llvm::outs() << '\n';
+    FD->getNameForDiagnostic(llvm::errs(), PrintingPolicy(LangOptions()), true);
+    llvm::errs() << '\n';
   }
   if (!InSystemHeader) {
     if (log) {
-      llvm::outs() << "GOT "
+      llvm::errs() << "GOT "
                       "\n";
     }
+
+    encodeArgIndiciesSatisfying(
+        VSTR_LLVM_CXX_DUMP_STDSTRING, FD, [](ParmVarDecl *Arg, size_t Idx) {
+          auto TypeName = Arg->getType().getCanonicalType().getAsString();
+          return isTargetTypeValRefPtr(TypeName,
+                                       "class std::basic_string<char>");
+        });
+
+    encodeArgIndiciesSatisfying(
+        VSTR_LLVM_UNSIGNED_IDCS, FD, [](ParmVarDecl *Arg, size_t Idx) {
+          return Arg->getType()->isUnsignedIntegerType();
+        });
+
     FD->setIrMetadata(VSTR_LLVM_NON_SYSTEMHEADER_FN_KEY,
                       VSTR_LVVM_NON_SYSTEMHEADER_FN_VAL);
   } else {
 
     if (log) {
-      llvm::outs() << "NOT GOT\n"
+      llvm::errs() << "NOT GOT\n"
                    << SourceManager.isInSystemHeader(Loc) << " "
                    << SourceManager.isInExternCSystemHeader(Loc) << " "
                    << SourceManager.isInSystemMacro(Loc) << '\n';
