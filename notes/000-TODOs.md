@@ -116,4 +116,8 @@
 
 ## branch/technical
 * fix builds (linking with 0MQ)
-* 
+* document (iceoryx2 - why not)
+* explore TUI interface
+* workflow charts for arch
+* attreibute diffs - remove or integrate into report
+* report mangling bug (after rebuild of latest llvm project)
