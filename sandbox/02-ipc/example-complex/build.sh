@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+
+cp ../../01-llvm-ir/llvm-pass/libfn-pass.so ./
+cp ../../build/lib/AstMetaAdd.so ./
+cd ../ipc-hooklib
+cmake ./
+make
+cp ./libmy-hook.so ../example-complex
+cd ../example-complex
+
+cmake -D CMAKE_C_COMPILER=clang \
+  -D CMAKE_CXX_COMPILER=clang++ \
+  ./
+
+cmake   -D CMAKE_C_COMPILER=clang \
+  -D CMAKE_CXX_COMPILER=clang++ \
+  -D CMAKE_CXX_FLAGS="-Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=./AstMetaAdd.so" \
+  ./
+
+mkdir -p ./module-maps
