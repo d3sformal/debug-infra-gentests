@@ -2,6 +2,7 @@
 #define VSTR_HOOK_LIB
 
 #include <assert.h>
+#include <cstdint>
 
 #ifdef __cplusplus
 #include <string>
@@ -15,7 +16,8 @@ static_assert(sizeof(long long) == 8, "Expecting long long to be 8 bytes");
 
 #define GENFNDECL(name, argt, argvar) void name(argt argvar)
 
-GENFNDECL(hook_start, char *, a);
+void hook_start(char *a, char* module_id, uint32_t id);
+
 GENFNDECL(hook_cstring, const char *, a);
 GENFNDECL(hook_int32, int, a);
 

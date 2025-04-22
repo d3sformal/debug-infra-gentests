@@ -1,5 +1,6 @@
 #include "llvm/Pass.h"
 #include "../custom-metadata-pass/ast-meta-add/llvm-metadata.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -10,7 +11,9 @@
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
+#include <fstream>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/Demangle/Demangle.h>
@@ -27,11 +30,13 @@
 #include <cstdlib>
 #include <iterator>
 #include <optional>
+#include <sstream>
 #include <string>
 
 using namespace llvm;
 
 const char *UNSIGNED_ATTR_KIND = "VSTR-param-attr-unsigned";
+static uint64_t FunctionId;
 
 namespace {
 
@@ -42,6 +47,11 @@ cl::opt<bool>
                           "their position within the AST"));
 // -mllvm -llcap-verbose
 cl::opt<bool> Verbose("llcap-verbose", cl::desc("Verbose output"));
+// -mllvm -llcap-mapdir
+cl::opt<std::string>
+    MapFilesDirectory("llcap-mapdir",
+                      cl::desc("Directory for function ID maps"));
+
 #define IF_VERBOSE if (Verbose.getValue())
 template <class T> using Vec = std::vector<T>;
 template <class T> using Maybe = std::optional<T>;
@@ -72,13 +82,18 @@ GlobalVariable *createGlobalStr(Module &M, StringRef Val, StringRef Id) {
   return GV;
 }
 
-void insertFnEntryLog(IRBuilder<> &Builder, Module &M,
-                      GlobalVariable *Message) {
+void insertFnEntryLog(IRBuilder<> &Builder, Module &M, GlobalVariable *Message,
+                      GlobalVariable *ModuleId) {
   auto *IRStrPtr = Builder.CreateBitCast(Message, Builder.getPtrTy());
+  auto *IRModStrPtr = Builder.CreateBitCast(ModuleId, Builder.getPtrTy());
+  auto *FnIdConstant =
+      ConstantInt::get(M.getContext(), APInt(32, FunctionId++));
   auto Callee = M.getOrInsertFunction(
       "hook_start", FunctionType::get(Type::getVoidTy(M.getContext()),
-                                      {Builder.getPtrTy()}, false));
-  Builder.CreateCall(Callee, {IRStrPtr});
+                                      {Builder.getPtrTy(), Builder.getPtrTy(),
+                                       FnIdConstant->getType()},
+                                      false));
+  Builder.CreateCall(Callee, {IRStrPtr, IRModStrPtr, FnIdConstant});
 }
 // terminology:
 // LLVM Argument Index = 0-based index of an argument as seen directly in the
@@ -283,10 +298,68 @@ void callCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
   }
 }
 
+class FunctionIDMapper {
+  std::string ModuleId;
+  std::string OutFileName;
+  std::vector<std::pair<std::string, uint64_t>> FunctionIds;
+  uint64_t FunctionId{0};
+
+public:
+  FunctionIDMapper(const std::string &ModuleId) : ModuleId(ModuleId) {
+    SHA256 hash;
+    hash.init();
+    hash.update(StringRef(ModuleId));
+    std::stringstream SStream;
+    SStream << std::hex << std::setfill('0');
+    for (auto &&C : hash.result()) {
+      SStream << std::setw(2) << (unsigned int)C;
+    }
+    OutFileName = SStream.str();
+  }
+
+  void addFunction(const std::string &FnInfo) {
+    FunctionIds.emplace_back(FnInfo, FunctionId++);
+  }
+
+  const std::string &GetModuleMapId() { return OutFileName; }
+
+  static bool flush(FunctionIDMapper &&mapper) {
+    auto OptVal = MapFilesDirectory.getValue();
+    std::string Dir = OptVal.size() > 0 ? OptVal : "module-maps";
+    std::string Path = Dir + "/" + mapper.OutFileName;
+    std::ofstream OutFile(Path);
+    if (!OutFile.is_open() || !OutFile) {
+      errs() << "Could not open function ID map. Path: " << Path << '\n';
+      return false;
+    }
+
+    OutFile << mapper.ModuleId << '\n';
+    for (auto &&IdPair : mapper.FunctionIds) {
+      auto &&Info = IdPair.first;
+      uint64_t Id = IdPair.second;
+
+      OutFile << Info << '\0' << Id << '\n';
+      if (!OutFile) {
+        break;
+      }
+    }
+
+    if (!OutFile) {
+      errs() << "Error writing function ID map. Path: " << Path << '\n';
+      return false;
+    }
+    return true;
+  }
+};
+
 struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
     IF_VERBOSE errs() << "Running pass on module!\n";
+    FunctionIDMapper IDMap(M.getModuleIdentifier());
+    auto *IRGlobalModuleMapId =
+        createGlobalStr(M, IDMap.GetModuleMapId(), "module-map-id");
+
     // TODO remove
     if (auto *Meta = M.getNamedMetadata("LLCAP-CLANG-LLVM-MAP-PRSGD")) {
       Meta->dump();
@@ -337,7 +410,7 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 
       BasicBlock &EntryBB = F.getEntryBlock();
       IRBuilder<> Builder(&EntryBB.front());
-      insertFnEntryLog(Builder, M, IRGlobalDemangledName);
+      insertFnEntryLog(Builder, M, IRGlobalDemangledName, IRGlobalModuleMapId);
 
       Set<llvm::Type::TypeID> AllowedTypes;
       {
@@ -358,6 +431,8 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
           }
         }
       }
+      // TODO handle viability
+      IDMap.addFunction(DemangledName);
 
       bool InstanceMember = F.getMetadata(VSTR_LLVM_CXX_THISPTR) != nullptr;
 
@@ -412,6 +487,10 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
       for (auto Arg = F.arg_begin(); Arg != F.arg_end(); ++Arg) {
         callCaptureHook(Builder, M, Arg, ShiftMap, CustTypeIdxMap, UnsignedMap);
       }
+    }
+
+    if (!FunctionIDMapper::flush(std::move(IDMap))) {
+      errs() << "Failed to write function mapping!\n";
     }
     return PreservedAnalyses::none();
   }

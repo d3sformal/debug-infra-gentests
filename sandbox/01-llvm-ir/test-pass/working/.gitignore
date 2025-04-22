@@ -5,3 +5,4 @@ build/
 *.a
 *.cpp
 *.c
+/module-maps
