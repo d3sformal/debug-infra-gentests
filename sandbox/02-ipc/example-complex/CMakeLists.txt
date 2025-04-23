@@ -11,7 +11,7 @@ include_directories(${CZMQ_INCLUDE_DIRS})
 
 add_library(hooklib SHARED IMPORTED)
 set_target_properties(hooklib PROPERTIES
-    IMPORTED_LOCATION ../../hooklib/libmy-hook.so
+    IMPORTED_LOCATION ../ipc-hooklib/libmy-hook.so
 )
 
 target_link_libraries(hooklib INTERFACE ${CZMQ_LIBRARIES})
