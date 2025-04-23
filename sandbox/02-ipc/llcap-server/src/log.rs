@@ -40,10 +40,10 @@ static LOG_WARN: Log = Log {
     level: LogLevel::Warn,
 };
 static LOG_INFO: Log = Log {
-    level: LogLevel::Trace,
+    level: LogLevel::Info,
 };
 static LOG_TRACE: Log = Log {
-    level: LogLevel::Info,
+    level: LogLevel::Trace,
 };
 
 impl Log {

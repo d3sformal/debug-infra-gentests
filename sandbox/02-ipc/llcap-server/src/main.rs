@@ -2,81 +2,19 @@ use std::collections::HashMap;
 use std::fs;
 
 use args::Cli;
-use bytes::Buf;
+use call_tracing::{extract_message, FunctionCallInfo, Message};
 use clap::Parser;
 use constants::Constants;
 use log::Log;
 use modmap::ExtModuleMap;
-use zeromq::{PullSocket, Socket, SocketRecv, ZmqError};
+use zeromq::{PullSocket, Socket, ZmqError};
 mod args;
 mod constants;
 mod log;
 mod modmap;
+mod call_tracing;
 
-#[derive(Hash, PartialEq, Eq, Debug)]
-struct FunctionCallInfo {
-    function_id: u32,
-    module_id: usize,
-}
-
-impl FunctionCallInfo {
-    pub fn from_two_messages(
-        id_bytes: &bytes::Bytes,
-        module_bytes: &bytes::Bytes,
-        modules: &ExtModuleMap,
-    ) -> Option<Self> {
-        let fn_id: Result<u32, bytes::TryGetError> = id_bytes.clone().try_get_u32_le();
-        let sha256hash = String::from_utf8(module_bytes.to_vec());
-        if let (Ok(fn_id), Ok(sha256hash)) = (fn_id, sha256hash) {
-            return modules
-                .get_module_id(&sha256hash)
-                .map(|id| FunctionCallInfo {
-                    function_id: fn_id,
-                    module_id: id,
-                });
-        }
-        None
-    }
-}
-
-enum Message {
-    Normal(FunctionCallInfo),
-    ControlEnd,
-}
-
-async fn extract_message(socket: &mut PullSocket, modules: &ExtModuleMap) -> Option<Message> {
-    let message = socket.recv().await;
-    if message.is_err() {
-        let _ = message.inspect_err(|e| println!("Error receiving: {}", e));
-        return None;
-    }
-    let message = message.unwrap();
-    if message.is_empty() {
-        return None;
-    }
-
-    if message.len() == 1 {
-        return Some(Message::ControlEnd);
-    }
-
-    let msg1 = message.get(0).unwrap();
-    let msg2 = message.get(1).unwrap();
-
-    let (shorter, longer) = if msg1.len() > msg2.len() {
-        (msg2, msg1)
-    } else {
-        (msg1, msg2)
-    };
-    if shorter.len() != 4 || longer.len() != 64 {
-        println!("huh {:?} {:?}", shorter, longer);
-    }
-
-    let call_info = FunctionCallInfo::from_two_messages(shorter, longer, modules);
-
-    call_info.and_then(|m| Message::Normal(m).into())
-}
-
-fn print_summary(freqs: &HashMap<FunctionCallInfo, u64>, mods: &ExtModuleMap) {
+pub fn print_summary(freqs: &HashMap<FunctionCallInfo, u64>, mods: &ExtModuleMap) {
     let mut pairs = freqs.iter().collect::<Vec<(_, _)>>();
     pairs.sort_by(|a, b| b.1.cmp(a.1));
     for (idx, (fninfo, freq)) in pairs.iter().enumerate() {
@@ -98,6 +36,7 @@ fn print_summary(freqs: &HashMap<FunctionCallInfo, u64>, mods: &ExtModuleMap) {
         );
     }
     mods.print_summary();
+    println!("Total traced calls: {}", freqs.values().sum::<u64>());
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -135,18 +74,23 @@ async fn main() -> Result<(), ZmqError> {
             return Err(ZmqError::Other("Cannot connect"));
         }
     }
-
     lg.info("Listening...");
 
     loop {
         if let Some(m) = extract_message(&mut socket, &modules).await {
+            lg.trace("Got message");
             match m {
-                Message::ControlEnd => break,
+                Message::ControlEnd => {
+                    lg.trace("Stopping on EndMessage");
+                    break;
+                },
                 Message::Normal(content) => recorded_frequencies
                     .entry(content)
                     .and_modify(|v| *v += 1)
                     .or_insert(1),
             };
+        } else {
+            lg.crit("Could not extract message!");
         }
     }
 
