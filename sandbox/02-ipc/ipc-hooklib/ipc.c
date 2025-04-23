@@ -71,8 +71,6 @@ void ipc_destroy(void) {
       printf("Failed to send the final message\n");
     }
 
-    zsock_flush(&push);
-    sleep(1);
     IFDEBUG printf("Destroying socket\n");
     sleep(1);
     zsock_destroy(&push);
