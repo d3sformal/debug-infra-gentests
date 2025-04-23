@@ -223,25 +223,35 @@ float bignum(__uint128_t f) {
   return 0.0;
 }
 
-int main() {
+int main(int argc) {
+  if (argc > 3) {
+    *((volatile int*)0);
+  }
   auto valStr = strByVal("hello, world!");
+  if (argc > 2) {
+    *((volatile int*)0);
+  }
   lotOfArgs(1ul << 63, getInt(bignum(0xf0001)), valStr.length(), 4, 5, 6, 7, 8, 9);
   abcd(2);
   efgh(2);
   bignum(123);
-
   short num = 17;
-  foo_namespace::bar_namespace::foo(1, 3.14);
   const char *p = "www";
-  std::cout << p << std::endl;
   std::string v(p);
+
+  for(int t = 0; t < 100; ++t){  
+  foo_namespace::bar_namespace::foo(1, 3.14);
+  std::cout << p << std::endl;
   templateTest<std::string>(v);
   templateTest<float>(0.0);
+  }
 
   myTypeTFoo(retRef());
   MyTypeT x = 4.53;
   myTypeTFoo(x);
-
+  if (argc > 1) {
+    *((volatile int*)0);
+  }
   overload1(overload1(num));
 
   auto nocapture_lam = [](int z) { return z; };
