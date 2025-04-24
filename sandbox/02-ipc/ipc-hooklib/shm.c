@@ -162,23 +162,13 @@ static int semaphore_close(sem_t *sem, const char *name) {
   return 0;
 }
 
+#define SEMPERMS (S_IROTH | S_IWOTH | S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR)
+
 int init(void) {
   int rv = SHM_FAIL_NORET;
 
-  s_sem_full = sem_open(s_sem_full_name, O_CREAT);
-  if (s_sem_full == SEM_FAILED) {
-    printf("Failed to initialize FULL semaphore: %s\n", strerror(errno));
-    return rv;
-  }
-
-  s_sem_free = sem_open(s_sem_free_name, O_CREAT);
-  if (s_sem_free == SEM_FAILED) {
-    printf("Failed to initialize FREE semaphore: %s\n", strerror(errno));
-    goto sem_full_cleanup;
-  }
-
   if (get_buffer_info(s_shm_meta_name, &s_buff_info) != 0) {
-    goto sem_free_cleanup;
+    return rv;
   }
   static_assert(sizeof(size_t) > sizeof(uint32_t),
                 "Next line kinda depends on this");
@@ -186,7 +176,20 @@ int init(void) {
   if (buff_total_size != (size_t)s_buff_info.total_len ||
       sizeof(s_bumper) >= s_buff_info.buff_len) {
     printf("Metadata is invalid\n");
-    goto sem_free_cleanup;
+    return rv;
+  }
+
+  //  If O_CREAT is specified, and a semaphore with the given name already exists, then mode and value are ignored. (this should be the case, because we will want to first run the server and then the instrumented binary)
+  s_sem_full = sem_open(s_sem_full_name, O_CREAT, SEMPERMS, 0);
+  if (s_sem_full == SEM_FAILED) {
+    printf("Failed to initialize FULL semaphore: %s\n", strerror(errno));
+    return rv;
+  }
+
+  s_sem_free = sem_open(s_sem_free_name, O_CREAT, SEMPERMS, s_buff_info.buff_count);
+  if (s_sem_free == SEM_FAILED) {
+    printf("Failed to initialize FREE semaphore: %s\n", strerror(errno));
+    goto sem_full_cleanup;
   }
 
   if (map_shmem(s_shared_buffers_name, &s_shared_buffers_ptr,
