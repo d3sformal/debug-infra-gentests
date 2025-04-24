@@ -10,6 +10,7 @@ use libc::{
 pub struct MetaDescriptor {
   pub buff_count: u32,
   pub buff_size: u32,
+  pub total_len: u32
 }
 
 pub struct ShmSem {
@@ -70,7 +71,7 @@ pub fn init_semaphores(prefix: &str, n_buffs: u32) -> Result<(ShmSem, ShmSem), S
 }
 
 pub struct ShmHandle {
-  mem: *mut c_void,
+  pub mem: *mut c_void,
   len: u32,
   fd: i32,
   name: String,
@@ -152,6 +153,14 @@ pub fn init_shmem(
   let meta_tmp = format!("{prefix}shmmeta\x00");
   let metacstr = unsafe { to_cstr(&meta_tmp) };
   let meta_mem_handle = try_mmap_with_name(metacstr, std::mem::size_of::<MetaDescriptor>() as u32)?;
+
+  {
+    let target_descriptor = MetaDescriptor {buff_count, buff_size: buff_len, total_len: buff_count * buff_len};
+    let meta_ptr = meta_mem_handle.mem as *mut MetaDescriptor;
+    unsafe {
+      *meta_ptr = target_descriptor;
+    }
+  }
 
   let buffs_tmp = format!("{prefix}shmbuffs\x00");
   let buffscstr = unsafe { to_cstr(&buffs_tmp) };

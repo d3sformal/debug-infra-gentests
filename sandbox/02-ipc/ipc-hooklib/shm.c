@@ -171,11 +171,11 @@ int init(void) {
     return rv;
   }
   static_assert(sizeof(size_t) > sizeof(uint32_t),
-                "Next line kinda depends on this");
+  "Next line kinda depends on this");
+  printf("Buffers description: cnt: %u len: %u tot: %u\n", s_buff_info.buff_count, s_buff_info.buff_len, s_buff_info.total_len);
   size_t buff_total_size = s_buff_info.buff_count * s_buff_info.buff_len;
   if (buff_total_size != (size_t)s_buff_info.total_len ||
       sizeof(s_bumper) >= s_buff_info.buff_len) {
-    printf("Metadata is invalid\n");
     return rv;
   }
 
