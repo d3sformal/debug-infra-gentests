@@ -1,15 +1,26 @@
 pub struct Constants {}
 
 impl Constants {
-    pub const fn default_socket_path() -> &'static str {
-        "/tmp/zmq-socket"
-    }
+  pub const fn default_socket_path() -> &'static str {
+    "/tmp/zmq-socket"
+  }
 
-    pub const fn default_socket_address() -> &'static str {
-        "ipc:///tmp/zmq-socket"
-    }
+  pub const fn default_socket_address() -> &'static str {
+    "ipc:///tmp/zmq-socket"
+  }
 
-    pub const fn parse_fnid_radix() -> u32 {
-        10
-    }
+  pub const fn parse_fnid_radix() -> u32 {
+    10
+  }
+
+  pub const fn default_fd_prefix() -> &'static str {
+    "/llcap-"
+  }
+  pub const fn default_buff_count_str() -> &'static str {
+    "4"
+  }
+
+  pub const fn default_buff_size_bytes_str() -> &'static str {
+    "4096"
+  }
 }
