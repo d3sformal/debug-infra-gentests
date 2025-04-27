@@ -5,7 +5,7 @@ use call_tracing::FunctionCallInfo;
 use clap::Parser;
 use log::Log;
 use modmap::ExtModuleMap;
-use shmem_capture::{init_semaphores, init_shmem};
+use shmem_capture::{deinit_semaphores, deinit_shmem, init_semaphores, init_shmem};
 use zmq_capture::zmq_call_trace;
 mod args;
 mod call_tracing;
@@ -48,7 +48,8 @@ async fn main() -> Result<(), String> {
     return Err("".to_owned());
   }
   let cli = cli.unwrap();
-  let lg = Log::get(cli.verbose);
+  Log::set_verbosity(cli.verbose);
+  let lg = Log::get("main");
   lg.info(&format!("Verbosity: {}", cli.verbose));
 
   let modules = ExtModuleMap::try_from(cli.modmap.clone());
@@ -66,18 +67,45 @@ async fn main() -> Result<(), String> {
 
   match cli.method {
     args::Type::ZeroMQ { socket } => {
-      zmq_call_trace(&socket, lg, &modules, &mut recorded_frequencies).await;
+      zmq_call_trace(&socket, &modules, &mut recorded_frequencies).await;
     }
     args::Type::Shmem {
       fd_prefix,
       buff_count,
       buff_size,
     } => {
-      println!("Initializing semaphores");
-      let (s1, s2) = init_semaphores(&fd_prefix, buff_count)?;
-      println!("Initializing shmem");
-      let (shm1, shm2) = init_shmem(&fd_prefix, buff_count, buff_size)?;
-      println!("Initialized! Exiting...");
+      lg.info("Initializing semaphores");
+      let (semfree, semfull) = init_semaphores(&fd_prefix, buff_count)?;
+      lg.info("Initializing shmem");
+      let (meta_shm, buffers_shm) = match init_shmem(&fd_prefix, buff_count, buff_size) {
+        Err(e) => {
+          // safe to use bitwise_clone because both match arms return Err + there is ? at the end of the enclosing expression (below)
+          match deinit_semaphores(semfree.bitwise_clone(), semfull.bitwise_clone()) {
+            Ok(()) => Err(e),
+            Err(e2) => Err(format!(
+              "Failed to clean up semaphores when mmap failed: {e2}, map failure: {e}"
+            )),
+          }
+        }
+        Ok(a) => Ok(a),
+      }?; // <---
+
+      lg.info("Initialized! Exiting...");
+      let shm_uninit = deinit_shmem(meta_shm, buffers_shm);
+      let sem_uninit = deinit_semaphores(semfree, semfull);
+
+      let goodbye_errors = [shm_uninit, sem_uninit]
+        .iter()
+        .fold("".to_string(), |acc, v| {
+          if v.is_err() {
+            acc + v.as_ref().unwrap_err()
+          } else {
+            acc
+          }
+        });
+      if !goodbye_errors.is_empty() {
+        return Err(format!("Failed deinit! {goodbye_errors}"));
+      }
     }
   }
 

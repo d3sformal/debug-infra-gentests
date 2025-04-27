@@ -9,10 +9,10 @@ use zeromq::{PullSocket, Socket};
 
 pub async fn zmq_call_trace(
   addr: &str,
-  lg: &Log,
   modules: &ExtModuleMap,
   recorded_frequencies: &mut HashMap<FunctionCallInfo, u64>,
 ) {
+  let lg = Log::get("zmq_call_trace");
   let mut socket = PullSocket::new();
 
   if socket.bind(addr).await.is_err() {

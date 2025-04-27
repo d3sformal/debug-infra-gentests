@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicU8;
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum LogLevel {
   Critical,
@@ -28,6 +30,7 @@ impl From<LogLevel> for u8 {
   }
 }
 
+#[derive(Clone, Copy)]
 pub struct Log {
   level: LogLevel,
 }
@@ -46,14 +49,52 @@ static LOG_TRACE: Log = Log {
   level: LogLevel::Trace,
 };
 
-impl Log {
-  pub fn get(verbosity: u8) -> &'static Self {
-    match LogLevel::from(verbosity) {
+static LOG_LEVEL: AtomicU8 = AtomicU8::new(0);
+
+pub struct Logger {
+  name: String,
+  inner_log: &'static Log,
+}
+
+impl Logger {
+  pub fn new(name: &str) -> Self {
+    let log = match LogLevel::from(LOG_LEVEL.load(std::sync::atomic::Ordering::Relaxed)) {
       LogLevel::Critical => &LOG_CRIT,
       LogLevel::Warn => &LOG_WARN,
       LogLevel::Info => &LOG_INFO,
       LogLevel::Trace => &LOG_TRACE,
+    };
+    Self {
+      name: name.to_string(),
+      inner_log: log,
     }
+  }
+
+  fn formatted(&self, msg: &str) -> String {
+    format!("[{}] {}", self.name, msg)
+  }
+
+  pub fn crit(&self, msg: &str) {
+    self.inner_log.log(LogLevel::Critical, &self.formatted(msg));
+  }
+  pub fn warn(&self, msg: &str) {
+    self.inner_log.log(LogLevel::Warn, &self.formatted(msg));
+  }
+  pub fn info(&self, msg: &str) {
+    self.inner_log.log(LogLevel::Info, &self.formatted(msg));
+  }
+  pub fn trace(&self, msg: &str) {
+    self.inner_log.log(LogLevel::Trace, &self.formatted(msg));
+  }
+}
+
+impl Log {
+  pub fn set_verbosity(verbosity: u8) -> u8 {
+    LOG_LEVEL.swap(verbosity, std::sync::atomic::Ordering::Relaxed)
+  }
+
+  pub fn get(name: &str) -> Logger {
+    Logger::new(name)
   }
 
   fn log_level_preamble(lvl: LogLevel) -> &'static str {
@@ -63,19 +104,6 @@ impl Log {
       LogLevel::Info => "I |",
       LogLevel::Trace => "T |",
     }
-  }
-
-  pub fn crit(&self, msg: &str) {
-    self.log(LogLevel::Critical, msg);
-  }
-  pub fn warn(&self, msg: &str) {
-    self.log(LogLevel::Warn, msg);
-  }
-  pub fn info(&self, msg: &str) {
-    self.log(LogLevel::Info, msg);
-  }
-  pub fn trace(&self, msg: &str) {
-    self.log(LogLevel::Trace, msg);
   }
 
   fn log(&self, lvl: LogLevel, msg: &str) {

@@ -25,7 +25,7 @@ impl FunctionCallInfo {
           module_id: id,
         });
     }
-    Log::get(0).crit("Invalid data received!");
+    Log::get("from_two_messages").crit("Invalid data received!");
     None
   }
 }
@@ -36,9 +36,10 @@ pub enum Message {
 }
 
 pub async fn extract_message(socket: &mut PullSocket, modules: &ExtModuleMap) -> Option<Message> {
+  let lg = Log::get("extract_message");
   let message = socket.recv().await;
   if message.is_err() {
-    let _ = message.inspect_err(|e| println!("Error receiving: {}", e));
+    let _ = message.inspect_err(|e| lg.crit(&format!("Error receiving: {}", e)));
     return None;
   }
   let message = message.unwrap();
@@ -59,7 +60,7 @@ pub async fn extract_message(socket: &mut PullSocket, modules: &ExtModuleMap) ->
     (msg1, msg2)
   };
   if shorter.len() != 4 || longer.len() != 64 {
-    println!("Invalid sizes of {:?} and {:?}", shorter, longer);
+    lg.warn(&format!("Invalid sizes of {:?} and {:?}", shorter, longer));
   }
 
   let call_info = FunctionCallInfo::from_two_messages(shorter, longer, modules);
