@@ -498,30 +498,29 @@ Argument order remained a question in previous meeting. I attempted to tackle th
 
 1. **LLVM attributes**
 
-
 Key observations:
 
-* attributes are tied to arguments
+* attributes are **tied to arguments**
 * some are closely related to C++ attributes, some are generated and inserted into the IR
 
 Attributes seemed ideal as a candidate for relaying information about funciton arguments to the lower levels of LLVM. Indeed, LLVM's `AttrBuilder` allows to add attributes to an argument index of a function (see [a diff that combines both metadata and attributes](../sandbox/01-llvm-ir/custom-metadata-pass/metadata-and-unsigned-attributes.diff)). The attributes' assigned positions, however, do not change when LLVM IR is generated (e.g. to shift by one due to the introduction of `this` pointer as an argument to member functions). I tried to search the LLVM codebase to see where
-the mapping occurs but was unable to make it correct.
+the mapping occurs but was unable to make it correct, reaching a dead end.
 
 2. **Using metadata and a fragment of code from LLVM**
 
-Of course, argument order and introduction of extra arguments is entirely dependent on the target architecture. As such, when experimenting with more and more variants of functions in [the C++ test program](../sandbox/01-llvm-ir/test-pass/test-program.cpp), I ended up discovering that **LLVM may return an argument in a register that is passed as an *output* argument** (indicated by IR `sret` attribute). When digging around for more ABI-specific details, I found a fragment of code (class `ClangToLLVMArgMapping`) that allows to map function arguments as seen in AST to their representations in LLVM IR.
+Of course, argument order and introduction of extra arguments is entirely dependent on the target architecture. As such, when experimenting with more and more variants of functions in [the C++ test program](../sandbox/01-llvm-ir/test-pass/test-program.cpp), I ended up discovering that **LLVM may return an argument "in a register" that is passed as an *output* argument** (indicated by IR `sret` attribute). When digging around for more ABI-specific details, I found a fragment of code (class `ClangToLLVMArgMapping`) that allows to map function arguments as seen in AST to their representations in LLVM IR.
 
-This fragment is not "exported" in a header file, therefore - to minimize modifications to the LLVM codebase, I copy-pasted this fragment to the relevant part of source code, where I plan on converting the AST argument indicies to LLVM ones. Luckily, the already-modified area of `CodeGenFunction.cpp`'s `StarFunction` has all required objects initialized and ready to be used.
+This fragment is not "exported" in a header file, therefore - to minimize modifications to the LLVM codebase, I copy-pasted this fragment to the relevant part of source code, where I plan on converting the AST argument indicies to LLVM ones. Luckily, the already-modified area of `CodeGenFunction.cpp`'s `StarFunction` has all the required objects initialized and ready to be used.
 
 One small caveat is that `ClangToLLVMArgMapping` does not consider `this` pointer in its calculcations for some reason.
-This is mitigated in the AST plugin which has information about whether a function is a member or not. The AST plugin simply shifts by one for member functions. Looking around the LLVM codebase, I was unable to prove nor disprove the correctness of this approach.
+This is mitigated in the AST plugin which has information about whether a function is a member or not. The AST plugin simply inserts marker metadata that the IR plugin reads. Looking around the LLVM codebase, I was unable to prove nor disprove the correctness of this approach.
 
 **How**
 
 In current version, the **AST plugin** (that so far only indicated whether a function is a library function or not) injects **AST indicies of arguments** we deem interesting (that we will inspect).
 (technically, the indicies are encoded as string metadata, for each "kind of interest", we inject one string index list).
 
-Later, in the LLVM IR generation phase (`CodeGen`), we inspect functions using the duplicated `ClangToLLVMArgMapping` class and attach anoter piece of metadata to the function: the metadata encoding:
+Later, in the IR generation phase (`CodeGen`), we inspect functions using the duplicated `ClangToLLVMArgMapping` class and attach anoter piece of metadata to the function, encoding:
 
 - number of IR arguments
 - number of AST arguments (let's denote `n`)
@@ -532,9 +531,46 @@ Later, in the LLVM IR generation phase (`CodeGen`), we inspect functions using t
 Inside `ClangToLLVMArgMapping`, it is trivial to see that LLVM passes some larger arguments in multiple IR arguments. For example, the IR only supports what seems to be a 64-bit data type.
 Thus, passing a single 128-bit value (such as a simple 128-bit integers), causes LLVM to generate IR that splits the large argument into two smaller ones in the IR.
 
-I confirmed this is the case and due to this oversight, included the argument span metadata in the custom metadata that is passed later.
+I confirmed this is the case and due to this oversight, included the argument span metadata in the custom metadata that is passed later. For completeness, here is an example showcasing `sret` and large arguments:
+
+
+```cpp
+Large returnLarge(uint64_t x)
+
+float bignum(__uint128_t f)
+```
+
+Translate as:
+
+```
+; notice sret
+
+void @_Z11returnLargem(ptr dead_on_unwind noalias writable sret(%struct.Large) align 8 %0, i64 noundef %1)
+
+; notice 2 arguments instead of 1
+
+float @_Z6bignumo(i64 noundef %0, i64 noundef %1)
+```
+
+Example mapping:
+
+```cpp
+void pass128Struct(Fits128Bits s)
+```
+
+```
+define dso_local void @_Z13pass128Struct11Fits128Bits(i64 %0, i64 %1) #0 !VSTR-NOT-SYSTEM-HEADER !7 !LLCAP-CLANG-LLVM-MAP-DATA !11
+
+; two IR args, one clang-ast arg, the first clang arg is mapped to 0th IR arg (span 2)
+!11 = !{!"2 1 0-2"}
+```
 
 **Later**, the LLVM IR pass reads the index mapping as well as the "interesting" index lists to produce correct hook calls for the correct arguments. Current implementation should handle **this pointer**, **sret return values** as well as **multi-IR-argument-spanning data**. 
+
+
+[A reduced diff, showcasing the functionality](./misc/clang-ir-index-mapping.diff)
+
+[A full diff that has to be applied](../sandbox/01-llvm-ir/clan-ir-mapping-full.diff)
 
 ## Sketch of a custom type support
 
@@ -549,6 +585,32 @@ The need for argument order tracknig comes from the need to propagate *signednes
 Treating references (`&` and `&&`) as pointers on the IR level surprisingly worked, though I have not proven that this approach is entirely correct. One obviously should avoid non-const access to a value of `T` in the hook library function.
 
 As more and more technicalities appeared while working on this issue, [the C++ test program](../sandbox/01-llvm-ir/test-pass/test-program.cpp) has been accordingly updated with string functions, `sret` functions and functions accepting/returning wider types (`__int128`).
+
+Example:
+
+```cpp
+// new hook lib function that gets injected (stdstring8 only displays "std::string" next to its value)
+void vstr_extra_cxx__string(std::string *str) { hook_stdstring8(str->c_str()); }
+
+// in test program:
+template<class T>
+T templateTest(T x) { return x; }
+```
+
+`std::string` instantiation of this template translates into IR as:
+
+```
+; notice sret
+; new metadata key: VSTR-CXX-STD-STRING
+
+define linkonce_odr dso_local void @_Z12templateTestINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEET_S6_(ptr dead_on_unwind noalias writable sret(%"class.std::__cxx11::basic_string") align 8 %0, ptr noundef %1) #0 comdat !VSTR-NOT-SYSTEM-HEADER !7 !LLCAP-CLANG-LLVM-MAP-DATA !12 !VSTR-CXX-STD-STRING !13
+
+; mapping considers sret argument
+!12 = !{!"2 1 1-1"}
+
+; the first **AST** arg is string (the first IR arg is sret argument!)
+!13 = !{!"0"}
+```
 
 ## IPC fundamentals, architecture considerations
 
