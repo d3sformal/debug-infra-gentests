@@ -115,21 +115,13 @@
 ```
 
 ## branch/technical
-* document (iceoryx2 - why not)
-    * document zeroMQ why not (See below)
-* explore TUI interface
-* workflow charts for arch
-* attreibute diffs - remove or integrate into report
+* document (iceoryx2 - why not - ???) - ???
+* attribute diffs - remove or integrate into report
 * report mangling bug (after rebuild of latest llvm project)
+* document `llcap-server` usage - dump help
+    * document the hardcoded semaphore/shm region names so far
 * document termination issue - if terminated (term, kill, segv, ...), hard to flush properly/at all
-    * file-based approach would also suffer from this problem (flushing files would be very slow, there could be overload due to bandwidth of underlying tech, also the call capture generates a ton of information, most of which is duplicate and discarded)
-    * signal handlers are not 100% reliable anyway - some dont provide time for cleanup
     * server waits for an "end" message -> simple app that does this
         * alternative is to wait for user input and stop waiting for the thread with the message
-        * another alternative is to get a process ID and periodically check if the process under that ID is running
         * or a simple timeout (not very handy)
-        * what is more troubling: the data does not get always through 
-            * is ZMQ even a viable option here? (it seems stupid to allow such faults...)
-            * even if I send some sequence numbers and do bookkeeping - the inability of "fl
-    * misses some of the last calls, question is whether it is necessary...
-* try to implement a custom (and simple) shared memory approach (1 writer, 1 reader, inter-process semaphore and a few buffers that we cycle through)
+* add the diff to `llvm-project` for clang-IR index mapping!!!

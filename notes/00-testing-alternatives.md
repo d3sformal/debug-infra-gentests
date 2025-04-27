@@ -476,7 +476,7 @@ Remedies:
 
 * possible **limitaitons** (not investigated):
     * approach no longer a "drop-in", easy-to-use - metadata patch to clang/llvm needs recompilation of a core part (the AST -> IR step)
-    * wrt. argument inspection - metadata only attached to a function - is it possible to reliably encode argument position (that argument order remains the same in the IR as it was in the AST)
+    * wrt. argument inspection - metadata only attached to a function - is it possible to reliably encode argument position? (that argument order remains the same in the IR as it was in the AST)
     * the AST inspection code might not correctly handle all functions (intricacies of the AST structure)
         * so far recursive namespace walkthrough + inspection of all lambda expressions (for their `operator()` - which is our desired function for in-code lambdas)
 
@@ -489,3 +489,164 @@ Remedies:
 * [separate detailed document/tutorial on LLVM metadata](../notes/01-llvm-ir-metadata-emission.md)
 
 * [a usless rabbit hole on a (de)mangling bug I encountered](../notes/0x-llvm-demangling.md)
+
+# UPDATE April 28
+
+## Argument order
+
+Argument order remained a question in previous meeting. I attempted to tackle this issue in 2 ways.
+
+1. **LLVM attributes**
+
+
+Key observations:
+
+* attributes are tied to arguments
+* some are closely related to C++ attributes, some are generated and inserted into the IR
+
+Attributes seemed ideal as a candidate for relaying information about funciton arguments to the lower levels of LLVM. Indeed, LLVM's `AttrBuilder` allows to add attributes to an argument index of a function (see [a diff that combines both metadata and attributes](../sandbox/01-llvm-ir/custom-metadata-pass/metadata-and-unsigned-attributes.diff)). The attributes' assigned positions, however, do not change when LLVM IR is generated (e.g. to shift by one due to the introduction of `this` pointer as an argument to member functions). I tried to search the LLVM codebase to see where
+the mapping occurs but was unable to make it correct.
+
+2. **Using metadata and a fragment of code from LLVM**
+
+Of course, argument order and introduction of extra arguments is entirely dependent on the target architecture. As such, when experimenting with more and more variants of functions in [the C++ test program](../sandbox/01-llvm-ir/test-pass/test-program.cpp), I ended up discovering that **LLVM may return an argument in a register that is passed as an *output* argument** (indicated by IR `sret` attribute). When digging around for more ABI-specific details, I found a fragment of code (class `ClangToLLVMArgMapping`) that allows to map function arguments as seen in AST to their representations in LLVM IR.
+
+This fragment is not "exported" in a header file, therefore - to minimize modifications to the LLVM codebase, I copy-pasted this fragment to the relevant part of source code, where I plan on converting the AST argument indicies to LLVM ones. Luckily, the already-modified area of `CodeGenFunction.cpp`'s `StarFunction` has all required objects initialized and ready to be used.
+
+One small caveat is that `ClangToLLVMArgMapping` does not consider `this` pointer in its calculcations for some reason.
+This is mitigated in the AST plugin which has information about whether a function is a member or not. The AST plugin simply shifts by one for member functions. Looking around the LLVM codebase, I was unable to prove nor disprove the correctness of this approach.
+
+**How**
+
+In current version, the **AST plugin** (that so far only indicated whether a function is a library function or not) injects **AST indicies of arguments** we deem interesting (that we will inspect).
+(technically, the indicies are encoded as string metadata, for each "kind of interest", we inject one string index list).
+
+Later, in the LLVM IR generation phase (`CodeGen`), we inspect functions using the duplicated `ClangToLLVMArgMapping` class and attach anoter piece of metadata to the function: the metadata encoding:
+
+- number of IR arguments
+- number of AST arguments (let's denote `n`)
+- mapping of AST arguments (`n` pairs, each pair indicating the IR index of the correspoding argument and how many IR arguments it spans)
+
+### Span of an argument
+
+Inside `ClangToLLVMArgMapping`, it is trivial to see that LLVM passes some larger arguments in multiple IR arguments. For example, the IR only supports what seems to be a 64-bit data type.
+Thus, passing a single 128-bit value (such as a simple 128-bit integers), causes LLVM to generate IR that splits the large argument into two smaller ones in the IR.
+
+I confirmed this is the case and due to this oversight, included the argument span metadata in the custom metadata that is passed later.
+
+**Later**, the LLVM IR pass reads the index mapping as well as the "interesting" index lists to produce correct hook calls for the correct arguments. Current implementation should handle **this pointer**, **sret return values** as well as **multi-IR-argument-spanning data**. 
+
+## Sketch of a custom type support
+
+The need for argument order tracknig comes from the need to propagate *signedness* information from the AST phase into the IR phase. This goal is akin to a more general problem already discussed: *custom/library types support*. As a demo, the current version outlines a way to support more complicated types, namely `std::string` (concretely `std::basic_string<char>`). The process is thus:
+
+1. Modify AST plugin to emit additional argument index metadata under a custom key `K`
+    * the metadata encodes position of a type `T`
+2. Add a function to the hook library, that accepts a pointer to `const T`
+    * extra care is presumably required in this step 
+3. Match the metadata `K` (index list) and emit a call to the newly created hook function
+
+Treating references (`&` and `&&`) as pointers on the IR level surprisingly worked, though I have not proven that this approach is entirely correct. One obviously should avoid non-const access to a value of `T` in the hook library function.
+
+As more and more technicalities appeared while working on this issue, [the C++ test program](../sandbox/01-llvm-ir/test-pass/test-program.cpp) has been accordingly updated with string functions, `sret` functions and functions accepting/returning wider types (`__int128`).
+
+## IPC fundamentals, architecture considerations
+
+The idea I had was that the instrumented application would call to our hook library functions that could facilitate the IPC with a "server" application. The "server" application would be able to perform 3 functions:
+
+1. capture function call data (by reading only from the IPC stream)
+2. capture and store function arguments of target functions
+3. provide argument data from recordeded functions
+
+The immediate reason for using IPC was to avoid bottleneck hardware (disks) by writing intermediate results to a filesystem. This presented a challenge in the way functions are identified: LLVM plugin is launched once per "module" (imagine a `.cpp` file) and functions provide no real way of identification. The **uniquely**-identifying information seems to be the *function's name combined with the identifier of the module the function resides in*.
+
+### Unique function identifiers
+
+The idea is that the user will identify a function(s) to instrument after a call-tracing pass, which means that the hooking library (that exports information to the "server" and by extension its user) needs to receive the IDs. (aside: in addition to this, we still in need to uniquely identify functions for the "test generation" phase, as it will need to instrument "the correct" function)
+
+Further, in order to simplify the later implementation of an IPC protocol, the module ID (absolute path to the module) is translated to a **fixed-size** hash (SHA256 - an ad-hoc choice as the hash function is present in the interface exposed to plugins).
+
+A desirable refinement would be to generate simpler (shorter), integer-based IDs. This presents the following challenges:
+
+1. plugin has access to only one module at a time, a global data store would need to be established either via LLVM's interface or e.g. filesystem
+2. for filesystem-based approach, we need to ensure proper ordering
+    - either we run two separate compilations (insane for larger codebases)
+    - or we must ensure that two plugins are dependent on each other
+
+
+### Initial demos and program crashes
+
+Initially I chose to work with existing solutions and got as far as implementing a working server
+prototype that received information from the ipc-enabled hook library about the functions called
+by the target program.
+
+#### ZeroMQ communication and the termination issue
+
+ZeroMQ is an IPC middleware that supports a variety of programming languages and provides a lot of architecture modes. I chose a push/pull mode: instrumented application pushing identifiers, server pulling them. The hook library additionally has a `__attribute(constructor)` initialization and (`destructor`) deinitialization routines to prepare/close everything on start/exit.
+
+The implementation "works", as in, the correct hashes and function IDs are being received. **That is as long as the target program does not crash**. In my experiments, I've always played with, tested and *considered non-crashing programs*. When programs crash, they leave their environment abruptly; not all signals allow cleanup time even if an application handles signals. When a crash is introduced to the test program, there are times when the ZeroMQ push channel does not flush
+the buffer towards the pull side and its contents (a few function calls) are lost. 
+
+I was unable to find a way to ensure proper flushing. One of the attempts resulted in the creation of the [`ipc-finalizer`](../sandbox/02-ipc/ipc-finalizer/) application which is supposed to be executed after the target program crashes in order to connect to the IPC channel and send a session-terminating message to the `llcap-server`. 
+
+Ulitmately, the `llcap-server` relies on the terminating message in order to progress. This however, can be bypassed by letting `llcap-server` monitor the instrumented program via either launching it itself or probing the system.
+
+Unfortunately, `ipc-finalizer` did not resolve the issue. The experiment is thus left in an awkward state between being capable of running and demonstrating the ideas, yet absolutely failing to reliably cover the intended usecase: tracing execution of crashing programs.
+
+Relevant files implementing this approach:
+
+* [ipc.c - ZeroMQ integration to hook library](../sandbox/02-ipc/ipc-hooklib/ipc.c)   
+* [`llcap-server`'s `zmq_capture` module](../sandbox/02-ipc/llcap-server/src/zmq_capture.rs)
+
+The target test project for the IPC approach is the [example-complex](../sandbox/02-ipc/example-complex/). This is the familiar test program compiled with another cpp file and managed by `CMake`. Inside the `CMakeList.txt` file, you can switch between the approaches. The `build.sh` script builds the binary with our custom compiler passes.
+
+##### Technical note - build.sh
+
+The script calls `cmake` twice. This is because `cmake` fails compilation test of a "test C program" due to the usage of relative paths for `clang` options that import our plugins.
+
+Further, `ninja install` in LLVM build directory is required.
+
+##### Choice of Rust for `llcap-server`
+
+* is cool
+* argument parsing familiarity (`clap`)
+* provides C interop
+* comfortable type system
+* comfortable build system
+* tooling
+* **risk**: library availablility
+
+#### Shared memory approach
+
+After the failed ZeroMQ approach, I realized that even the filesystem-based approach would suffer from similar issues with output buffering. We would need to rely on the kernel/library to properly flush a crashing program's buffers onto the disk.
+
+Another option is using and managing shared memory ourselves. This can 
+- reduce the bottleneck potential by avoiding output flushing on a disk
+- provide a way to capture all the data up until the point of the crash
+- provide a general IPC method for the purposes of the entire application
+
+Essentially all we need in the function call tracing is:
+
+1. Rendezvous the instrumented process and `llcap-server` at the beginning to establish parameters (buffer size)
+2. Implementation of an IPC single-consumer-single-producer protocol via semaphores and a shared buffer
+
+For this, I decided to utilize named-semaphores and "named" shared memory regions.
+In the current version, `llcap-server` initializes 2 semaphores (indicating a free and a full buffer) and 2 memory regions (a "meta" region and "buffers" region).
+
+The "buffers" region contains `N` buffers, each of length `L`. The "meta" region contains the initial communication parameters (number, length and total length of buffers). It is expected the `llcap-server` runs first to initialize the memory mappings and only then is the target application started.
+
+The target application maps the created memory regions and "opens" the semaphores. As of April 27th, the functionality includes correct memory mapping and opening of semaphores (no interaction yet).
+
+Files implementing this approach:
+
+* [`shm.c` of the IPC hook library](../sandbox/02-ipc/ipc-hooklib/shm.c)
+* [`shmem_capture` module of `llcap-server`](../sandbox/02-ipc/llcap-server/src/shmem_capture.rs)
+
+##### Rough outline of the protocol
+
+`N` buffers are being cycled in a round-robbin. First, producer writes to the first buffer, after filling it up, it writes the number of valid bytes inside the buffer to the buffer start and signals to the consumer (via the `full` semaphore) that a buffer is ready.
+Consumer processes the buffer. Meanwhile producer moves onto another buffer by waiting on a `free` semaphore and modulo-incrementing the current buffer index.
+
+*Limitations* will be imposed on buffer size and message size. 
+* An empty buffer signals to the consumer that no more data is available. This relates to the `ipc-finalizer` which, in this model, would connect to the relevant semaphores and buffers and simply send an empty buffer to indicate the end of data collection. 
+* A *message cannot be split* in this model, thus a message shall always fit in a buffer.
