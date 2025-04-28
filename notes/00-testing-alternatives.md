@@ -659,7 +659,7 @@ ZeroMQ is an IPC middleware that supports a variety of programming languages and
 The ZeroMQ implementation "works", as in, the correct function IDs are being received. **That is as long as the target program does not crash**. In my experiments, I've always played with, tested and *considered non-crashing programs*. When programs crash, they leave their environment abruptly; not all signals allow cleanup time even if an application handles signals. When a crash is introduced to the test program, there are times when the ZeroMQ push channel does not flush
 the buffer towards the pull side and its contents (a few function calls) are lost.
 
-I was unable to find a way to ensure proper flushing. One of the attempts resulted in the creation of the [`ipc-finalizer`](../sandbox/02-ipc/ipc-finalizer/) application which is supposed to be executed after the target program crashes in order to connect to the IPC channel and send a *session-terminating* message to the `llcap-server` (the binary on the other side of the IPC connection). 
+I was unable to find a way to ensure proper flushing. One of the attempts resulted in the creation of the [`ipc-finalizer`](../sandbox/02-ipc/ipc-finalizer/) application which is supposed to be executed after the target program crashes in order to connect to the IPC channel and send a *session-terminating* message to the [`llcap-server`](../sandbox/02-ipc/llcap-server/) (the binary on the other side of the IPC connection). 
 
 Ulitmately, the `llcap-server` relies on the *terminating* message in order to progress. This however, can be bypassed by letting `llcap-server` monitor the instrumented program via either launching it itself or probing the system.
 
@@ -674,7 +674,7 @@ Relevant files implementing this approach:
 * [ipc.c - ZeroMQ integration to hook library](../sandbox/02-ipc/ipc-hooklib/ipc.c)   
 * [`llcap-server`'s `zmq_capture` module](../sandbox/02-ipc/llcap-server/src/zmq_capture.rs)
 
-The target test project for the IPC approach is the [example-complex](../sandbox/02-ipc/example-complex/). This is the familiar test program compiled with another cpp file and managed by `CMake`. Inside the `CMakeList.txt` file, you can switch between the approaches. The `build.sh` script builds the binary with our custom compiler passes.
+The target test project for the IPC approach is the [example-complex](../sandbox/02-ipc/example-complex/). This is the familiar test program compiled with another cpp file and managed by `CMake`. Inside the `CMakeList.txt` file, you can switch between the approaches. The [`build.sh`](../sandbox/02-ipc/example-complex/build.sh) script builds the binary with our custom compiler passes.
 
 Crashing is enabled by simply passing 3, 2 or 1 argument to the compiled binary. Each triggers a crash as the first (3 args), second (2 args) or "later" (1 arg) statement in `main`. If no arguments are given, application terminates properly.
 
