@@ -635,6 +635,7 @@ A desirable refinement would be to generate simpler (shorter), integer-based IDs
     - either we run two separate compilations (insane for larger codebases)
     - or we must ensure that two plugins are dependent on each other (the module ID reduction must happen first)
 
+In the current version, instrumentation creates a file for each "module" in a predefined folder. File names correspond to module hashes and contain the module name and mapping of function IDs to function names.
 
 ### Initial demos and program crashes
 
