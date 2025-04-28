@@ -115,13 +115,6 @@
 ```
 
 ## branch/technical
-* document (iceoryx2 - why not - ???) - ???
-* attribute diffs - remove or integrate into report
 * report mangling bug (after rebuild of latest llvm project)
 * document `llcap-server` usage - dump help
     * document the hardcoded semaphore/shm region names so far
-* document termination issue - if terminated (term, kill, segv, ...), hard to flush properly/at all
-    * server waits for an "end" message -> simple app that does this
-        * alternative is to wait for user input and stop waiting for the thread with the message
-        * or a simple timeout (not very handy)
-* add the diff to `llvm-project` for clang-IR index mapping!!!

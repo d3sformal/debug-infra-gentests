@@ -624,16 +624,16 @@ The immediate reason for using IPC was to avoid bottleneck hardware (disks) by w
 
 ### Unique function identifiers
 
-The idea is that the user will identify a function(s) to instrument after a call-tracing pass, which means that the hooking library (that exports information to the "server" and by extension its user) needs to receive the IDs. (aside: in addition to this, we still in need to uniquely identify functions for the "test generation" phase, as it will need to instrument "the correct" function)
+The idea is that the user will identify a function(s) to instrument after a call-tracing pass, which means that the hooking library (that exports information to the "server" and by extension its user) needs to receive the function IDs. (aside: in addition to this, we still in need to uniquely identify functions for the "test generation" phase, as we will need to instrument "the correct" function)
 
 Further, in order to simplify the later implementation of an IPC protocol, the module ID (absolute path to the module) is translated to a **fixed-size** hash (SHA256 - an ad-hoc choice as the hash function is present in the interface exposed to plugins).
 
 A desirable refinement would be to generate simpler (shorter), integer-based IDs. This presents the following challenges:
 
-1. plugin has access to only one module at a time, a global data store would need to be established either via LLVM's interface or e.g. filesystem
+1. plugin has access to only one module at a time, a global data store would need to be established either via LLVM's interface or e.g. filesystem (to investigate)
 2. for filesystem-based approach, we need to ensure proper ordering
     - either we run two separate compilations (insane for larger codebases)
-    - or we must ensure that two plugins are dependent on each other
+    - or we must ensure that two plugins are dependent on each other (the module ID reduction must happen first)
 
 
 ### Initial demos and program crashes
@@ -642,18 +642,32 @@ Initially I chose to work with existing solutions and got as far as implementing
 prototype that received information from the ipc-enabled hook library about the functions called
 by the target program.
 
+#### Initial positives and negatives considered
+
+* (+) support for more languages (than C/C++)
+* (+) features implemented
+* (-) features "planned"
+* (-) requires a "broker"
+
+At the very beginning, `iceoryx2` and `zeroMQ` were considered.
+I chose `zeroMQ` as its documentation seemed more accessible (man-page style).
+
 #### ZeroMQ communication and the termination issue
 
-ZeroMQ is an IPC middleware that supports a variety of programming languages and provides a lot of architecture modes. I chose a push/pull mode: instrumented application pushing identifiers, server pulling them. The hook library additionally has a `__attribute(constructor)` initialization and (`destructor`) deinitialization routines to prepare/close everything on start/exit.
+ZeroMQ is an IPC middleware that supports a variety of programming languages and provides a lot of architecture modes. I chose a push/pull mode: instrumented application pushing identifiers, server pulling them. The hook library additionally has a `__attribute(constructor)` initialization and (`destructor`) deinitialization routines to prepare/close everything on start/exit. This feature is very useful, as we simply always require at least some form of initialization of our library. Especially the `constructor` attribute is used in all later versions of the hook library.
 
-The implementation "works", as in, the correct hashes and function IDs are being received. **That is as long as the target program does not crash**. In my experiments, I've always played with, tested and *considered non-crashing programs*. When programs crash, they leave their environment abruptly; not all signals allow cleanup time even if an application handles signals. When a crash is introduced to the test program, there are times when the ZeroMQ push channel does not flush
-the buffer towards the pull side and its contents (a few function calls) are lost. 
+The ZeroMQ implementation "works", as in, the correct function IDs are being received. **That is as long as the target program does not crash**. In my experiments, I've always played with, tested and *considered non-crashing programs*. When programs crash, they leave their environment abruptly; not all signals allow cleanup time even if an application handles signals. When a crash is introduced to the test program, there are times when the ZeroMQ push channel does not flush
+the buffer towards the pull side and its contents (a few function calls) are lost.
 
-I was unable to find a way to ensure proper flushing. One of the attempts resulted in the creation of the [`ipc-finalizer`](../sandbox/02-ipc/ipc-finalizer/) application which is supposed to be executed after the target program crashes in order to connect to the IPC channel and send a session-terminating message to the `llcap-server`. 
+I was unable to find a way to ensure proper flushing. One of the attempts resulted in the creation of the [`ipc-finalizer`](../sandbox/02-ipc/ipc-finalizer/) application which is supposed to be executed after the target program crashes in order to connect to the IPC channel and send a *session-terminating* message to the `llcap-server` (the binary on the other side of the IPC connection). 
 
-Ulitmately, the `llcap-server` relies on the terminating message in order to progress. This however, can be bypassed by letting `llcap-server` monitor the instrumented program via either launching it itself or probing the system.
+Ulitmately, the `llcap-server` relies on the *terminating* message in order to progress. This however, can be bypassed by letting `llcap-server` monitor the instrumented program via either launching it itself or probing the system.
 
 Unfortunately, `ipc-finalizer` did not resolve the issue. The experiment is thus left in an awkward state between being capable of running and demonstrating the ideas, yet absolutely failing to reliably cover the intended usecase: tracing execution of crashing programs.
+
+Other approaches considered (only covering the detection of termination, not message flushing):
+* timeout - too unreliable, especially annoying for long-running code
+* user interaction - capture messsages on one thread, poll for user input on other, wait for the first thread that reports progress (termination or user input requesting termination) and kill the other thread
 
 Relevant files implementing this approach:
 
@@ -661,6 +675,8 @@ Relevant files implementing this approach:
 * [`llcap-server`'s `zmq_capture` module](../sandbox/02-ipc/llcap-server/src/zmq_capture.rs)
 
 The target test project for the IPC approach is the [example-complex](../sandbox/02-ipc/example-complex/). This is the familiar test program compiled with another cpp file and managed by `CMake`. Inside the `CMakeList.txt` file, you can switch between the approaches. The `build.sh` script builds the binary with our custom compiler passes.
+
+Crashing is enabled by simply passing 3, 2 or 1 argument to the compiled binary. Each triggers a crash as the first (3 args), second (2 args) or "later" (1 arg) statement in `main`. If no arguments are given, application terminates properly.
 
 ##### Technical note - build.sh
 
@@ -680,22 +696,22 @@ Further, `ninja install` in LLVM build directory is required.
 
 #### Shared memory approach
 
-After the failed ZeroMQ approach, I realized that even the filesystem-based approach would suffer from similar issues with output buffering. We would need to rely on the kernel/library to properly flush a crashing program's buffers onto the disk.
+After the failed ZeroMQ approach, I realized that even the filesystem-based approach would suffer from similar issues in the area of output buffering. We would need to rely on the kernel/library to properly flush a crashing program's buffers onto the disk.
 
 Another option is using and managing shared memory ourselves. This can 
 - reduce the bottleneck potential by avoiding output flushing on a disk
 - provide a way to capture all the data up until the point of the crash
 - provide a general IPC method for the purposes of the entire application
 
-Essentially all we need in the function call tracing is:
+For now, all we need in our communication (for function call tracing) is:
 
-1. Rendezvous the instrumented process and `llcap-server` at the beginning to establish parameters (buffer size)
+1. Rendezvous between the instrumented process and `llcap-server` at the beginning to establish parameters (buffer size)
 2. Implementation of an IPC single-consumer-single-producer protocol via semaphores and a shared buffer
 
-For this, I decided to utilize named-semaphores and "named" shared memory regions.
-In the current version, `llcap-server` initializes 2 semaphores (indicating a free and a full buffer) and 2 memory regions (a "meta" region and "buffers" region).
+For this, I decided to utilize named-semaphores and "named" shared memory regions (`shm_open`, `sem_open`, `mmap` syscalls etc.).
+In the current version, `llcap-server` initializes 2 semaphores (indicating a *free* and a *full* buffer) and 2 memory regions (a "meta" region and "buffers" region).
 
-The "buffers" region contains `N` buffers, each of length `L`. The "meta" region contains the initial communication parameters (number, length and total length of buffers). It is expected the `llcap-server` runs first to initialize the memory mappings and only then is the target application started.
+The "buffers" region contains `N` buffers, each of length `L`. The "meta" region contains the initial communication parameters (number, length and total length of buffers). It is expected the `llcap-server` **runs first** to initialize the memory mappings and only then can the target application be started.
 
 The target application maps the created memory regions and "opens" the semaphores. As of April 27th, the functionality includes correct memory mapping and opening of semaphores (no interaction yet).
 
