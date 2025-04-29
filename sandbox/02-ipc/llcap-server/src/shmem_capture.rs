@@ -1,7 +1,7 @@
-use std::{collections::HashMap, ffi::{CStr, CString}, ptr};
+use std::{collections::HashMap, ffi::CStr};
 
 use libc::{
-  __errno_location, c_void, ftruncate, mmap, mode_t, sem_open, sem_t, shm_open, shm_unlink, MAP_FAILED, MAP_SHARED_VALIDATE, O_CREAT, O_EXCL, O_RDWR, PROT_READ, PROT_WRITE, SEM_FAILED, S_IRGRP, S_IROTH, S_IRUSR, S_IRWXG, S_IRWXO, S_IRWXU, S_IWGRP, S_IWOTH, S_IWUSR
+  __errno_location, c_void, ftruncate, mmap, mode_t, sem_open, sem_t, shm_open, shm_unlink, MAP_FAILED, MAP_SHARED_VALIDATE, O_CREAT, O_EXCL, O_RDWR, PROT_READ, PROT_WRITE, SEM_FAILED, S_IRWXG, S_IRWXO, S_IRWXU
 };
 
 use crate::{call_tracing::{FunctionCallInfo, Message}, log::Log, modmap::ExtModuleMap};
@@ -112,7 +112,7 @@ pub fn clean_semaphores(prefix: &str) -> Result<(), String> {
   for name in &[free_name, full_name]
   {
     eprintln!("Cleanup {}", name);
-    let res = try_open_sem(&name, 0, false);
+    let res = try_open_sem(name, 0, false);
   if let Ok(sem) = res {
     let _ = deinit_semaphore_single(sem).inspect_err(|e| eprintln!("Cleanup of opened {name}: {e}"));
   } else {
@@ -328,7 +328,7 @@ pub fn deinit_shmem(meta_mem: ShmHandle, buffers_mem: ShmHandle) -> Result<(), S
     .map_err(|e| format!("When unmapping buffers mem: {e}"))
 }
 
-fn update_from_buffer(mut raw_buff: *const u8, max_size: usize, mods: &ExtModuleMap) -> Result<Vec<Message>, String> {
+fn update_from_buffer(mut raw_buff: *const u8, _max_size: usize, mods: &ExtModuleMap) -> Result<Vec<Message>, String> {
   if raw_buff.is_null() {
     return Err("Null buffer...".to_string());
   }
@@ -371,7 +371,7 @@ fn update_from_buffer(mut raw_buff: *const u8, max_size: usize, mods: &ExtModule
     raw_buff = raw_buff.wrapping_byte_add(FNID_SIZE);
   }
 
-  return Ok(result);
+  Ok(result)
 }
 
 
