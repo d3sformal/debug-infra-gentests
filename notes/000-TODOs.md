@@ -93,6 +93,9 @@
     * [repo](https://github.com/RUB-SysSec/aurora)
 
 # TOPIC: Extras
+* **[CLOSED]** report mangling bug (after rebuild of latest llvm project)
+    * actually a [larger issue](https://discourse.llvm.org/t/rfc-clang-diagnostic-for-demangling-failures/82835) ([pull request for a diagnostic](https://github.com/llvm/llvm-project/pull/111391))
+
 * so far only on x64 linux ABI - try more?
 * attachment to external tools
     * Valgrind, GDB - obvious candidates (instrument to conditionally trigger a breakpoint?)
@@ -113,8 +116,3 @@
         // function body...
     }
 ```
-
-## branch/technical
-* report mangling bug (after rebuild of latest llvm project)
-* document `llcap-server` usage - dump help
-    * document the hardcoded semaphore/shm region names so far
