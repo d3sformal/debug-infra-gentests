@@ -28,6 +28,13 @@ impl FunctionCallInfo {
     Log::get("from_two_messages").crit("Invalid data received!");
     None
   }
+
+  pub fn new(fn_id: u32, mod_id: usize) -> Self {
+    Self {
+      function_id: fn_id,
+      module_id: mod_id
+    }
+  }
 }
 
 pub enum Message {

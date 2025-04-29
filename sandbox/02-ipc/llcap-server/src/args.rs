@@ -39,5 +39,9 @@ pub enum Type {
     /// Buffer size in bytes
     #[arg(short = 's', long, default_value = Constants::default_buff_size_bytes_str())]
     buff_size: u32,
+
+    /// Perform semaphore cleanup
+    #[arg(long)]
+    cleanup: bool
   },
 }

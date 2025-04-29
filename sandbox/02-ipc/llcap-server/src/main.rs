@@ -5,7 +5,7 @@ use call_tracing::FunctionCallInfo;
 use clap::Parser;
 use log::Log;
 use modmap::ExtModuleMap;
-use shmem_capture::{deinit_semaphores, deinit_shmem, init_semaphores, init_shmem};
+use shmem_capture::{clean_semaphores, deinit_semaphores, deinit_shmem, init_semaphores, init_shmem, msg_handler};
 use zmq_capture::zmq_call_trace;
 mod args;
 mod call_tracing;
@@ -68,14 +68,20 @@ async fn main() -> Result<(), String> {
   match cli.method {
     args::Type::ZeroMQ { socket } => {
       zmq_call_trace(&socket, &modules, &mut recorded_frequencies).await;
+      print_summary(&recorded_frequencies, &modules);
     }
     args::Type::Shmem {
       fd_prefix,
       buff_count,
       buff_size,
+      cleanup
     } => {
+      if cleanup {
+        lg.info("Cleanup");
+        return clean_semaphores(&fd_prefix);
+      }
       lg.info("Initializing semaphores");
-      let (semfree, semfull) = init_semaphores(&fd_prefix, buff_count)?;
+      let (mut semfree, mut semfull) = init_semaphores(&fd_prefix, buff_count)?;
       lg.info("Initializing shmem");
       let (meta_shm, buffers_shm) = match init_shmem(&fd_prefix, buff_count, buff_size) {
         Err(e) => {
@@ -90,7 +96,16 @@ async fn main() -> Result<(), String> {
         Ok(a) => Ok(a),
       }?; // <---
 
-      lg.info("Initialized! Exiting...");
+      lg.info("Listening!");
+
+      if let Err(e) = msg_handler(&mut semfull, &mut semfree, &buffers_shm, buff_size as usize, buff_count as usize, &modules, &mut recorded_frequencies) {
+        eprintln!("{e}");
+      }
+      print_summary(&recorded_frequencies, &modules);
+
+      lg.info("Exiting...");
+
+      
       let shm_uninit = deinit_shmem(meta_shm, buffers_shm);
       let sem_uninit = deinit_semaphores(semfree, semfull);
 
@@ -109,6 +124,5 @@ async fn main() -> Result<(), String> {
     }
   }
 
-  print_summary(&recorded_frequencies, &modules);
   Ok(())
 }

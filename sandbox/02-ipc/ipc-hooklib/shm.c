@@ -72,26 +72,28 @@ static int unlink_fd(int fd, const char *fd_name, const char *fail_msg) {
   if (fd != -1) {
     if (shm_unlink(fd_name) == -1) {
       printf("%s: %s\n", fail_msg, strerror(errno));
+      return -1;
     }
-    return -1;
+    return 0;
   }
   return 0;
 }
 
 // maps memory info target along with a file descriptor fd
+// for write permissions, pass nonzero write arg - TODO refactor
 // returns 0 if both target and fd are valid resources
 // returns -1 if any step failed, target and fd invalid
-static int map_shmem(const char *name, void **target, int *fd, size_t len) {
+static int map_shmem(const char *name, void **target, int *fd, size_t len, int write) {
   int rv = -1;
   *fd = -1;
 
-  *fd = shm_open(name, O_RDONLY, 0);
+  *fd = shm_open(name, write != 0 ? O_RDWR : O_RDONLY , 0);
   if (*fd == -1) {
     printf("Failed to create shm FD for %s: %s\n", name, strerror(errno));
     return rv;
   }
 
-  void *mem_ptr = mmap(NULL, len, PROT_READ, MAP_SHARED, *fd, 0);
+  void *mem_ptr = mmap(NULL, len, write != 0 ? (PROT_READ | PROT_WRITE) : PROT_READ, MAP_SHARED, *fd, 0);
   if (mem_ptr == MAP_FAILED) {
     printf("Failed to map from FD %s: %s\n", name, strerror(errno));
     unlink_fd(*fd, name, "Cleanup map_shmem failed to unlink FD");
@@ -138,7 +140,7 @@ static int get_buffer_info(const char *name, ShmMeta *target) {
   int shared_meminfo_fd = -1;
   ShmMeta *mapped_ptr;
   rv = map_shmem(name, (void **)&mapped_ptr, &shared_meminfo_fd,
-                 sizeof(*mapped_ptr));
+                 sizeof(*mapped_ptr), 0);
   if (rv != 0) {
     return rv;
   }
@@ -191,10 +193,9 @@ int init(void) {
     printf("Failed to initialize FREE semaphore: %s\n", strerror(errno));
     goto sem_full_cleanup;
   }
-
   if (map_shmem(s_shared_buffers_name, &s_shared_buffers_ptr,
-                &s_shared_buffers_fd, buff_total_size) != 0) {
-    printf("Failed to map buffer memory");
+                &s_shared_buffers_fd, buff_total_size, 1) != 0) {
+    printf("Failed to map buffer memory\n");
     s_shared_buffers_ptr =
         NULL; // so that cleanup in deinint knows what not to touch
     s_shared_buffers_fd = -1;
@@ -205,6 +206,7 @@ int init(void) {
     // buffers!!!
     rv = 0;
     s_shm_initialized = SHM_OK;
+    printf("Init ok!\n");
     return rv;
   }
 
@@ -224,24 +226,6 @@ sem_full_cleanup:
   }
 
   return rv;
-}
-
-void deinit(void) {
-  // does not have & ignores return values as the program is terminating at this
-  // point
-  if (s_shared_buffers_ptr != NULL && s_shared_buffers_fd != -1) {
-    unmap_shmem(s_shared_buffers_ptr, s_shared_buffers_fd,
-                s_shared_buffers_name, s_buff_info.total_len,
-                UNMAP_SHMEM_FLAG_TRY_ALL);
-  } else if (!(s_shared_buffers_ptr == NULL && s_shared_buffers_fd == -1)) {
-    printf("Shared buffers data inconsistent, unexpected values of ptr: %p, "
-           "fd: %d in deinit - will NOT touch\n",
-           s_shared_buffers_ptr, s_shared_buffers_fd);
-  }
-
-  semaphore_close(s_sem_free, s_sem_free_name);
-  semaphore_close(s_sem_full, s_sem_full_name);
-  printf("deinit done\n");
 }
 
 static size_t s_writing_to_buffer_idx = 0;
@@ -268,6 +252,8 @@ static int update_buffer_idx(void) {
   if (s_shm_initialized != SHM_OK) {
     return -1;
   }
+  // write final length
+  *(uint32_t*)get_buffer() = s_bumper;
   // signal buffer is full
   if (sem_post(s_sem_full) != 0) {
     printf("Failed posting a full buffer! %s\n", strerror(errno));
@@ -310,6 +296,7 @@ static int can_push_data_of_size(size_t len) {
   if (len > get_buff_data_free_space()) {
     int rv = update_buffer_idx();
     if (rv != 0) {
+      printf("Failed to obtain a free buffer!\n");
       return -1;
     }
     // safe recursive call as len is checked with maximum buffer size above
@@ -328,12 +315,13 @@ static int unchecked_push_data(const void *source, size_t len) {
       (destination > source &&
        (char *)destination < (const char *)source + len)) {
     printf("Aliasing regions of memory when pushing data to buffer dest: %p, "
-           "src: %p, len: %lu",
+           "src: %p, len: %lu\n",
            destination, source, len);
     return -1;
   }
 
   memcpy(destination, source, len);
+  s_bumper += len;
   return 0;
 }
 
@@ -342,9 +330,42 @@ int push_data(const void *source, size_t len) {
     return -1;
   }
   if (can_push_data_of_size(len) != 0) {
-    printf("Failed to push data due to len: %lu", len);
+    printf("Failed to push data due to len: %lu\n", len);
     return -1;
   }
 
   return unchecked_push_data(source, len);
+}
+
+void deinit(void) {
+  char garbage;
+
+  printf("Deinit!\n");
+  // does not have & ignores return values as the program is terminating at this
+  // point
+  if (update_buffer_idx() != 0) {
+    printf("Failed to obtain a free buffer!\n");
+  }
+  
+  push_data(&garbage, 0);
+  // TODO: either this raw thing or ensure another "update_buffer_idx" will have a free buffer
+  // (mark all buffers free on the server)
+  *(uint32_t*)get_buffer() = 0;
+  if (sem_post(s_sem_full) != 0) {
+    printf("Failed posting a full buffer! %s\n", strerror(errno));
+  }
+
+  if (s_shared_buffers_ptr != NULL && s_shared_buffers_fd != -1) {
+    unmap_shmem(s_shared_buffers_ptr, s_shared_buffers_fd,
+                s_shared_buffers_name, s_buff_info.total_len,
+                UNMAP_SHMEM_FLAG_TRY_ALL);
+  } else if (!(s_shared_buffers_ptr == NULL && s_shared_buffers_fd == -1)) {
+    printf("Shared buffers data inconsistent, unexpected values of ptr: %p, "
+           "fd: %d in deinit - will NOT touch\n",
+           s_shared_buffers_ptr, s_shared_buffers_fd);
+  }
+
+  semaphore_close(s_sem_free, s_sem_free_name);
+  semaphore_close(s_sem_full, s_sem_full_name);
+  printf("deinit done\n");
 }
