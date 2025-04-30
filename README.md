@@ -91,3 +91,8 @@ Folder naming:
             * compile source into LLVM Bitcode
             * inspect and modify generated Bitcode by adding instructions (mostly just calls into instrumentation library functions)
             * compile modified Bitcode with an instrumentation library
+    * [`02-ipc`](./sandbox/02-ipc/) - next stage -  experiments based on IPC
+        * idea:
+            * we need to extract data from the instrumented application
+            * instrumentation library's responsibility is to establish connections to "us" and send "us" data
+            * also serves as a preparation for the final stage: executing targeted unit tests (i.e. sending data from "us" to unit tests - input data into cloned process)
