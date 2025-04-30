@@ -42,6 +42,6 @@ pub enum Type {
 
     /// Perform semaphore cleanup
     #[arg(long)]
-    cleanup: bool
+    cleanup: bool,
   },
 }

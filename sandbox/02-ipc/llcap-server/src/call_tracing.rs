@@ -3,10 +3,12 @@ use zeromq::{PullSocket, SocketRecv};
 
 use crate::{log::Log, modmap::ExtModuleMap};
 
+pub type ModIdT = usize;
+
 #[derive(Hash, PartialEq, Eq, Debug)]
 pub struct FunctionCallInfo {
   pub function_id: u32,
-  pub module_id: usize,
+  pub module_id: ModIdT,
 }
 
 impl FunctionCallInfo {
@@ -29,10 +31,10 @@ impl FunctionCallInfo {
     None
   }
 
-  pub fn new(fn_id: u32, mod_id: usize) -> Self {
+  pub fn new(fn_id: u32, mod_id: ModIdT) -> Self {
     Self {
       function_id: fn_id,
-      module_id: mod_id
+      module_id: mod_id,
     }
   }
 }
