@@ -1,5 +1,6 @@
 #include "shm.h"
 #include <assert.h>
+#include <stdint.h>
 #include <errno.h>
 #include <fcntl.h> /* For O_* constants */
 #include <semaphore.h>
@@ -9,6 +10,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h> /* For mode constants */
+#include <unistd.h>
 
 /*
 Shared memory buffering & synchronization
@@ -68,10 +70,10 @@ static uint32_t s_bumper = 0;
 
 static int s_shm_initialized = SHM_FAIL_NORET;
 
-static int unlink_fd(int fd, const char *fd_name, const char *fail_msg) {
+static int close_fd(int fd, const char *fd_name, const char *fail_msg) {
   if (fd != -1) {
-    if (shm_unlink(fd_name) == -1) {
-      printf("%s: %s\n", fail_msg, strerror(errno));
+    if (close(fd) == -1) {
+      printf("%s name: %s, fd: %d: %s\n", fail_msg, fd_name, fd, strerror(errno));
       return -1;
     }
     return 0;
@@ -96,7 +98,7 @@ static int map_shmem(const char *name, void **target, int *fd, size_t len, int w
   void *mem_ptr = mmap(NULL, len, write != 0 ? (PROT_READ | PROT_WRITE) : PROT_READ, MAP_SHARED, *fd, 0);
   if (mem_ptr == MAP_FAILED) {
     printf("Failed to map from FD %s: %s\n", name, strerror(errno));
-    unlink_fd(*fd, name, "Cleanup map_shmem failed to unlink FD");
+    close_fd(*fd, name, "Cleanup map_shmem failed to close FD");
   } else {
     rv = 0;
     *target = mem_ptr;
@@ -124,7 +126,7 @@ static int unmap_shmem(void *mem, int fd, const char *name, size_t len,
       rv = -2;
     }
   }
-  if (unlink_fd(fd, name, "Failed to unlink FD") != 0) {
+  if (close_fd(fd, name, "Failed to close FD") != 0) {
     printf("Failed to UNlink FD %s: %s\n", name, strerror(errno));
     if (rv == -2) {
       return -3;
@@ -307,7 +309,7 @@ static int can_push_data_of_size(size_t len) {
   return 0;
 }
 
-static int unchecked_push_data(const void *source, size_t len) {
+static int unchecked_push_data(const void *source, uint32_t len) {
   void *destination = get_buffer_end();
 
   if ((source > destination &&
@@ -315,7 +317,7 @@ static int unchecked_push_data(const void *source, size_t len) {
       (destination > source &&
        (char *)destination < (const char *)source + len)) {
     printf("Aliasing regions of memory when pushing data to buffer dest: %p, "
-           "src: %p, len: %lu\n",
+           "src: %p, len: %u\n",
            destination, source, len);
     return -1;
   }
@@ -325,16 +327,16 @@ static int unchecked_push_data(const void *source, size_t len) {
   return 0;
 }
 
-int push_data(const void *source, size_t len) {
+int push_data(const void *source, uint32_t len) {
   if (s_shm_initialized != SHM_OK) {
     return -1;
   }
-  if (can_push_data_of_size(len) != 0) {
-    printf("Failed to push data due to len: %lu\n", len);
+  if (s_buff_info.buff_len <= len || can_push_data_of_size(len) != 0) {
+    printf("Failed to push data due to len: %u\n", len);
     return -1;
   }
 
-  return unchecked_push_data(source, len);
+  return unchecked_push_data(source, (uint32_t)len);
 }
 
 void deinit(void) {

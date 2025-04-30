@@ -18,7 +18,7 @@ typedef struct {
 
 int init(void) __attribute__((constructor));
 void deinit(void) __attribute__((destructor()));
-int push_data(const void* data, size_t len);
+int push_data(const void* data, uint32_t len);
 
 #ifdef __cplusplus
 }
