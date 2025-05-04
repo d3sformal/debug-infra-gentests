@@ -646,6 +646,14 @@ Resulting function ID mapping if module IDs are not considered (demonstrative):
 
 The idea is that the user will identify a function(s) to instrument after a call-tracing pass, which means that the hooking library (that exports information to the "server" and by extension its user) needs to receive the function IDs. (aside: in addition to this, we still in need to uniquely identify functions for the "test generation" phase, as we will need to instrument "the correct" function)
 
+Sequence diagram of the envisioned interaction:
+
+![Sequence diagram of the envisioned interaction](images/diags/interaction-seq-28-apr-2025.png)
+<details>
+<summary>
+Click for plantuml source
+</summary>
+
 ```plantuml
 @startuml
 actor User
@@ -680,6 +688,10 @@ Tool -> Tool: Testing phase...
 ...
 @enduml
 ```
+
+</details>
+
+
 
 Further, in order to simplify the later implementation of an IPC protocol, the module ID (absolute path to the module) is translated to a **fixed-size** hash (SHA256 - an ad-hoc choice as the hash function is present in the interface exposed to plugins).
 
