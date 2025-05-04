@@ -247,6 +247,10 @@ How do we deal with this (PIE/non-PIE)? (dynamic object tree dump - IMO requires
     * if we cannot reliably capture those kinds of objects, we would need dynamic instrumentation to inspect every single branch (linked call) **after** it happens, registering the returned value
     * this could boil down to just calling the proper ctor before a `return` 
 
+Rough outline of a part of such capture:
+
+![Outline of basic instrumentation](images/diags/diag-basic-instr.png)
+
 ## Capturing program state
 
 Objects of interest, their inputs, outputs:
@@ -271,7 +275,7 @@ Objects of interest, their inputs, outputs:
 
 If `foo` e.g. waits on a barrier expecting N threads, N > 1. If `foo` does not spawn tasks on other threads that execute this same function, only 1 thread (unit-test thread) appears at the barrier, never finishing.
 
-`???` IO/system resources - unit test? should? be testing a fairly isolated function
+`???` IO/system resources - unit test (<- ?) should be testing a fairly isolated function
 
 This implies two things: unit-test timeouts are needed, multi-threaded execution is hazardous for this approach and it is extra tricky to ensure OS resources (IO/networking, ...) are handled correctly by external unit test. 
 
@@ -291,6 +295,10 @@ Approaches for program state capture:
     * how to integrate (if possible, with a testing framework)
     * unknowns - never used `clone` - thread-locals? limitations coming from the parent process (`MADV_DONTFORK`)
 2. capture-only-necessary - probably very lightweight but I think it is too difficult to pull off (library depdnencies, ABI, the inability to introspect C/C++ programs at runtime, statically dumping object representation may require arcane compiler knowledge, dynamic dumping presents the challenge of injection into a unit test - relocation of code, proper page mapping)
+
+Simplified "forking approach" diagram:
+
+![Clone approach diagram](images/diags/diag-fork-1.png)
 
 ### Discussion on `clone` method
 
@@ -480,6 +488,10 @@ Remedies:
     * the AST inspection code might not correctly handle all functions (intricacies of the AST structure)
         * so far recursive namespace walkthrough + inspection of all lambda expressions (for their `operator()` - which is our desired function for in-code lambdas)
 
+Diagram of the solution:
+
+![AST plugin cooperating with an LLVM pass](images/diags/ast-llvm-pass-14-1pr-2025.png)
+
 ### Other findings
 
 * [LLVM MLIR](../notes/02-mlir-notes.md)
@@ -612,6 +624,10 @@ define linkonce_odr dso_local void @_Z12templateTestINSt7__cxx1112basic_stringIc
 !13 = !{!"0"}
 ```
 
+Refined AST + LLVM pass interaction accounting for argument indicies shift:
+
+![Refined AST + LLVM pass interaction accounting for argument indicies shift](images/diags/ast-llvm-pass-idx-refined.png)
+
 ## IPC fundamentals, architecture considerations
 
 The idea I had was that the instrumented application would call to our hook library functions that could facilitate the IPC with a "server" application. The "server" application would be able to perform 3 functions:
@@ -622,9 +638,48 @@ The idea I had was that the instrumented application would call to our hook libr
 
 The immediate reason for using IPC was to avoid bottleneck hardware (disks) by writing intermediate results to a filesystem. This presented a challenge in the way functions are identified: LLVM plugin is launched once per "module" (imagine a `.cpp` file) and functions provide no real way of identification. The **uniquely**-identifying information seems to be the *function's name combined with the identifier of the module the function resides in*.
 
+Resulting function ID mapping if module IDs are not considered (demonstrative):
+
+![Function IDs are evaluated per-module](./images/diags/example-bad-mapping.png)
+
 ### Unique function identifiers
 
 The idea is that the user will identify a function(s) to instrument after a call-tracing pass, which means that the hooking library (that exports information to the "server" and by extension its user) needs to receive the function IDs. (aside: in addition to this, we still in need to uniquely identify functions for the "test generation" phase, as we will need to instrument "the correct" function)
+
+```plantuml
+@startuml
+actor User
+participant "Instrumented Binary\n(function entry)" as instrFE
+participant "Instrumented Binary\n(arg capture)" as instrAC
+
+
+activate instrFE
+...
+instrFE -> Tool: Entered\n<FN ID:MODULE ID>
+instrFE -> Tool: Entered\n<FN ID:MODULE ID>
+...
+instrFE -> Tool: Entered\n<FN ID:MODULE ID>
+instrFE -> Tool: End
+deactivate instrFE
+Tool -> User: Prompt: select function(s)\nfor test generation
+User -> Tool: Selected function X
+Tool -> Tool: Instrument binary for\nargument capture of function X
+Tool -> instrAC: Execute
+activate instrAC
+instrAC -> Tool: Batch 1, arg 1
+...
+instrAC -> Tool: Batch 1, arg n
+...
+...
+instrAC -> Tool: Batch m, arg 1
+instrAC -> Tool: ...
+instrAC -> Tool: Batch m, arg n
+instrAC -> Tool: End
+deactivate instrAC
+Tool -> Tool: Testing phase...
+...
+@enduml
+```
 
 Further, in order to simplify the later implementation of an IPC protocol, the module ID (absolute path to the module) is translated to a **fixed-size** hash (SHA256 - an ad-hoc choice as the hash function is present in the interface exposed to plugins).
 
