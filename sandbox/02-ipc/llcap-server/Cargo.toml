@@ -7,5 +7,3 @@ edition = "2024"
 bytes = "1.10.1"
 clap = { version = "4.5.37", features = ["derive"] }
 libc = "0.2.172"
-tokio = "1.44.2"
-zeromq = "0.4.1"

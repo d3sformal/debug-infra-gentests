@@ -20,13 +20,6 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Type {
-  /// Use (failed experimental) ZeroMQ capture
-  ZeroMQ {
-    /// Socket address to operate on
-    #[arg(short, long, default_value = Constants::default_socket_address())]
-    socket: String,
-  },
-
   Shmem {
     /// File descriptor prefixes for resources
     #[arg(short, long, default_value = Constants::default_fd_prefix())]

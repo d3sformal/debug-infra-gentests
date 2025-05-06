@@ -9,7 +9,7 @@ use libc::{
 use crate::{
   call_tracing::{FunctionCallInfo, Message, ModIdT},
   log::Log,
-  modmap::ExtModuleMap,
+  modmap::{ExtModuleMap, IntegralModId, MOD_ID_SIZE_B},
 };
 
 #[repr(C)]
@@ -115,6 +115,7 @@ impl ShmSem {
         get_errno_string()
       ))
     } else {
+      Log::get("try_open").info(&format!("Opened semaphore {} with value {}", s_name, value));
       Ok(Self {
         sem: result,
         cname: s_name,
@@ -411,7 +412,7 @@ fn update_from_buffer(
   mut state: CallTraceMessageState,
 ) -> Result<CallTraceMessageState, String> {
   let lg = Log::get("update_from_buffer");
-  // SAFETY: read_w_alignment_chk performs *const dereference & null check
+  // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
   // poitner validity ensured by protocol, target type is copied, no allocation over the same memory region
   let valid_size: u32 = unsafe { read_w_alignment_chk(raw_buff) }?;
   if valid_size == 0 {
@@ -422,8 +423,6 @@ fn update_from_buffer(
   let start = raw_buff.wrapping_byte_add(4);
   let buff_end = start.wrapping_byte_add(valid_size as usize);
   raw_buff = start;
-  const HASH_SIZE: usize = 64;
-  const FNID_SIZE: usize = std::mem::size_of::<u32>();
   while raw_buff < buff_end {
     if raw_buff.is_null() {
       return Err("Null pointer when iterating buffer...".to_string());
@@ -433,23 +432,28 @@ fn update_from_buffer(
       // module id from a previous buffer -> skip readnig for module id and instead read function id corresponding to the module id from a previous bufer
       state.modid_wip = None;
       id
-    } else if let Ok(s) =
-      // SAFETY: protocol ensures length, initialization & immutability of underlying data from the outside, null handled above
-      // - alignment is assured by slice type (&[u8], alignment 1)
-      // - slice does not span multiple allocated objects
-      // - s is used only as read-only for its lifetime (via &str)
-      std::str::from_utf8(unsafe { std::slice::from_raw_parts(raw_buff, HASH_SIZE) })
-    {
-      if let Some(id) = mods.get_module_id(s) {
+    } else {
+      if raw_buff.wrapping_byte_add(MOD_ID_SIZE_B) > buff_end {
+        return Err(format!(
+          "Would over-read a module ID... ptr: {:?} offs: {} end: {:?}",
+          raw_buff, MOD_ID_SIZE_B, buff_end
+        ));
+      }
+
+      // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
+      // poitner validity ensured by protocol, target type is copied, no allocation over the same memory region
+      let rcvd_id = IntegralModId(unsafe { read_w_alignment_chk(raw_buff)? });
+      if let Some(id) = mods.get_module_id(&rcvd_id) {
+        raw_buff = raw_buff.wrapping_byte_add(MOD_ID_SIZE_B);
         id
       } else {
-        return Err("Capture invalid, id not found".to_string());
+        return Err(format!(
+          "Capture invalid, module id not found {:X}",
+          rcvd_id.0
+        ));
       }
-    } else {
-      return Err("Capture invalid, hash not a string".to_string());
     };
-
-    raw_buff = raw_buff.wrapping_byte_add(HASH_SIZE);
+    const FNID_SIZE: usize = std::mem::size_of::<u32>();
     if raw_buff >= buff_end {
       if raw_buff > buff_end {
         lg.warn(&format!(
@@ -460,6 +464,11 @@ fn update_from_buffer(
       lg.trace("Buffer ended mid-message");
       state.modid_wip = Some(module_id);
       return Ok(state);
+    } else if raw_buff.wrapping_byte_add(FNID_SIZE) > buff_end {
+      return Err(format!(
+        "Would overread function ID... ptr: {:?} offs: {} end: {:?}",
+        raw_buff, MOD_ID_SIZE_B, buff_end
+      ));
     }
     // SAFETY: same as function start raw_buff within bounds as checked above
     let fn_id: u32 = unsafe { read_w_alignment_chk(raw_buff) }?;
@@ -534,7 +543,7 @@ pub fn msg_handler(
         }
       }
     } else {
-      return Err(format!("Error when parsing:{}", res.err().unwrap()));
+      return Err(format!("Error when parsing: {}", res.err().unwrap()));
     }
 
     let sem_res = free_sem.try_post();

@@ -74,9 +74,45 @@ impl From<&[&[u8]]> for FunctionMap {
   }
 }
 
+#[derive(Hash, Debug, PartialEq, Eq)]
+pub struct IntegralModId(pub u32);
+
+pub type RcvdModId = IntegralModId;
+pub const MOD_ID_SIZE_B: usize = std::mem::size_of_val(&(IntegralModId(0)).0);
+pub const MOD_NAME_SIZE: usize = MOD_ID_SIZE_B * 2;
+
+impl TryFrom<&str> for IntegralModId {
+  type Error = String;
+
+  fn try_from(value: &str) -> Result<Self, Self::Error> {
+    if value.chars().count() != MOD_NAME_SIZE {
+      return Err("Invalid size".to_string());
+    }
+
+    let mut inner: u32 = 0;
+    for v in value.chars() {
+      inner <<= 4; // in order to not "over shift" in the last iteration
+
+      if !v.is_ascii() {
+        return Err(format!("Invalid module id (ascii): {value}"));
+      }
+
+      let v = v.to_ascii_uppercase();
+      let num_val = match v {
+        '0'..='9' => v as u32 - '0' as u32,
+        'A'..='F' => v as u32 - 'A' as u32 + 10,
+        _ => return Err(format!("Invalid module id (char): {value}")),
+      };
+
+      inner += num_val;
+    }
+    Ok(Self(inner))
+  }
+}
+
 #[derive(Debug)]
 pub struct ExtModuleMap {
-  modhash_to_modidx: HashMap<String, usize>,
+  modhash_to_modidx: HashMap<RcvdModId, usize>,
   function_ids: Vec<FunctionMap>,
   module_paths: Vec<String>,
 }
@@ -92,15 +128,15 @@ impl ExtModuleMap {
 
   pub fn add_module(&mut self, path_to_modfile: &PathBuf) -> Result<(), String> {
     let index = self.function_ids.len();
-    let modhash = if let Some(hash) = path_to_modfile
+    let modhash = if let Some(hash_res) = path_to_modfile
       .file_name()
-      .filter(|p| p.len() == 64)
+      .filter(|p| p.len() == MOD_NAME_SIZE)
       .and_then(|v| v.to_str())
-      .and_then(|v| String::from(v).into())
+      .and_then(|v| IntegralModId::try_from(v).into())
     {
-      Ok(hash)
+      hash_res
     } else {
-      Err("Invalid path")
+      Err(format!("Invalid path {:?}", path_to_modfile))
     }?;
 
     if self.modhash_to_modidx.contains_key(&modhash) {
@@ -137,7 +173,7 @@ impl ExtModuleMap {
     Ok(())
   }
 
-  pub fn get_module_id(&self, hash: &str) -> Option<usize> {
+  pub fn get_module_id(&self, hash: &RcvdModId) -> Option<usize> {
     self.modhash_to_modidx.get(hash).copied()
   }
 

@@ -9,14 +9,12 @@ use shmem_capture::{
   ShmHandle, clean_semaphores, deinit_semaphores, deinit_shmem, init_semaphores, init_shmem,
   msg_handler,
 };
-use zmq_capture::zmq_call_trace;
 mod args;
 mod call_tracing;
 mod constants;
 mod log;
 mod modmap;
 mod shmem_capture;
-mod zmq_capture;
 
 pub fn print_summary(freqs: &HashMap<FunctionCallInfo, u64>, mods: &ExtModuleMap) {
   let mut pairs = freqs.iter().collect::<Vec<(_, _)>>();
@@ -28,14 +26,15 @@ pub fn print_summary(freqs: &HashMap<FunctionCallInfo, u64>, mods: &ExtModuleMap
     seen_modules.insert(fninfo.module_id);
     if modstr.and(fn_name).is_none() {
       eprintln!(
-        "Warn: function id or module id confusion with fnid: {} moid: {}",
-        fninfo.function_id, fninfo.module_id
+        "Warn: function id or module id confusion with fnid: {} {:?} moid: {} {:?}",
+        fninfo.function_id, fn_name, fninfo.module_id, modstr
       );
       continue;
     }
 
     println!(
-      "{idx} - {freq} - {} (module {})",
+      "{idx} - {} - {freq} - {} (module {})",
+      fninfo.function_id,
       fn_name.unwrap(),
       modstr.unwrap()
     );
@@ -44,9 +43,7 @@ pub fn print_summary(freqs: &HashMap<FunctionCallInfo, u64>, mods: &ExtModuleMap
   println!("Total traced calls: {}", freqs.values().sum::<u64>());
   println!("Traces originated from {} modules", seen_modules.len());
 }
-
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), String> {
+fn main() -> Result<(), String> {
   let cli = Cli::try_parse();
   if let Err(e) = cli {
     eprintln!("{}", e);
@@ -71,10 +68,6 @@ async fn main() -> Result<(), String> {
   let mut recorded_frequencies: HashMap<FunctionCallInfo, u64> = HashMap::new();
 
   match cli.method {
-    args::Type::ZeroMQ { socket } => {
-      zmq_call_trace(&socket, &modules, &mut recorded_frequencies).await;
-      print_summary(&recorded_frequencies, &modules);
-    }
     args::Type::Shmem {
       fd_prefix,
       buff_count,

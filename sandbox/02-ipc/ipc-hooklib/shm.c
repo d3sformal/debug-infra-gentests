@@ -336,6 +336,8 @@ static int unchecked_push_data(const void *source, uint32_t len) {
 
   memcpy(destination, source, len);
   s_bumper += len;
+  // in case of a crash, the last buffer's size MUST be known even if it was in progress
+  *(uint32_t*)get_buffer() = s_bumper;
   return 0;
 }
 
