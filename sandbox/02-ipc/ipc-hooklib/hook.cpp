@@ -1,13 +1,6 @@
 #include "hook.h"
-#ifdef COMMS_ZMQ
-#include "./ipc.h"
-#endif
-#define COMMS_SHM
-#ifdef COMMS_SHM
 #include "./shm.h"
-#endif
 #include <stdint.h>
-#include <stdio.h>
 #include <string>
 
 static_assert(sizeof(int) == 4, "Expecting int to be 4 bytes");
@@ -16,20 +9,9 @@ static_assert(sizeof(long long) == 8, "Expecting long long to be 8 bytes");
 #define GENFN(name, argt, argvar, msg)                                         \
   GENFNDECL(name, argt, argvar) { /* printf("[HOOK] " msg, argvar); */ }
 
-  void hook_start(char *str, char* module_id, uint32_t id) {
-    #ifdef COMMS_ZMQ
-    if (ipc_init() == IPC_OK) {
-      ipc_send_entry(id, (uint8_t*) module_id);
-    }
-    #endif
-    #ifdef COMMS_SHM
-    push_data(module_id, 64);
-    push_data(&id, sizeof(id));
-    //const char delim1 = '\0';
-    //const char delim2 = '\n';
-    //push_data(&delim1, sizeof(delim1));
-    //push_data(&delim2, sizeof(delim2));
-    #endif
+  void hook_start(uint32_t module_id, uint32_t fn_id) {
+    push_data(&module_id, sizeof(module_id));
+    push_data(&fn_id, sizeof(fn_id));
   }
 
 GENFN(hook_cstring, const char *, str, "cstring: %s\n")

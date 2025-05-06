@@ -165,6 +165,26 @@ static int semaphore_close(sem_t *sem, const char *name) {
   }
   return 0;
 }
+static size_t s_writing_to_buffer_idx = 0;
+
+// waits for a free buffer and updates related data
+static int update_buffer_idx(void) {
+  // wait for a free buffer
+  if (sem_wait(s_sem_free) != 0) {
+    printf("Failed waiting for free buffer! %s\n", strerror(errno));
+    return -1;
+  }
+
+  s_bumper = 0;
+  s_writing_to_buffer_idx = s_writing_to_buffer_idx + 1 == s_buff_info.buff_count ? 0 : s_writing_to_buffer_idx + 1;
+  return 0;
+}
+
+// obtains a free buffer & initializes related data
+static int init_free_buff(void) {
+  s_writing_to_buffer_idx = s_buff_info.buff_count - 1;
+  return update_buffer_idx();
+}
 
 #define SEMPERMS (S_IROTH | S_IWOTH | S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR)
 
@@ -209,7 +229,8 @@ int init(void) {
     rv = 0;
     s_shm_initialized = SHM_OK;
     printf("Init ok!\n");
-    return rv;
+    // finally, obtain one free buffer
+    return init_free_buff();
   }
 
 sem_free_cleanup:
@@ -230,12 +251,10 @@ sem_full_cleanup:
   return rv;
 }
 
-static size_t s_writing_to_buffer_idx = 0;
-
 static void *get_buffer(void) {
   static_assert(sizeof(char) == 1, "Byte is a byte");
   return (void *)((char *)s_shared_buffers_ptr +
-                  (s_writing_to_buffer_idx)*s_buff_info.buff_len);
+                  s_writing_to_buffer_idx * s_buff_info.buff_len);
 }
 
 static void *get_buffer_end(void) {
@@ -250,7 +269,8 @@ static void *get_buffer_end(void) {
   return (void *)((char *)get_buffer() + sizeof(s_bumper) + s_bumper);
 }
 
-static int update_buffer_idx(void) {
+// used when local buffer is full and a new one is needed
+static int move_to_next_buff(void) {
   if (s_shm_initialized != SHM_OK) {
     return -1;
   }
@@ -262,15 +282,7 @@ static int update_buffer_idx(void) {
     return -1;
   }
 
-  // wait for a free buffer
-  if (sem_wait(s_sem_free) != 0) {
-    printf("Failed waiting for free buffer! %s\n", strerror(errno));
-    return -1;
-  }
-  s_bumper = 0;
-  s_writing_to_buffer_idx =
-      (s_writing_to_buffer_idx + 1) % s_buff_info.buff_count;
-  return 0;
+  return update_buffer_idx();
 }
 
 static uint32_t get_buff_data_space(void) {
@@ -296,7 +308,7 @@ static int can_push_data_of_size(size_t len) {
   }
 
   if (len > get_buff_data_free_space()) {
-    int rv = update_buffer_idx();
+    int rv = move_to_next_buff();
     if (rv != 0) {
       printf("Failed to obtain a free buffer!\n");
       return -1;
@@ -336,7 +348,7 @@ int push_data(const void *source, uint32_t len) {
     return -1;
   }
 
-  return unchecked_push_data(source, (uint32_t)len);
+  return unchecked_push_data(source, len);
 }
 
 void deinit(void) {
@@ -345,12 +357,12 @@ void deinit(void) {
   printf("Deinit!\n");
   // does not have & ignores return values as the program is terminating at this
   // point
-  if (update_buffer_idx() != 0) {
+  if (move_to_next_buff() != 0) {
     printf("Failed to obtain a free buffer!\n");
   }
   
   push_data(&garbage, 0);
-  // TODO: either this raw thing or ensure another "update_buffer_idx" will have a free buffer
+  // TODO: either this raw thing or ensure another "move_to_next_buff" will have a free buffer
   // (mark all buffers free on the server)
   *(uint32_t*)get_buffer() = 0;
   if (sem_post(s_sem_full) != 0) {

@@ -1,4 +1,5 @@
 #include "llvm/Pass.h"
+#include "constants.hpp"
 #include "../custom-metadata-pass/ast-meta-add/llvm-metadata.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallVector.h"
@@ -13,6 +14,8 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
+#include <array>
+#include <filesystem>
 #include <fstream>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
@@ -36,7 +39,6 @@
 using namespace llvm;
 
 const char *UNSIGNED_ATTR_KIND = "VSTR-param-attr-unsigned";
-static uint64_t FunctionId;
 
 namespace {
 
@@ -82,18 +84,18 @@ GlobalVariable *createGlobalStr(Module &M, StringRef Val, StringRef Id) {
   return GV;
 }
 
-void insertFnEntryLog(IRBuilder<> &Builder, Module &M, GlobalVariable *Message,
-                      GlobalVariable *ModuleId) {
-  auto *IRStrPtr = Builder.CreateBitCast(Message, Builder.getPtrTy());
-  auto *IRModStrPtr = Builder.CreateBitCast(ModuleId, Builder.getPtrTy());
+void insertFnEntryLog(IRBuilder<> &Builder, Module &M, llcap::ModuleId ModuleIntId, llcap::FunctionId FunctionIntId) {
+  static_assert(sizeof(llcap::FunctionId) == 4); // this does not imply incorrectness, just that everything must be checked
   auto *FnIdConstant =
-      ConstantInt::get(M.getContext(), APInt(32, FunctionId++));
+  ConstantInt::get(M.getContext(), APInt(sizeof(llcap::FunctionId) * 8, FunctionIntId));
+  static_assert(sizeof(llcap::ModuleId) == 4);
+  auto *ModIdConstant =
+  ConstantInt::get(M.getContext(), APInt(sizeof(llcap::ModuleId) * 8, ModuleIntId));
   auto Callee = M.getOrInsertFunction(
-      "hook_start", FunctionType::get(Type::getVoidTy(M.getContext()),
-                                      {Builder.getPtrTy(), Builder.getPtrTy(),
-                                       FnIdConstant->getType()},
-                                      false));
-  Builder.CreateCall(Callee, {IRStrPtr, IRModStrPtr, FnIdConstant});
+    "hook_start", FunctionType::get(Type::getVoidTy(M.getContext()),
+                                    {ModIdConstant->getType(), FnIdConstant->getType()},
+                                    false));
+  Builder.CreateCall(Callee, {ModIdConstant, FnIdConstant});
 }
 // terminology:
 // LLVM Argument Index = 0-based index of an argument as seen directly in the
@@ -299,44 +301,75 @@ void callCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
 }
 
 class FunctionIDMapper {
-  std::string ModuleId;
+  llcap::ModuleId ModuleIntId {0};
+  std::string FullModuleId;
   std::string OutFileName;
-  std::vector<std::pair<std::string, uint64_t>> FunctionIds;
-  uint64_t FunctionId{0};
+  std::vector<std::pair<std::string, llcap::FunctionId>> FunctionIds;
+  llcap::FunctionId FunctionId{0};
+  static constexpr size_t sha256Bytes = 32;
+
+  static std::array<uint8_t, sizeof(llcap::ModuleId)> collapseHash(const std::array<uint8_t, sha256Bytes>& data) {
+    static_assert(sha256Bytes % sizeof(llcap::ModuleId) == 0, "invalid hash size or id size");
+    std::array<uint8_t, sizeof(llcap::ModuleId)> res = {0};
+    
+    // xor every MODULE_ID_BYTE_SIZE bytes with the previous MODULE_ID_BYTE_SIZE btytes
+    for (size_t i = 0; i < sha256Bytes; i += res.size()) {
+      for (size_t j = 0; j < res.size(); j += 1) {
+          assert(i < data.size() && "Wrong indicies");
+          res[j] = (res[j] ^ data[i + j]); 
+      }
+    }
+
+    return res;
+  }
 
 public:
-  FunctionIDMapper(const std::string &ModuleId) : ModuleId(ModuleId) {
+  FunctionIDMapper(const std::string &ModuleId) : FullModuleId(ModuleId) {
     SHA256 hash;
     hash.init();
     hash.update(StringRef(ModuleId));
     std::stringstream SStream;
     SStream << std::hex << std::setfill('0');
-    for (auto &&C : hash.result()) {
-      SStream << std::setw(2) << (unsigned int)C;
+    
+    const auto collapsed = collapseHash(hash.result());
+    for (auto &&C : collapsed) {
+      ModuleIntId = (ModuleIntId << sizeof(C) * 8); // shift first to avoid overshift in the last iteration
+      ModuleIntId += C;
+
+      SStream << std::setw(llcap::BYTE_ENCODING_SIZE) << (unsigned int)C;
     }
     OutFileName = SStream.str();
   }
 
-  void addFunction(const std::string &FnInfo) {
-    FunctionIds.emplace_back(FnInfo, FunctionId++);
+  llcap::FunctionId addFunction(const std::string &FnInfo) {
+    auto Inserted = FunctionId++;
+    FunctionIds.emplace_back(FnInfo, Inserted);
+    return Inserted;
   }
 
-  const std::string &GetModuleMapId() { return OutFileName; }
+  const std::string &GetModuleMapId() const { return OutFileName; }
+  llcap::ModuleId GetModuleMapIntId() const { return ModuleIntId; }
 
   static bool flush(FunctionIDMapper &&mapper) {
     auto OptVal = MapFilesDirectory.getValue();
     std::string Dir = OptVal.size() > 0 ? OptVal : "module-maps";
-    std::string Path = Dir + "/" + mapper.OutFileName;
+    std::string Path = Dir + "/" + mapper.GetModuleMapId();
+
+    if (std::filesystem::exists(Path)) {
+      errs() << "Module ID hash collision! Path:" << Path << '\n';
+      return false;
+    }
+
     std::ofstream OutFile(Path);
     if (!OutFile.is_open() || !OutFile) {
       errs() << "Could not open function ID map. Path: " << Path << '\n';
       return false;
     }
 
-    OutFile << mapper.ModuleId << '\n';
+    OutFile << mapper.FullModuleId << '\n';
     for (auto &&IdPair : mapper.FunctionIds) {
       auto &&Info = IdPair.first;
-      uint64_t Id = IdPair.second;
+      llcap::FunctionId Id = IdPair.second;
 
       OutFile << Info << '\0' << Id << '\n';
       if (!OutFile) {
@@ -357,8 +390,6 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
     IF_VERBOSE errs() << "Running pass on module!\n";
     FunctionIDMapper IDMap(M.getModuleIdentifier());
-    auto *IRGlobalModuleMapId =
-        createGlobalStr(M, IDMap.GetModuleMapId(), "module-map-id");
 
     // TODO remove
     if (auto *Meta = M.getNamedMetadata("LLCAP-CLANG-LLVM-MAP-PRSGD")) {
@@ -405,13 +436,6 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
         }
       }
 
-      auto *IRGlobalDemangledName =
-          createGlobalStr(M, DemangledName, F.getName().str() + "string");
-
-      BasicBlock &EntryBB = F.getEntryBlock();
-      IRBuilder<> Builder(&EntryBB.front());
-      insertFnEntryLog(Builder, M, IRGlobalDemangledName, IRGlobalModuleMapId);
-
       Set<llvm::Type::TypeID> AllowedTypes;
       {
         using llvm::Type;
@@ -432,7 +456,10 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
         }
       }
       // TODO handle viability
-      IDMap.addFunction(DemangledName);
+      const auto FunId = IDMap.addFunction(DemangledName);
+      BasicBlock &EntryBB = F.getEntryBlock();
+      IRBuilder<> Builder(&EntryBB.front());
+      insertFnEntryLog(Builder, M, IDMap.GetModuleMapIntId(), FunId);
 
       bool InstanceMember = F.getMetadata(VSTR_LLVM_CXX_THISPTR) != nullptr;
 
@@ -491,6 +518,7 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 
     if (!FunctionIDMapper::flush(std::move(IDMap))) {
       errs() << "Failed to write function mapping!\n";
+      exit(1);
     }
     return PreservedAnalyses::none();
   }
