@@ -1,5 +1,6 @@
 #include "shm.h"
 #include <assert.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <errno.h>
 #include <fcntl.h> /* For O_* constants */
@@ -181,6 +182,7 @@ static int update_buffer_idx(void) {
 }
 
 // obtains a free buffer & initializes related data
+// returns -1 on failure
 static int init_free_buff(void) {
   s_writing_to_buffer_idx = s_buff_info.buff_count - 1;
   return update_buffer_idx();
@@ -188,7 +190,14 @@ static int init_free_buff(void) {
 
 #define SEMPERMS (S_IROTH | S_IWOTH | S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR)
 
-int init(void) {
+// returns the total number of bytes in all buffers
+size_t get_buff_total_sz(void) {
+  return s_buff_info.buff_count * s_buff_info.buff_len;
+}
+
+// sets up the semaphores and information required for buffer management
+// if this returns 0, s_buff_info, s_sem_full and s_sem_free are ready to be used
+static int setup_infra(void) {
   int rv = SHM_FAIL_NORET;
 
   if (get_buffer_info(s_shm_meta_name, &s_buff_info) != 0) {
@@ -197,7 +206,7 @@ int init(void) {
   static_assert(sizeof(size_t) > sizeof(uint32_t),
   "Next line kinda depends on this");
   printf("Buffers description: cnt: %u len: %u tot: %u\n", s_buff_info.buff_count, s_buff_info.buff_len, s_buff_info.total_len);
-  size_t buff_total_size = s_buff_info.buff_count * s_buff_info.buff_len;
+  size_t buff_total_size = get_buff_total_sz();
   if (buff_total_size != (size_t)s_buff_info.total_len ||
       sizeof(s_bumper) >= s_buff_info.buff_len) {
     return rv;
@@ -215,8 +224,38 @@ int init(void) {
     printf("Failed to initialize FREE semaphore: %s\n", strerror(errno));
     goto sem_full_cleanup;
   }
+
+  int sem_value = -1;
+  sem_getvalue(s_sem_free, &sem_value);
+  printf("Semaphore value: %d\n", sem_value);
+  return 0;
+
+  sem_full_cleanup:
+  semaphore_close(s_sem_full, s_sem_full_name);
+  s_sem_full = SEM_FAILED;
+  return rv;
+}
+
+// sets up buffer areas, completes initialization
+// after this returns 0, s_shared_buffers_ptr, s_shared_buffers_fd can be used
+static int setup_buffers(void) {
+  size_t buff_total_size = get_buff_total_sz();
   if (map_shmem(s_shared_buffers_name, &s_shared_buffers_ptr,
                 &s_shared_buffers_fd, buff_total_size, 1) != 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int init(void) {
+  int rv = SHM_FAIL_NORET;
+  printf("Initializing\n");
+
+  if (setup_infra() != 0) {
+    return rv;
+  }
+
+  if (setup_buffers() != 0) {
     printf("Failed to map buffer memory\n");
     s_shared_buffers_ptr =
         NULL; // so that cleanup in deinint knows what not to touch
@@ -226,23 +265,23 @@ int init(void) {
   } else {
     // we expect that whoever prepared the semaphores has also prepared the
     // buffers!!!
-    rv = 0;
     s_shm_initialized = SHM_OK;
     printf("Init ok!\n");
     // finally, obtain one free buffer
-    return init_free_buff();
+    if (init_free_buff() == 0) {
+      return 0;
+    } else {
+      rv = -1;
+    }
   }
 
 sem_free_cleanup:
-  printf("Cleaning semaphore...\n");
-  if (semaphore_close(s_sem_free, s_sem_free_name) == 0) {
-    s_sem_free = SEM_FAILED;
-  }
-sem_full_cleanup:
-  printf("Cleaning semaphore full...\n");
-  if (semaphore_close(s_sem_full, s_sem_full_name) == 0) {
-    s_sem_full = SEM_FAILED;
-  }
+  printf("Cleaning semaphores...\n");
+  semaphore_close(s_sem_free, s_sem_free_name);
+  s_sem_free = SEM_FAILED;
+  semaphore_close(s_sem_full, s_sem_full_name);
+  s_sem_full = SEM_FAILED;
+
   printf("Init returning %d\n", rv);
   if (rv != SHM_OK) {
     exit(-1);
@@ -251,10 +290,11 @@ sem_full_cleanup:
   return rv;
 }
 
-static void *get_buffer(void) {
+static void *get_buffer(size_t idx) {
   static_assert(sizeof(char) == 1, "Byte is a byte");
+  assert(idx < s_buff_info.buff_len);
   return (void *)((char *)s_shared_buffers_ptr +
-                  s_writing_to_buffer_idx * s_buff_info.buff_len);
+                  idx * s_buff_info.buff_len);
 }
 
 static void *get_buffer_end(void) {
@@ -266,7 +306,7 @@ static void *get_buffer_end(void) {
 
   //         offset to start of data---vvvvvv-vvvvvvvv    vvvvvvvvvv----offset
   //         into the data
-  return (void *)((char *)get_buffer() + sizeof(s_bumper) + s_bumper);
+  return (void *)((char *)get_buffer(s_writing_to_buffer_idx) + sizeof(s_bumper) + s_bumper);
 }
 
 // used when local buffer is full and a new one is needed
@@ -274,8 +314,6 @@ static int move_to_next_buff(void) {
   if (s_shm_initialized != SHM_OK) {
     return -1;
   }
-  // write final length
-  *(uint32_t*)get_buffer() = s_bumper;
   // signal buffer is full
   if (sem_post(s_sem_full) != 0) {
     printf("Failed posting a full buffer! %s\n", strerror(errno));
@@ -337,7 +375,7 @@ static int unchecked_push_data(const void *source, uint32_t len) {
   memcpy(destination, source, len);
   s_bumper += len;
   // in case of a crash, the last buffer's size MUST be known even if it was in progress
-  *(uint32_t*)get_buffer() = s_bumper;
+  *(uint32_t*)get_buffer(s_writing_to_buffer_idx) = s_bumper;
   return 0;
 }
 
@@ -353,9 +391,22 @@ int push_data(const void *source, uint32_t len) {
   return unchecked_push_data(source, len);
 }
 
-void deinit(void) {
-  char garbage;
+// terminates the protocol
+int termination_sequence(void) {
+  // we'll post to the "full" semaphore exactly 2 * N times (N = number of buffers)
+  // this is in order to guarantee N consecutive "empty" buffers being sent
+  // the above relies on the fact that the other side of the communication sets
+  // the payload length (inside a buffer) to zero before "pushing it back"
+  for (uint32_t i = 0; i < 2 * s_buff_info.buff_count; ++i) {
+    if (sem_post(s_sem_full) != 0) {
+      printf("Failed posting a full buffer! %s\n", strerror(errno));
+      return -1;
+    }
+  }
+  return 0;
+}
 
+void deinit(void) {
   printf("Deinit!\n");
   // does not have & ignores return values as the program is terminating at this
   // point
@@ -363,12 +414,8 @@ void deinit(void) {
     printf("Failed to obtain a free buffer!\n");
   }
   
-  push_data(&garbage, 0);
-  // TODO: either this raw thing or ensure another "move_to_next_buff" will have a free buffer
-  // (mark all buffers free on the server)
-  *(uint32_t*)get_buffer() = 0;
-  if (sem_post(s_sem_full) != 0) {
-    printf("Failed posting a full buffer! %s\n", strerror(errno));
+  if (termination_sequence() != 0) {
+    printf("Failed to send termination sequence during deinit\n");
   }
 
   if (s_shared_buffers_ptr != NULL && s_shared_buffers_fd != -1) {
@@ -385,3 +432,72 @@ void deinit(void) {
   semaphore_close(s_sem_full, s_sem_full_name);
   printf("deinit done\n");
 }
+
+// after a crash, there can be a buffer, that needs to be flushed
+// we find this by looking at the payload length of a buffer (the first 4 bytes)
+// if there is 0 -> buffer has been flushed (responsibility of the other side)
+//  -> we do "nothing" and only signal on the full semaphore (to make sure the other side reads a "zero-length" buffer and terminates)
+// if there is non-zero -> buffer was used and not flushed (due to a crash)
+//  -> we signal 2 times on the semaphore, once for the outgoing data and once for the terminating message
+int after_crash_recovery(void) {
+  // first, wait for the "free semaphore" to be N - 1 or N, N = number of buffers
+  // (one is "used" or none are "used")
+  int res = -1;
+  printf("Recovering after crash!\n");
+  do {
+    sem_getvalue(s_sem_free, &res);
+    printf("Semaphore value: %d\n", res);
+    sleep(1);
+  } while (res < 0 || (uint32_t)res < s_buff_info.buff_count - 1);
+  s_shm_initialized = SHM_OK;
+
+  if (termination_sequence() != 0) {
+    printf("Failed to send termination sequence during recovery\n");
+    return -1;
+  }
+
+  return 0;
+}
+
+int init_finalize_after_crash(void) {
+  int rv = SHM_FAIL_NORET;
+
+  if (setup_infra() != 0) {
+    return rv;
+  }
+
+  if (setup_buffers() != 0) {
+    printf("Failed to map buffer memory\n");
+    s_shared_buffers_ptr =
+        NULL; // so that cleanup in deinint knows what not to touch
+    s_shared_buffers_fd = -1;
+    goto sem_free_cleanup; // not really required but this keeps the pattern
+                           // going
+  } else {
+    // we expect that whoever prepared the semaphores has also prepared the
+    // buffers!!!
+    rv = 0;
+    s_shm_initialized = SHM_OK;
+    printf("Init ok!\n");
+    // finally, obtain one free buffer
+    return after_crash_recovery();
+  }
+
+sem_free_cleanup:
+  printf("Cleaning semaphore free...\n");
+  semaphore_close(s_sem_free, s_sem_free_name);
+  s_sem_free = SEM_FAILED;
+  printf("Cleaning semaphore full...\n");
+  semaphore_close(s_sem_full, s_sem_full_name);
+  s_sem_full = SEM_FAILED;
+
+  printf("Init returning %d\n", rv);
+  if (rv != SHM_OK) {
+    exit(-1);
+  }
+
+  return rv;
+}
+
+#ifdef MANUAL_INIT_DEINIT
+#endif

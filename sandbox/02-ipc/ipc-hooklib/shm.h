@@ -16,9 +16,19 @@ typedef struct {
   uint32_t total_len;
 } ShmMeta;
 
+#ifdef MANUAL_INIT_DEINIT
+
+int init(void);
+void deinit(void);
+int init_finalize_after_crash(void);
+
+#else
 int init(void) __attribute__((constructor));
-void deinit(void) __attribute__((destructor()));
+void deinit(void) __attribute__((destructor));
+#endif
+
 int push_data(const void* data, uint32_t len);
+
 
 #ifdef __cplusplus
 }

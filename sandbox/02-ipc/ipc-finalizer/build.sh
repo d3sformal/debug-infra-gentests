@@ -1,7 +1,7 @@
 #!/bin/sh
 
 cd ../ipc-hooklib/
-cmake ./
+cmake ./ -DCFG_MANUAL=ON
 make
 cd ../ipc-finalizer/
 

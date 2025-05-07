@@ -394,7 +394,7 @@ fn aligned_to<T>(ptr: *const u8) -> Result<(), String> {
   }
 }
 
-/// Safety: "reasonable" T (intended for primitive types)
+/// SAFETY: "reasonable" T (intended for primitive types)
 /// performs a *const dereference
 unsafe fn read_w_alignment_chk<T: Copy>(ptr: *const u8) -> Result<T, String> {
   aligned_to::<T>(ptr)?;
@@ -415,7 +415,15 @@ fn update_from_buffer(
   // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
   // poitner validity ensured by protocol, target type is copied, no allocation over the same memory region
   let valid_size: u32 = unsafe { read_w_alignment_chk(raw_buff) }?;
+
   if valid_size == 0 {
+    if let Some(m_id) = state.modid_wip {
+      return Err(format!(
+        "Comms corrupt - partial state with empty message following it! Module id {}",
+        m_id
+      ));
+    }
+
     state.add_message(Message::ControlEnd);
     return Ok(state);
   }
@@ -428,31 +436,8 @@ fn update_from_buffer(
       return Err("Null pointer when iterating buffer...".to_string());
     }
 
-    let module_id = if let Some(id) = state.modid_wip {
-      // module id from a previous buffer -> skip readnig for module id and instead read function id corresponding to the module id from a previous bufer
-      state.modid_wip = None;
-      id
-    } else {
-      if raw_buff.wrapping_byte_add(MOD_ID_SIZE_B) > buff_end {
-        return Err(format!(
-          "Would over-read a module ID... ptr: {:?} offs: {} end: {:?}",
-          raw_buff, MOD_ID_SIZE_B, buff_end
-        ));
-      }
+    let module_id: usize = determine_module_id(&mut raw_buff, mods, &mut state, buff_end)?;
 
-      // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
-      // poitner validity ensured by protocol, target type is copied, no allocation over the same memory region
-      let rcvd_id = IntegralModId(unsafe { read_w_alignment_chk(raw_buff)? });
-      if let Some(id) = mods.get_module_id(&rcvd_id) {
-        raw_buff = raw_buff.wrapping_byte_add(MOD_ID_SIZE_B);
-        id
-      } else {
-        return Err(format!(
-          "Capture invalid, module id not found {:X}",
-          rcvd_id.0
-        ));
-      }
-    };
     const FNID_SIZE: usize = std::mem::size_of::<u32>();
     if raw_buff >= buff_end {
       if raw_buff > buff_end {
@@ -470,6 +455,7 @@ fn update_from_buffer(
         raw_buff, MOD_ID_SIZE_B, buff_end
       ));
     }
+
     // SAFETY: same as function start raw_buff within bounds as checked above
     let fn_id: u32 = unsafe { read_w_alignment_chk(raw_buff) }?;
 
@@ -479,8 +465,40 @@ fn update_from_buffer(
     )));
     raw_buff = raw_buff.wrapping_byte_add(FNID_SIZE);
   }
-
   Ok(state)
+}
+
+fn determine_module_id(
+  raw_buff: &mut *const u8,
+  mods: &ExtModuleMap,
+  state: &mut CallTraceMessageState,
+  buff_end: *const u8,
+) -> Result<usize, String> {
+  Ok(if let Some(id) = state.modid_wip {
+    // module id from a previous buffer -> skip readnig for module id and instead read function id corresponding to the module id from a previous bufer
+    state.modid_wip = None;
+    id
+  } else {
+    if raw_buff.wrapping_byte_add(MOD_ID_SIZE_B) > buff_end {
+      return Err(format!(
+        "Would over-read a module ID... ptr: {:?} offset: {} end: {:?}",
+        raw_buff, MOD_ID_SIZE_B, buff_end
+      ));
+    }
+
+    // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
+    // poitner validity ensured by protocol, target type is copied, no allocation over the same memory region
+    let rcvd_id = IntegralModId(unsafe { read_w_alignment_chk(*raw_buff)? });
+    if let Some(id) = mods.get_module_id(&rcvd_id) {
+      *raw_buff = raw_buff.wrapping_byte_add(MOD_ID_SIZE_B);
+      id
+    } else {
+      return Err(format!(
+        "Module id not found {:X}",
+        rcvd_id.0
+      ));
+    }
+  })
 }
 
 pub fn msg_handler(
@@ -493,15 +511,15 @@ pub fn msg_handler(
   recorded_frequencies: &mut HashMap<FunctionCallInfo, u64>,
 ) -> Result<(), String> {
   let lg = Log::get("msghandler");
-  let mut buff_idx = 0;
+  let mut buff_idx: usize = 0;
+  let mut end_message_counter = 0;
   let mut state = CallTraceMessageState::new(None, vec![]);
   loop {
     let sem_res = full_sem.try_wait();
     if let Err(e) = sem_res {
       return Err(format!("While waiting for buffer: {}", e));
     }
-    lg.trace("Received buffer");
-
+    lg.trace(&format!("Received buffer {}", buff_idx));
     let buff_offset = buff_idx * buff_size;
     if buff_offset >= buffers.len as usize {
       return Err(format!(
@@ -509,7 +527,7 @@ pub fn msg_handler(
         buff_offset, buffers.len
       ));
     }
-    let buff_ptr = (buffers.mem as *const c_void).wrapping_byte_add(buff_offset);
+    let buff_ptr = (buffers.mem as *const c_void).wrapping_byte_add(buff_offset) as *mut c_void;
 
     if buff_ptr.is_null() || buff_ptr < buffers.mem {
       return Err(format!(
@@ -521,6 +539,13 @@ pub fn msg_handler(
     let res: Result<CallTraceMessageState, String> =
       update_from_buffer(buff_ptr as *const u8, buff_size, modules, state);
     if let Ok(mut st) = res {
+      // SAFETY: protocol, the way update_from_buffer interacts with buff_ptr ensures alignment,
+      // aliasing is ensured as this buffer should only be handled here
+      // Protocol: Set buffer's length to zero
+      unsafe {
+        *(buff_ptr as *mut u32) = 0;
+      }
+
       let messages = st.extract_messages();
       state = st;
 
@@ -528,17 +553,25 @@ pub fn msg_handler(
         lg.trace(&format!("State module id WIP: {mid}"));
       }
 
-      for m in messages {
-        match m {
-          Message::Normal(content) => {
-            recorded_frequencies
-              .entry(content)
-              .and_modify(|v| *v += 1)
-              .or_insert(1);
-          }
-          Message::ControlEnd => {
-            lg.trace("ControlEnd message");
-            return Ok(());
+      if let Some(Message::ControlEnd) = messages.first() {
+        end_message_counter += 1;
+        if end_message_counter == buff_num {
+          lg.trace("End condition");
+          return Ok(());
+        }
+      } else {
+        end_message_counter = 0;
+        for m in messages {
+          match m {
+            Message::Normal(content) => {
+              recorded_frequencies
+                .entry(content)
+                .and_modify(|v| *v += 1)
+                .or_insert(1);
+            }
+            Message::ControlEnd => {
+              return Err("Unexpected end message!".to_string());
+            }
           }
         }
       }

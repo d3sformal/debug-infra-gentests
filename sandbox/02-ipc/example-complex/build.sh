@@ -4,7 +4,7 @@ set -e
 cp ../../01-llvm-ir/llvm-pass/libfn-pass.so ./
 cp ../../build/lib/AstMetaAdd.so ./
 cd ../ipc-hooklib
-cmake ./
+cmake ./ -DCFG_MANUAL=OFF
 make
 cd ../example-complex
 
