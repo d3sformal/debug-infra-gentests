@@ -1,13 +1,12 @@
-use std::{collections::HashMap, ffi::CStr};
+use std::collections::HashMap;
 
-use libc::{
-  __errno_location, MAP_FAILED, MAP_SHARED_VALIDATE, O_CREAT, O_EXCL, O_RDWR, PROT_READ,
-  PROT_WRITE, S_IRWXG, S_IRWXO, S_IRWXU, SEM_FAILED, c_int, c_void, ftruncate, mmap, mode_t,
-  sem_open, sem_t, shm_open, shm_unlink,
-};
+use libc::{O_CREAT, c_void};
 
 use crate::{
   call_tracing::{FunctionCallInfo, Message, ModIdT},
+  libc_wrappers::{
+    fd::try_shm_unlink_fd, sem::Semaphore, shared_memory::ShmemHandle, wrappers::to_cstr,
+  },
   log::Log,
   modmap::{ExtModuleMap, IntegralModId, MOD_ID_SIZE_B},
 };
@@ -18,12 +17,6 @@ pub struct MetaDescriptor {
   pub buff_size: u32,
   pub total_len: u32,
 }
-
-pub struct ShmSem {
-  sem: *mut sem_t,
-  cname: String,
-}
-
 pub struct CallTraceMessageState {
   modid_wip: Option<ModIdT>,
   messages: Vec<Message>,
@@ -48,116 +41,13 @@ impl CallTraceMessageState {
   }
 }
 
-impl ShmSem {
-  pub fn try_post(&mut self) -> Result<(), String> {
-    // SAFETY: Self invariant
-    if unsafe { libc::sem_post(self.sem) } == -1 {
-      Err(format!("Failed post semaphore: {}", get_errno_string()))
-    } else {
-      Ok(())
-    }
-  }
-
-  pub fn try_wait(&mut self) -> Result<(), String> {
-    // SAFETY: Self invariant
-    if unsafe { libc::sem_wait(self.sem) } == -1 {
-      Err(format!("Failed wait on semaphore: {}", get_errno_string()))
-    } else {
-      Ok(())
-    }
-  }
-
-  pub fn try_close(&mut self) -> Result<(), String> {
-    // SAFETY: Self invariant
-    if unsafe { libc::sem_close(self.sem) } != 0 {
-      Err(format!("Failed to close semaphore: {}", get_errno_string()))
-    } else {
-      Ok(())
-    }
-  }
-
-  pub fn try_destroy(self) -> Result<(), (Self, String)> {
-    // SAFETY: Self invariant
-    if unsafe { libc::sem_unlink(to_cstr(&self.cname).as_ptr()) } != 0 {
-      Err((
-        self,
-        format!("Failed to unlink semaphore: {}", get_errno_string()),
-      ))
-    } else {
-      Ok(())
-    }
-  }
-
-  // opens a semaphore and returns a valid Self object
-  fn try_open(
-    name: &str,
-    value: u32,
-    flags: Option<c_int>,
-    mode: Option<mode_t>,
-  ) -> Result<Self, String> {
-    let s_name = format!("{name}\x00");
-    // SAFETY: line above
-    let cstr_name = unsafe { to_cstr(&s_name) };
-    // SAFETY: &CStr, syscall docs
-    let result = unsafe {
-      sem_open(
-        cstr_name.as_ptr(),
-        flags.unwrap_or(O_CREAT | O_EXCL),
-        mode.unwrap_or(PERMS_PERMISSIVE),
-        value,
-      )
-    };
-
-    if result == SEM_FAILED {
-      Err(format!(
-        "Failed to initialize semaphore {}: {}",
-        name,
-        get_errno_string()
-      ))
-    } else {
-      Log::get("try_open").info(&format!("Opened semaphore {} with value {}", s_name, value));
-      Ok(Self {
-        sem: result,
-        cname: s_name,
-      })
-    }
-  }
-
-  fn try_open_exclusive(name: &str, value: u32) -> Result<Self, String> {
-    Self::try_open(name, value, (O_CREAT | O_EXCL).into(), None)
-  }
-}
-
-fn get_errno_string() -> String {
-  // SAFETY: entire app single thread for now
-  let errno_str: &CStr = unsafe { CStr::from_ptr(libc::strerror(*__errno_location())) };
-  let s = match errno_str.to_str() {
-    Err(e) => {
-      Log::get("get_errno_string").crit(&format!(
-        "Cannot convert errno string to utf8 string: {}",
-        e
-      ));
-      return "".to_owned();
-    }
-    Ok(s) => s.to_owned(),
-  };
-  s.to_string()
-}
-
-const PERMS_PERMISSIVE: mode_t = S_IRWXO | S_IRWXG | S_IRWXU;
-
-/// expects s to be null terminated
-unsafe fn to_cstr(s: &String) -> &CStr {
-  unsafe { CStr::from_bytes_with_nul_unchecked(s.as_bytes()) }
-}
-
 pub fn clean_semaphores(prefix: &str) -> Result<(), String> {
   let free_name = format!("{prefix}semfree");
   let full_name = format!("{prefix}semfull");
 
   for name in &[free_name, full_name] {
     eprintln!("Cleanup {}", name);
-    let res = ShmSem::try_open(name, 0, O_CREAT.into(), None);
+    let res = Semaphore::try_open(name, 0, O_CREAT.into(), None);
     if let Ok(sem) = res {
       let _ =
         deinit_semaphore_single(sem).inspect_err(|e| eprintln!("Cleanup of opened {name}: {e}"));
@@ -181,12 +71,12 @@ pub fn clean_semaphores(prefix: &str) -> Result<(), String> {
   Ok(())
 }
 
-pub fn init_semaphores(prefix: &str, n_buffs: u32) -> Result<(ShmSem, ShmSem), String> {
+pub fn init_semaphores(prefix: &str, n_buffs: u32) -> Result<(Semaphore, Semaphore), String> {
   let free_name = format!("{prefix}semfree");
   let full_name = format!("{prefix}semfull");
 
-  let free_sem = ShmSem::try_open_exclusive(&free_name, n_buffs)?;
-  let full_sem = ShmSem::try_open_exclusive(&full_name, 0);
+  let free_sem = Semaphore::try_open_exclusive(&free_name, n_buffs)?;
+  let full_sem = Semaphore::try_open_exclusive(&full_name, 0);
 
   if let Err(e) = full_sem {
     match deinit_semaphore_single(free_sem) {
@@ -200,136 +90,32 @@ pub fn init_semaphores(prefix: &str, n_buffs: u32) -> Result<(ShmSem, ShmSem), S
   }
 }
 
-fn deinit_semaphore_single(mut sem: ShmSem) -> Result<(), String> {
-  sem.try_close()?;
-  sem.try_destroy().map_err(|(_, s)| s)
+fn deinit_semaphore_single(sem: Semaphore) -> Result<(), String> {
+  match sem.try_close() {
+    Ok(sem) => sem,
+    Err((_, err)) => return Err(err),
+  }
+  .try_destroy()
+  .map_err(|(_, s)| s)
 }
 
-pub fn deinit_semaphores(free_handle: ShmSem, full_handle: ShmSem) -> Result<(), String> {
+pub fn deinit_semaphores(free_handle: Semaphore, full_handle: Semaphore) -> Result<(), String> {
   deinit_semaphore_single(free_handle)
     .map_err(|e| format!("When closing free semaphore: {e}"))
     .and_then(|_| deinit_semaphore_single(full_handle))
     .map_err(|e| format!("When closing full semaphore: {e}"))
 }
 
-#[derive(Debug)]
-pub struct ShmHandle {
-  pub mem: *mut c_void,
-  len: u32,
-  _fd: i32,
-  /// null-char-terminated string
-  cname: String,
-}
-
-impl ShmHandle {
-  fn new(mem_ptr: *mut c_void, len: u32, fd: i32, name: String) -> Self {
-    assert!(!mem_ptr.is_null());
-    assert!(mem_ptr != MAP_FAILED);
-    assert!(fd != -1);
-    Self {
-      mem: mem_ptr,
-      len,
-      _fd: fd,
-      cname: format!("{}\x00", name),
-    }
-  }
-}
-
-fn try_shm_unlink_fd(name: &CStr) -> Result<(), String> {
-  // SAFETY: &CStr type, syscall docs
-  if unsafe { shm_unlink(name.as_ptr()) } == -1 {
-    Err(format!(
-      "Failed to unlink FD {}: {}",
-      name.to_string_lossy(),
-      get_errno_string()
-    ))
-  } else {
-    Ok(())
-  }
-}
-
-fn try_unmap_shm(handle: ShmHandle) -> Result<(), String> {
-  // SAFETY: syscall docs, ShmHandle's invariant
-  let unmap_res = unsafe { libc::munmap(handle.mem, handle.len as usize) };
-  if unmap_res != 0 {
-    return Err(format!(
-      "Failed to unmap memory @ {:?} of len {}: {}",
-      handle.mem,
-      handle.len,
-      get_errno_string()
-    ));
-  }
-  // SAFETY: cname from type's invariant
-  let cstr_name = unsafe { to_cstr(&handle.cname) };
-  try_shm_unlink_fd(cstr_name)
-}
-
-fn try_mmap_with_name(path: &CStr, len: u32) -> Result<ShmHandle, String> {
-  let unlinking_handler = |error_string: String| {
-    let unlink_res =
-      try_shm_unlink_fd(path).map_err(|e| format!("{error_string}\n\tWith inner error: {e}"));
-
-    match unlink_res {
-      Ok(_) => Err(error_string),
-      Err(s) => Err(s),
-    }
-  };
-  // SAFETY: &CStr type, syscall docs
-  let fd = unsafe { shm_open(path.as_ptr(), O_CREAT | O_EXCL | O_RDWR, PERMS_PERMISSIVE) };
-  if fd == -1 {
-    return Err(format!(
-      "Failed to open FD for shmem {}: {}",
-      path.to_string_lossy(),
-      get_errno_string()
-    ));
-  }
-  // SAFETY: documentation of the syscall, fd obtained beforehand
-  if unsafe { ftruncate(fd, len as i64) } == -1 {
-    return unlinking_handler(format!(
-      "Failed to truncate FD for shmem {}, len: {}: {}",
-      path.to_string_lossy(),
-      len,
-      get_errno_string()
-    ));
-  }
-
-  // SAFETY: documentation of the syscall, fd obtained beforehand, len passed fntruncate above
-  let mmap_res = unsafe {
-    mmap(
-      std::ptr::null_mut(),
-      len as usize,
-      PROT_READ | PROT_WRITE,
-      MAP_SHARED_VALIDATE,
-      fd,
-      0,
-    )
-  };
-  if mmap_res == MAP_FAILED {
-    return unlinking_handler(format!(
-      "Failed to mmap {}, len: {}: {}",
-      path.to_string_lossy(),
-      len,
-      get_errno_string()
-    ));
-  }
-
-  Ok(ShmHandle::new(
-    mmap_res,
-    len,
-    fd,
-    path.to_string_lossy().to_string(),
-  ))
-}
-
 pub fn init_shmem(
   prefix: &str,
   buff_count: u32,
   buff_len: u32,
-) -> Result<(ShmHandle, ShmHandle), String> {
+) -> Result<(ShmemHandle, ShmemHandle), String> {
   let meta_tmp = format!("{prefix}shmmeta\x00");
   // SAFETY: line above
   let metacstr = unsafe { to_cstr(&meta_tmp) };
-  let meta_mem_handle = try_mmap_with_name(metacstr, std::mem::size_of::<MetaDescriptor>() as u32)?;
+  let meta_mem_handle =
+    ShmemHandle::try_mmap(metacstr, std::mem::size_of::<MetaDescriptor>() as u32)?;
 
   {
     let target_descriptor = MetaDescriptor {
@@ -348,12 +134,12 @@ pub fn init_shmem(
   // SAFETY: line above
   let buffscstr = unsafe { to_cstr(&buffs_tmp) };
 
-  let result = try_mmap_with_name(buffscstr, buff_count * buff_len);
+  let result = ShmemHandle::try_mmap(buffscstr, buff_count * buff_len);
 
   if let Ok(res) = result {
     Ok((meta_mem_handle, res))
   } else {
-    match try_unmap_shm(meta_mem_handle) {
+    match meta_mem_handle.try_unmap() {
       Err(e) => Err(format!(
         "Failed to map shared memory, initialization failed: {e}"
       )),
@@ -365,9 +151,13 @@ pub fn init_shmem(
   }
 }
 
-pub fn deinit_shmem(meta_mem: ShmHandle, buffers_mem: ShmHandle) -> Result<(), String> {
-  let resmeta = try_unmap_shm(meta_mem).map_err(|e| format!("When unmapping meta mem: {e}"));
-  let resbuffs = try_unmap_shm(buffers_mem).map_err(|e| format!("When unmapping buffers mem: {e}"));
+pub fn deinit_shmem(meta_mem: ShmemHandle, buffers_mem: ShmemHandle) -> Result<(), String> {
+  let resmeta = meta_mem
+    .try_unmap()
+    .map_err(|e| format!("When unmapping meta mem: {e}"));
+  let resbuffs = buffers_mem
+    .try_unmap()
+    .map_err(|e| format!("When unmapping buffers mem: {e}"));
 
   if resmeta.is_err() || resbuffs.is_err() {
     let err_str = |res: Result<(), String>| {
@@ -493,18 +283,15 @@ fn determine_module_id(
       *raw_buff = raw_buff.wrapping_byte_add(MOD_ID_SIZE_B);
       id
     } else {
-      return Err(format!(
-        "Module id not found {:X}",
-        rcvd_id.0
-      ));
+      return Err(format!("Module id not found {:X}", rcvd_id.0));
     }
   })
 }
 
 pub fn msg_handler(
-  full_sem: &mut ShmSem,
-  free_sem: &mut ShmSem,
-  buffers: &ShmHandle,
+  full_sem: &mut Semaphore,
+  free_sem: &mut Semaphore,
+  buffers: &ShmemHandle,
   buff_size: usize,
   buff_num: usize,
   modules: &ExtModuleMap,
@@ -521,10 +308,11 @@ pub fn msg_handler(
     }
     lg.trace(&format!("Received buffer {}", buff_idx));
     let buff_offset = buff_idx * buff_size;
-    if buff_offset >= buffers.len as usize {
+    if buff_offset >= buffers.len() as usize {
       return Err(format!(
         "Calculated offset too large: {}, compared to the buffers len {}",
-        buff_offset, buffers.len
+        buff_offset,
+        buffers.len()
       ));
     }
     let buff_ptr = (buffers.mem as *const c_void).wrapping_byte_add(buff_offset) as *mut c_void;

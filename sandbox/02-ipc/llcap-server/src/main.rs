@@ -3,15 +3,16 @@ use std::collections::{HashMap, HashSet};
 use args::Cli;
 use call_tracing::{FunctionCallInfo, ModIdT};
 use clap::Parser;
+use libc_wrappers::shared_memory::ShmemHandle;
 use log::Log;
 use modmap::ExtModuleMap;
 use shmem_capture::{
-  ShmHandle, clean_semaphores, deinit_semaphores, deinit_shmem, init_semaphores, init_shmem,
-  msg_handler,
+  clean_semaphores, deinit_semaphores, deinit_shmem, init_semaphores, init_shmem, msg_handler,
 };
 mod args;
 mod call_tracing;
 mod constants;
+mod libc_wrappers;
 mod log;
 mod modmap;
 mod shmem_capture;
@@ -95,7 +96,7 @@ fn main() -> Result<(), String> {
             "The above uses ? operator on an ensured Err variant (returned in both match arms)"
           );
         }
-        Ok(a) => Ok::<(ShmHandle, ShmHandle), String>(a),
+        Ok(a) => Ok::<(ShmemHandle, ShmemHandle), String>(a),
       }?;
 
       lg.info("Listening!");

@@ -117,6 +117,12 @@ pub struct ExtModuleMap {
   module_paths: Vec<String>,
 }
 
+impl Default for ExtModuleMap {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 impl ExtModuleMap {
   pub fn new() -> Self {
     Self {
