@@ -15,6 +15,7 @@ mod shmem_capture;
 use shmem_capture::{call_tracing::msg_handler, cleanup_shmem, deinit_tracing, init_tracing};
 
 pub fn print_summary(freqs: &HashMap<FunctionCallInfo, u64>, mods: &ExtModuleMap) {
+  let lg = Log::get("summary");
   let mut pairs = freqs.iter().collect::<Vec<(_, _)>>();
   let mut seen_modules: HashSet<ModIdT> = HashSet::new();
   pairs.sort_by(|a, b| b.1.cmp(a.1));
@@ -23,10 +24,10 @@ pub fn print_summary(freqs: &HashMap<FunctionCallInfo, u64>, mods: &ExtModuleMap
     let fn_name = mods.get_function_name(fninfo.module_id, fninfo.function_id);
     seen_modules.insert(fninfo.module_id);
     if modstr.and(fn_name).is_none() {
-      eprintln!(
-        "Warn: function id or module id confusion with fnid: {} {:?} moid: {} {:?}",
+      lg.warn(format!(
+        "Function ID or module ID confusion. Fun ID: {} {:?} Mod ID: {} {:?}",
         fninfo.function_id, fn_name, fninfo.module_id, modstr
-      );
+      ));
       continue;
     }
 
@@ -43,14 +44,15 @@ pub fn print_summary(freqs: &HashMap<FunctionCallInfo, u64>, mods: &ExtModuleMap
 }
 
 fn main() -> Result<(), String> {
+  Log::set_verbosity(255);
+  let lg = Log::get("main");
   let cli = Cli::try_parse();
   if let Err(e) = cli {
-    eprintln!("{}", e);
+    lg.crit(format!("{}", e));
     return Err("".to_owned());
   }
   let cli = cli.unwrap();
   Log::set_verbosity(cli.verbose);
-  let lg = Log::get("main");
   lg.info(format!("Verbosity: {}", cli.verbose));
 
   let modules = ExtModuleMap::try_from(cli.modmap.clone());
@@ -89,7 +91,7 @@ fn main() -> Result<(), String> {
         &modules,
         &mut recorded_frequencies,
       ) {
-        eprintln!("{e}");
+        lg.crit(&e);
       }
 
       print_summary(&recorded_frequencies, &modules);

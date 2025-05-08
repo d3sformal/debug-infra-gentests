@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fs, path::PathBuf};
 
+use crate::Log;
 use crate::constants::Constants;
 
 #[derive(Debug)]
@@ -56,15 +57,16 @@ impl From<&[&[u8]]> for FunctionMap {
 
     let mut target = Self::new(&[]);
 
+    let lg = Log::get("FunctionMap::From(..bytes..)");
     for pair_res in parsed_pairs {
       match pair_res {
-        Err(e) => eprintln!("Warn: could not parse function ID pair: {e}"),
+        Err(e) => lg.warn(format!("Could not parse function ID pair: {e}")),
         Ok((id, name)) => {
           if let Some(old_name) = target.insert(id, name.clone()) {
-            eprintln!(
-              "Warn: duplicate function id, this should not happen within a module! Function ID: {}, name 1: {}, name 2: {}",
+            lg.warn(format!(
+              "Duplicate function ID, this should not happen within a module! Function ID: {}, name 1: {}, name 2: {}",
               id, old_name, name
-            );
+            ));
           }
         }
       }
@@ -231,7 +233,7 @@ impl TryFrom<PathBuf> for ExtModuleMap {
       };
 
       if let Err(e) = res {
-        eprintln!("Failed to read module: {}", e);
+        Log::get("ExtmoduleMap::try_from(PathBuff)").warn(format!("Failed to read module: {}", e));
       }
     }
 
