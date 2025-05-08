@@ -12,10 +12,8 @@ pub fn get_errno_string() -> String {
   let errno_str: &CStr = unsafe { CStr::from_ptr(libc::strerror(*__errno_location())) };
   let s = match errno_str.to_str() {
     Err(e) => {
-      Log::get("get_errno_string").crit(&format!(
-        "Cannot convert errno string to utf8 string: {}",
-        e
-      ));
+      Log::get("get_errno_string")
+        .crit(format!("Cannot convert errno string to utf8 string: {}", e));
       return "".to_owned();
     }
     Ok(s) => s.to_owned(),

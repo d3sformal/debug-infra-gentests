@@ -1,6 +1,6 @@
 pub type ModIdT = usize;
 
-#[derive(Hash, PartialEq, Eq, Debug)]
+#[derive(Hash, PartialEq, Eq, Debug, Copy, Clone)]
 pub struct FunctionCallInfo {
   pub function_id: u32,
   pub module_id: ModIdT,

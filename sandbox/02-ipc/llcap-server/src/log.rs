@@ -74,17 +74,25 @@ impl Logger {
     format!("[{}] {}", self.name, msg)
   }
 
-  pub fn crit(&self, msg: &str) {
-    self.inner_log.log(LogLevel::Critical, &self.formatted(msg));
+  pub fn crit<T: AsRef<str>>(&self, msg: T) {
+    self
+      .inner_log
+      .log(LogLevel::Critical, &self.formatted(msg.as_ref()));
   }
-  pub fn warn(&self, msg: &str) {
-    self.inner_log.log(LogLevel::Warn, &self.formatted(msg));
+  pub fn warn<T: AsRef<str>>(&self, msg: T) {
+    self
+      .inner_log
+      .log(LogLevel::Warn, &self.formatted(msg.as_ref()));
   }
-  pub fn info(&self, msg: &str) {
-    self.inner_log.log(LogLevel::Info, &self.formatted(msg));
+  pub fn info<T: AsRef<str>>(&self, msg: T) {
+    self
+      .inner_log
+      .log(LogLevel::Info, &self.formatted(msg.as_ref()));
   }
-  pub fn trace(&self, msg: &str) {
-    self.inner_log.log(LogLevel::Trace, &self.formatted(msg));
+  pub fn trace<T: AsRef<str>>(&self, msg: T) {
+    self
+      .inner_log
+      .log(LogLevel::Trace, &self.formatted(msg.as_ref()));
   }
 }
 

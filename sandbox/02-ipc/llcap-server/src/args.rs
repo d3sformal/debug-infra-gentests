@@ -7,24 +7,39 @@ use crate::constants::Constants;
 #[command(version, about, long_about = None)]
 pub struct Cli {
   /// Sets path to module map directory as produced by the instrumentation
-  #[arg(short, long, value_name = "FILE")]
+  #[arg(short, long)]
   pub modmap: PathBuf,
 
+  /// The stage to perform
   #[command(subcommand)]
-  pub method: Type,
+  pub stage: Stage,
+
+  /// File descriptor prefixes for resources
+  #[arg(short = 'p', long, default_value = Constants::default_fd_prefix())]
+  pub fd_prefix: String,
+
+  /// Perform a cleanup of all possibly leftover resources related to the given stage and exit
+  #[arg(long)]
+  pub cleanup: bool,
 
   /// Enable verbose output, write up to 3x
   #[arg(short, long, action = clap::ArgAction::Count)]
   pub verbose: u8,
+
+  /// Perform the full tool iteration from the specified stage
+  #[arg(short, long)]
+  pub full: bool,
+
+  /// Produce all artifacts that can be exported (in default locations)
+  /// This option overrides ALL paths specified as out_file, or in_file for ANY stage  
+  #[arg(short, long)]
+  pub all_artifacts: bool,
 }
 
 #[derive(Subcommand)]
-pub enum Type {
-  Shmem {
-    /// File descriptor prefixes for resources
-    #[arg(short, long, default_value = Constants::default_fd_prefix())]
-    fd_prefix: String,
-
+pub enum Stage {
+  /// Set up a function tracing server
+  TraceCalls {
     /// Buffer count
     #[arg(short = 'c', long, default_value = Constants::default_buff_count_str())]
     buff_count: u32,
@@ -33,8 +48,22 @@ pub enum Type {
     #[arg(short = 's', long, default_value = Constants::default_buff_size_bytes_str())]
     buff_size: u32,
 
-    /// Perform semaphore cleanup
-    #[arg(long)]
-    cleanup: bool,
+    /// output file, where a [TODO format] output will be stored
+    #[arg(short, long, default_value = Constants::default_trace_out_path())]
+    out_file: Option<PathBuf>,
+  },
+
+  CaptureArgs {
+    /// input file from the call-tracing stage
+    #[arg(short, long, default_value = Constants::default_trace_out_path())]
+    in_file: Option<PathBuf>,
+
+    /// the directory where function traces are saved (or offloaded)
+    #[arg(short, long, default_value = Constants::default_capture_out_path())]
+    out_dir: Option<PathBuf>,
+
+    /// capture memory limit in MEBIBYTES - offloading will be performed to the output directory
+    #[arg(short = 'l', long, default_value = "0")]
+    mem_limit: u32,
   },
 }

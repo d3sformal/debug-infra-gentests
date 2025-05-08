@@ -9,10 +9,18 @@ impl Constants {
     "/llcap-"
   }
   pub const fn default_buff_count_str() -> &'static str {
-    "4"
+    "10"
   }
 
   pub const fn default_buff_size_bytes_str() -> &'static str {
-    "4096"
+    "4194304" // 4MiB 
+  }
+
+  pub const fn default_trace_out_path() -> &'static str {
+    "./trace.out"
+  }
+
+  pub const fn default_capture_out_path() -> &'static str {
+    "./capture-out/"
   }
 }

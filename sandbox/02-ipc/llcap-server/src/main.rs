@@ -3,12 +3,8 @@ use std::collections::{HashMap, HashSet};
 use args::Cli;
 use call_tracing::{FunctionCallInfo, ModIdT};
 use clap::Parser;
-use libc_wrappers::shared_memory::ShmemHandle;
 use log::Log;
 use modmap::ExtModuleMap;
-use shmem_capture::{
-  clean_semaphores, deinit_semaphores, deinit_shmem, init_semaphores, init_shmem, msg_handler,
-};
 mod args;
 mod call_tracing;
 mod constants;
@@ -16,6 +12,7 @@ mod libc_wrappers;
 mod log;
 mod modmap;
 mod shmem_capture;
+use shmem_capture::{call_tracing::msg_handler, cleanup_shmem, deinit_tracing, init_tracing};
 
 pub fn print_summary(freqs: &HashMap<FunctionCallInfo, u64>, mods: &ExtModuleMap) {
   let mut pairs = freqs.iter().collect::<Vec<(_, _)>>();
@@ -44,6 +41,7 @@ pub fn print_summary(freqs: &HashMap<FunctionCallInfo, u64>, mods: &ExtModuleMap
   println!("Total traced calls: {}", freqs.values().sum::<u64>());
   println!("Traces originated from {} modules", seen_modules.len());
 }
+
 fn main() -> Result<(), String> {
   let cli = Cli::try_parse();
   if let Err(e) = cli {
@@ -53,11 +51,11 @@ fn main() -> Result<(), String> {
   let cli = cli.unwrap();
   Log::set_verbosity(cli.verbose);
   let lg = Log::get("main");
-  lg.info(&format!("Verbosity: {}", cli.verbose));
+  lg.info(format!("Verbosity: {}", cli.verbose));
 
   let modules = ExtModuleMap::try_from(cli.modmap.clone());
   if modules.is_err() {
-    lg.crit(&format!(
+    lg.crit(format!(
       "Could not parse module mapping from {}:\n{}",
       cli.modmap.to_string_lossy(),
       modules.unwrap_err()
@@ -68,43 +66,24 @@ fn main() -> Result<(), String> {
   let modules = modules.unwrap();
   let mut recorded_frequencies: HashMap<FunctionCallInfo, u64> = HashMap::new();
 
-  match cli.method {
-    args::Type::Shmem {
-      fd_prefix,
+  match cli.stage {
+    args::Stage::TraceCalls {
       buff_count,
       buff_size,
-      cleanup,
+      out_file: _,
     } => {
-      if cleanup {
+      if cli.cleanup {
         lg.info("Cleanup");
-        return clean_semaphores(&fd_prefix);
+        return cleanup_shmem(&cli.fd_prefix);
       }
       lg.info("Initializing semaphores");
-      let (mut semfree, mut semfull) = init_semaphores(&fd_prefix, buff_count)?;
-      lg.info("Initializing shmem");
-      let (meta_shm, buffers_shm) = match init_shmem(&fd_prefix, buff_count, buff_size) {
-        Err(e) => {
-          match deinit_semaphores(semfree, semfull) {
-            // both arms MUST return Err! or the unreachable! macro below panics!
-            Ok(()) => Err(e),
-            Err(e2) => Err(format!(
-              "Failed to clean up semaphores when mmap failed: {e2}, map failure: {e}"
-            )),
-          }?; // <-- unreachable does not panic if both arms return an Err
 
-          unreachable!(
-            "The above uses ? operator on an ensured Err variant (returned in both match arms)"
-          );
-        }
-        Ok(a) => Ok::<(ShmemHandle, ShmemHandle), String>(a),
-      }?;
+      let mut tracing_infra = init_tracing(&cli.fd_prefix, buff_count, buff_size)?;
 
       lg.info("Listening!");
 
       if let Err(e) = msg_handler(
-        &mut semfull,
-        &mut semfree,
-        &buffers_shm,
+        &mut tracing_infra,
         buff_size as usize,
         buff_count as usize,
         &modules,
@@ -112,26 +91,18 @@ fn main() -> Result<(), String> {
       ) {
         eprintln!("{e}");
       }
+
       print_summary(&recorded_frequencies, &modules);
 
       lg.info("Exiting...");
 
-      let shm_uninit = deinit_shmem(meta_shm, buffers_shm);
-      let sem_uninit = deinit_semaphores(semfree, semfull);
-
-      let goodbye_errors = [shm_uninit, sem_uninit]
-        .iter()
-        .fold("".to_string(), |acc, v| {
-          if v.is_err() {
-            acc + v.as_ref().unwrap_err()
-          } else {
-            acc
-          }
-        });
-      if !goodbye_errors.is_empty() {
-        return Err(format!("Failed deinit! {goodbye_errors}"));
-      }
+      deinit_tracing(tracing_infra)?;
     }
+    args::Stage::CaptureArgs {
+      in_file: _,
+      out_dir: _,
+      mem_limit: _,
+    } => todo!(),
   }
 
   Ok(())

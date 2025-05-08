@@ -117,7 +117,7 @@ impl Semaphore {
         get_errno_string()
       ))
     } else {
-      Log::get("try_open").info(&format!("Opened semaphore {} with value {}", s_name, value));
+      Log::get("try_open").info(format!("Opened semaphore {} with value {}", s_name, value));
       Ok(Self::Open {
         sem: result,
         cname: s_name,
