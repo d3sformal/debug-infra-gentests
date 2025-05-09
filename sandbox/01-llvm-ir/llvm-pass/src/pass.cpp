@@ -1,6 +1,6 @@
 #include "llvm/Pass.h"
+#include "../../custom-metadata-pass/ast-meta-add/llvm-metadata.h"
 #include "constants.hpp"
-#include "../custom-metadata-pass/ast-meta-add/llvm-metadata.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Function.h"
@@ -12,11 +12,7 @@
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
-#include <array>
-#include <filesystem>
-#include <fstream>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/Demangle/Demangle.h>
@@ -27,20 +23,17 @@
 #include <llvm/IR/Type.h>
 #include <llvm/Passes/OptimizationLevel.h>
 
-#include <algorithm>
-#include <bits/stdc++.h>
-#include <cstddef>
-#include <cstdlib>
-#include <iterator>
-#include <optional>
-#include <sstream>
-#include <string>
+#include "mapping.hpp"
+#include "typeAlias.hpp"
 
 using namespace llvm;
 
 const char *UNSIGNED_ATTR_KIND = "VSTR-param-attr-unsigned";
 
 namespace {
+
+namespace args {
+enum struct InstrumentationType { Call, Arg };
 
 // -mllvm -llcap-filter-by-mangled
 cl::opt<bool>
@@ -49,15 +42,33 @@ cl::opt<bool>
                           "their position within the AST"));
 // -mllvm -llcap-verbose
 cl::opt<bool> Verbose("llcap-verbose", cl::desc("Verbose output"));
+// -mllvm -llcap-debug
+cl::opt<bool> Debug("llcap-debug", cl::desc("Debugging output"));
 // -mllvm -llcap-mapdir
 cl::opt<std::string>
     MapFilesDirectory("llcap-mapdir",
-                      cl::desc("Directory for function ID maps"));
+                      cl::desc("Output directory for function ID maps"));
+// -mllvm -Call
+// -mllvm -Arg
+cl::opt<InstrumentationType> InstrumentationType(
+    cl::desc("Choose instrumentation type:"),
+    cl::values(clEnumVal(InstrumentationType::Call, "Call tracing"),
+               clEnumVal(InstrumentationType::Arg, "Argument tracing")));
 
-#define IF_VERBOSE if (Verbose.getValue())
-template <class T> using Vec = std::vector<T>;
-template <class T> using Maybe = std::optional<T>;
-template <class T> using Set = std::set<T>;
+// -mllvm -llcap-fn-targets-file
+cl::opt<std::string>
+    TargetsFilePath("llcap-fn-targets-file",
+                    cl::desc("Path to a file containing the module IDs and "
+                             "function IDs of functions to be instrumented"));
+
+// -mllvm -llcap-argcapture-file
+cl::opt<std::string> ArgCaptureIdMapPath(
+    "llcap-argcapture-file",
+    cl::desc("Output file where argument tracing IDs are written"));
+} // namespace args
+
+#define IF_VERBOSE if (args::Verbose.getValue())
+#define IF_DEBUG if (args::Debug.getValue())
 
 // there is no way to tell built-ins from user functions in the IR,
 // we can only query external linkage and whether a function is a "declaration"
@@ -72,6 +83,30 @@ bool isStdFnDanger(const StringRef mangled) {
          mangled.starts_with("_ZNSa") || mangled.starts_with("__");
 }
 
+bool isStdFnBasedOnMetadata(const Function &Fn,
+                            const std::string &DemangledName,
+                            const StringRef MangledName) {
+  IF_VERBOSE errs() << "Metadata of function " << DemangledName << '\n';
+  if (MDNode *N = Fn.getMetadata(VSTR_LLVM_NON_SYSTEMHEADER_FN_KEY)) {
+    if (N->getNumOperands() == 0) {
+      IF_VERBOSE errs() << "Warning! Unexpected metadata node with no "
+                           "operands! Function: "
+                        << MangledName << ' ' << DemangledName << '\n';
+    }
+
+    if (MDString *op = dyn_cast_if_present<MDString>(N->getOperand(0));
+        op == nullptr) {
+      IF_VERBOSE {
+        errs() << "Invalid metadata for node in function: " << MangledName
+               << ' ' << DemangledName << "\nNode:\n";
+        N->dumpTree();
+      }
+    }
+    return false;
+  }
+  return true;
+}
+
 GlobalVariable *createGlobalStr(Module &M, StringRef Val, StringRef Id) {
   LLVMContext &Ctx = M.getContext();
 
@@ -84,17 +119,22 @@ GlobalVariable *createGlobalStr(Module &M, StringRef Val, StringRef Id) {
   return GV;
 }
 
-void insertFnEntryLog(IRBuilder<> &Builder, Module &M, llcap::ModuleId ModuleIntId, llcap::FunctionId FunctionIntId) {
-  static_assert(sizeof(llcap::FunctionId) == 4); // this does not imply incorrectness, just that everything must be checked
-  auto *FnIdConstant =
-  ConstantInt::get(M.getContext(), APInt(sizeof(llcap::FunctionId) * 8, FunctionIntId));
+void insertFnEntryHook(IRBuilder<> &Builder, Module &M,
+                       llcap::ModuleId ModuleIntId,
+                       llcap::FunctionId FunctionIntId) {
+  static_assert(sizeof(llcap::FunctionId) ==
+                4); // this does not imply incorrectness, just that everything
+                    // must be checked
+  auto *FnIdConstant = ConstantInt::get(
+      M.getContext(), APInt(sizeof(llcap::FunctionId) * 8, FunctionIntId));
   static_assert(sizeof(llcap::ModuleId) == 4);
-  auto *ModIdConstant =
-  ConstantInt::get(M.getContext(), APInt(sizeof(llcap::ModuleId) * 8, ModuleIntId));
+  auto *ModIdConstant = ConstantInt::get(
+      M.getContext(), APInt(sizeof(llcap::ModuleId) * 8, ModuleIntId));
   auto Callee = M.getOrInsertFunction(
-    "hook_start", FunctionType::get(Type::getVoidTy(M.getContext()),
-                                    {ModIdConstant->getType(), FnIdConstant->getType()},
-                                    false));
+      "hook_start",
+      FunctionType::get(Type::getVoidTy(M.getContext()),
+                        {ModIdConstant->getType(), FnIdConstant->getType()},
+                        false));
   Builder.CreateCall(Callee, {ModIdConstant, FnIdConstant});
 }
 // terminology:
@@ -235,10 +275,10 @@ bool ArgNumbersMatch(size_t LlvmNumber, const Vec<size_t> &ShiftMap,
   return Res;
 }
 
-void callCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
-                     const Vec<size_t> &ShiftMap,
-                     const Maybe<Set<size_t>> &CustTypes,
-                     const Maybe<Set<size_t>> &UnsignedMap) {
+void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
+                          const Vec<size_t> &ShiftMap,
+                          const Maybe<Set<size_t>> &CustTypes,
+                          const Maybe<Set<size_t>> &UnsignedMap) {
   auto ArgNum = Arg->getArgNo();
   auto &Ctx = M.getContext();
   auto IsAttrUnsgined =
@@ -300,142 +340,111 @@ void callCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
   }
 }
 
-class FunctionIDMapper {
-  llcap::ModuleId ModuleIntId {0};
-  std::string FullModuleId;
-  std::string OutFileName;
-  std::vector<std::pair<std::string, llcap::FunctionId>> FunctionIds;
-  llcap::FunctionId FunctionId{0};
-  static constexpr size_t sha256Bytes = 32;
-
-  static std::array<uint8_t, sizeof(llcap::ModuleId)> collapseHash(const std::array<uint8_t, sha256Bytes>& data) {
-    static_assert(sha256Bytes % sizeof(llcap::ModuleId) == 0, "invalid hash size or id size");
-    std::array<uint8_t, sizeof(llcap::ModuleId)> res = {0};
-    
-    // xor every MODULE_ID_BYTE_SIZE bytes with the previous MODULE_ID_BYTE_SIZE btytes
-    for (size_t i = 0; i < sha256Bytes; i += res.size()) {
-      for (size_t j = 0; j < res.size(); j += 1) {
-          assert(i < data.size() && "Wrong indicies");
-          res[j] = (res[j] ^ data[i + j]); 
-      }
-    }
-
-    return res;
-  }
-
-public:
-  FunctionIDMapper(const std::string &ModuleId) : FullModuleId(ModuleId) {
-    SHA256 hash;
-    hash.init();
-    hash.update(StringRef(ModuleId));
-    std::stringstream SStream;
-    SStream << std::hex << std::setfill('0');
-    
-    const auto collapsed = collapseHash(hash.result());
-    for (auto &&C : collapsed) {
-      ModuleIntId = (ModuleIntId << sizeof(C) * 8); // shift first to avoid overshift in the last iteration
-      ModuleIntId += C;
-
-      SStream << std::setw(llcap::BYTE_ENCODING_SIZE) << (unsigned int)C;
-    }
-    OutFileName = SStream.str();
-  }
-
-  llcap::FunctionId addFunction(const std::string &FnInfo) {
-    auto Inserted = FunctionId++;
-    FunctionIds.emplace_back(FnInfo, Inserted);
-    return Inserted;
-  }
-
-  const std::string &GetModuleMapId() const { return OutFileName; }
-  llcap::ModuleId GetModuleMapIntId() const { return ModuleIntId; }
-
-  static bool flush(FunctionIDMapper &&mapper) {
-    auto OptVal = MapFilesDirectory.getValue();
-    std::string Dir = OptVal.size() > 0 ? OptVal : "module-maps";
-    std::string Path = Dir + "/" + mapper.GetModuleMapId();
-
-    if (std::filesystem::exists(Path)) {
-      errs() << "Module ID hash collision! Path:" << Path << '\n';
-      return false;
-    }
-
-    std::ofstream OutFile(Path);
-    if (!OutFile.is_open() || !OutFile) {
-      errs() << "Could not open function ID map. Path: " << Path << '\n';
-      return false;
-    }
-
-    OutFile << mapper.FullModuleId << '\n';
-    for (auto &&IdPair : mapper.FunctionIds) {
-      auto &&Info = IdPair.first;
-      llcap::FunctionId Id = IdPair.second;
-
-      OutFile << Info << '\0' << Id << '\n';
-      if (!OutFile) {
-        break;
-      }
-    }
-
-    if (!OutFile) {
-      errs() << "Error writing function ID map. Path: " << Path << '\n';
-      return false;
-    }
+bool isStdFn(const Function &Fn, const Str &DemangledName,
+             const StringRef Name) {
+  if (args::MangleFilter.getValue() && isStdFnDanger(Name)) {
+    return true;
+    ;
+  } else if (!args::MangleFilter.getValue() &&
+             isStdFnBasedOnMetadata(Fn, DemangledName, Name)) {
     return true;
   }
-};
+  return false;
+}
+
+void insertArgTracingHooks(Module &M, Function &Fn, IRBuilder<> &Builder) {
+  bool InstanceMember = Fn.getMetadata(VSTR_LLVM_CXX_THISPTR) != nullptr;
+
+  // sret arguments are arguments that serve as a return value ?inside of a
+  // register? in some cases when the function *returns a structure by
+  // value* e.g. std::string foo(void);
+
+  // theoretically, we can use F.returnDoesNotAlias() (noalias) as a
+  // heuristic for structReturn (sret in IR) arguments but that would need a
+  // bit more research (for all cases I've seen, the noalias attribute was
+  // set for the an sret parameter - makes sense, though I do not know if
+  // there are any contradictions to this)
+
+  // This map encodes at position ShiftMap[i] what shift should we consider
+  // when evaluating i-th argument (i.e. how many additional argumens are
+  // there without the this pointer - which can be detected in the AST phase
+  // and is accounted for)
+  const auto ShiftMap = getSretArgumentShiftVec(Fn);
+
+  auto CustTypeIdcs =
+      getCustomTypeIndicies(VSTR_LLVM_CXX_DUMP_STDSTRING, Fn, InstanceMember);
+  IF_VERBOSE {
+    llvm::errs() << "CustType indicies: ";
+    if (CustTypeIdcs) {
+      for (auto &&i : *CustTypeIdcs) {
+        llvm::errs() << i << " ";
+      }
+    }
+    llvm::errs() << '\n';
+  }
+  auto CustTypeIdxMap =
+      CustTypeIdcs
+          ? std::optional(std::set(CustTypeIdcs->begin(), CustTypeIdcs->end()))
+          : std::nullopt;
+
+  auto CustUnsignedIdcs =
+      getCustomTypeIndicies(VSTR_LLVM_UNSIGNED_IDCS, Fn, InstanceMember);
+  IF_VERBOSE {
+    llvm::errs() << "Unsigned indicies: ";
+    if (CustUnsignedIdcs) {
+      for (auto &&i : *CustUnsignedIdcs) {
+        llvm::errs() << i << " ";
+      }
+    }
+    llvm::errs() << '\n';
+  }
+  auto UnsignedMap = CustUnsignedIdcs
+                         ? std::optional(std::set(CustUnsignedIdcs->begin(),
+                                                  CustUnsignedIdcs->end()))
+                         : std::nullopt;
+
+  for (auto Arg = Fn.arg_begin(); Arg != Fn.arg_end(); ++Arg) {
+    insertArgCaptureHook(Builder, M, Arg, ShiftMap, CustTypeIdxMap,
+                         UnsignedMap);
+  }
+}
 
 struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
-    IF_VERBOSE errs() << "Running pass on module!\n";
+    IF_VERBOSE errs() << "Running pass on module " << M.getModuleIdentifier()
+                      << "\n";
     FunctionIDMapper IDMap(M.getModuleIdentifier());
-
-    // TODO remove
-    if (auto *Meta = M.getNamedMetadata("LLCAP-CLANG-LLVM-MAP-PRSGD")) {
-      Meta->dump();
-    } else {
-      IF_VERBOSE llvm::errs() << "Module meta no parse guide";
-    }
-    if (auto *Meta = M.getNamedMetadata("LLCAP-CLANG-LLVM-MAP-INVLD_IDX")) {
-      Meta->dump();
-    } else {
-      IF_VERBOSE llvm::errs() << "Module meta no invalid index value";
-    }
-
-    for (auto &F : M) {
-      // Skip library functions
-      auto Name = F.getFunction().getName();
-      auto DemangledName = llvm::demangle(Name);
-
-      if (MDNode *N = F.getMetadata("LLCAP-CLANG-LLVM-MAP-DATA")) {
-        outs() << DemangledName << ": \n";
-        N->dumpTree();
+    IF_DEBUG {
+      if (auto *Meta = M.getNamedMetadata("LLCAP-CLANG-LLVM-MAP-PRSGD")) {
+        Meta->dump();
+      } else {
+        IF_VERBOSE llvm::errs() << "Module meta no parse guide";
       }
+      if (auto *Meta = M.getNamedMetadata("LLCAP-CLANG-LLVM-MAP-INVLD_IDX")) {
+        Meta->dump();
+      } else {
+        IF_VERBOSE llvm::errs() << "Module meta no invalid index value";
+      }
+    }
 
-      if (MangleFilter.getValue() && isStdFnDanger(Name)) {
-        continue;
-      } else if (!MangleFilter.getValue()) {
-        IF_VERBOSE errs() << "Metadata of function " << DemangledName << '\n';
-        if (MDNode *N = F.getMetadata(VSTR_LLVM_NON_SYSTEMHEADER_FN_KEY)) {
-          if (N->getNumOperands() == 0) {
-            IF_VERBOSE errs() << "Warning! Unexpected metadata node with no "
-                                 "operands! Function: "
-                              << Name << ' ' << DemangledName << '\n';
-          }
+    for (Function &F : M) {
+      // Skip library functions
+      StringRef MangledName = F.getFunction().getName();
+      Str DemangledName = llvm::demangle(MangledName);
 
-          if (MDString *op = dyn_cast_if_present<MDString>(N->getOperand(0));
-              op == nullptr) {
-            IF_VERBOSE errs()
-                << "Invalid metadata for node in function: " << Name << ' '
-                << DemangledName << "\nNode:\n";
-            N->dumpTree();
-          }
-        } else {
-          continue;
+      IF_DEBUG {
+        if (MDNode *N = F.getMetadata("LLCAP-CLANG-LLVM-MAP-DATA")) {
+          errs() << DemangledName << ": \n";
+          N->dumpTree();
         }
       }
 
+      if (isStdFn(F, DemangledName, MangledName)) {
+        continue;
+      }
+
+      // TODO: this needs improvement (Vector types, ...)
       Set<llvm::Type::TypeID> AllowedTypes;
       {
         using llvm::Type;
@@ -459,64 +468,12 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
       const auto FunId = IDMap.addFunction(DemangledName);
       BasicBlock &EntryBB = F.getEntryBlock();
       IRBuilder<> Builder(&EntryBB.front());
-      insertFnEntryLog(Builder, M, IDMap.GetModuleMapIntId(), FunId);
-
-      bool InstanceMember = F.getMetadata(VSTR_LLVM_CXX_THISPTR) != nullptr;
-
-      // sret arguments are arguments that serve as a return value ?inside of a
-      // register? in some cases when the function *returns a structure by
-      // value* e.g. std::string foo(void);
-
-      // theoretically, we can use F.returnDoesNotAlias() (noalias) as a
-      // heuristic for structReturn (sret in IR) arguments but that would need a
-      // bit more research (for all cases I've seen, the noalias attribute was
-      // set for the an sret parameter - makes sense, though I do not know if
-      // there are any contradictions to this)
-
-      // This map encodes at position ShiftMap[i] what shift should we consider
-      // when evaluating i-th argument (i.e. how many additional argumens are
-      // there without the this pointer - which can be detected in the AST phase
-      // and is accounted for)
-      const auto ShiftMap = getSretArgumentShiftVec(F);
-
-      auto CustTypeIdcs = getCustomTypeIndicies(VSTR_LLVM_CXX_DUMP_STDSTRING, F,
-                                                InstanceMember);
-      IF_VERBOSE {
-        llvm::errs() << "CustType indicies: ";
-        if (CustTypeIdcs) {
-          for (auto &&i : *CustTypeIdcs) {
-            llvm::errs() << i << " ";
-          }
-        }
-        llvm::errs() << '\n';
-      }
-      auto CustTypeIdxMap = CustTypeIdcs
-                                ? std::optional(std::set(CustTypeIdcs->begin(),
-                                                         CustTypeIdcs->end()))
-                                : std::nullopt;
-
-      auto CustUnsignedIdcs =
-          getCustomTypeIndicies(VSTR_LLVM_UNSIGNED_IDCS, F, InstanceMember);
-      IF_VERBOSE {
-        llvm::errs() << "Unsigned indicies: ";
-        if (CustUnsignedIdcs) {
-          for (auto &&i : *CustUnsignedIdcs) {
-            llvm::errs() << i << " ";
-          }
-        }
-        llvm::errs() << '\n';
-      }
-      auto UnsignedMap = CustUnsignedIdcs
-                             ? std::optional(std::set(CustUnsignedIdcs->begin(),
-                                                      CustUnsignedIdcs->end()))
-                             : std::nullopt;
-
-      for (auto Arg = F.arg_begin(); Arg != F.arg_end(); ++Arg) {
-        callCaptureHook(Builder, M, Arg, ShiftMap, CustTypeIdxMap, UnsignedMap);
-      }
+      insertFnEntryHook(Builder, M, IDMap.GetModuleMapIntId(), FunId);
+      insertArgTracingHooks(M, F, Builder);
     }
 
-    if (!FunctionIDMapper::flush(std::move(IDMap))) {
+    if (!FunctionIDMapper::flush(std::move(IDMap),
+                                 args::MapFilesDirectory.getValue())) {
       errs() << "Failed to write function mapping!\n";
       exit(1);
     }
