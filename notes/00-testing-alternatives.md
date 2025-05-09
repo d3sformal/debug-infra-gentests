@@ -796,3 +796,51 @@ Consumer processes the buffer. Meanwhile producer moves onto another buffer by w
 *Limitations* will be imposed on buffer size and message size. 
 * An empty buffer signals to the consumer that no more data is available. This relates to the `ipc-finalizer` which, in this model, would connect to the relevant semaphores and buffers and simply send an empty buffer to indicate the end of data collection. 
 * A *message cannot be split* in this model, thus a message shall always fit in a buffer.
+
+# UPDATE May 19
+
+## Call tracing finalization & bugfixes
+
+* removal of ZMQ from all layers
+
+### Module ID Shrinking
+
+* 64 -> 4 + checks that no collision has been made
+
+### Final form of the protocol
+
+* new termination sequence
+
+## Receiving function arguments
+
+### Encoding
+
+* alternatives, how to approach
+* how to implement in library
+
+### Storage
+
+* influenced by the needs of the testing phase
+* packet size important, individual data size not important
+
+## Hijacking arguments in the testing phase
+
+* constness - see `TODO`
+* validate approach that modifies the IR
+
+### Possible improvements
+
+* just thoughts, **most of those are pretty extreme**
+
+### Performance thoughts
+
+* nontemporal x86 mem store instructions
+
+* multithreaded `llcap-server` possible for capture processing
+    * queueing only has to ensure that `free` semaphore signalling follows the buffer index order
+* avoiding
+
+### Overhead thoughts
+
+* reducing multiple-compilation overhead by adjusting instrumentation to instrumenting for "tracing and caputre at the same time"
+    * maybe branch predictors will help us? (can we help the branch predictors ourselves?)

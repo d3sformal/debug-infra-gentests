@@ -10,6 +10,9 @@
 * add links to commits/READMEs/other files for every "DONE" item in this file
 * ~~unify SOLVED vs DONE items~~
 * ~~public repo?~~
+* remove ZMQ references entirely (too expensive to maintain)
+    * ensure ALL links to ZMQ functionality actually link to a revision where ZMQ is available
+        * ensure the revision is the same, where possible
 
 # TOPIC: Data Capture Library
 
@@ -38,6 +41,24 @@
     * limits C heavily (`auto` not used widely)
     * intricacies of C++'s type system & reference semantics
         * ensuring that modified source code makes exactly the same side effects as the unmodified one
+
+## Capturing function arguments
+
+* think of how dynamic do we want it to be
+    * function sends `fnid, modid` + `t1` + `data1` + `t2` + `data2` (`t1,t2` predefined, encode the size of subsequent `data`)
+    * function sends `fnid, modid` + `len` + `packet` (`len` is lenght of the `packet`, no type information, relies on the encoding/decoding parity per a function)
+    * function sends `cap_id` + `packet` (`cap_id` encodes both function's id and `packet` length)
+    * 1st and 3rd approach require custom specifications (external)
+        * external `t1` -> length, `t2` -> length mapping (generated in early phases)
+        * external `cap_id` -> `fnid, modid, length` mapping (again, gen in early phases)
+    * 2nd approach seems the best in terms of external input information required? although not the best in terms of overhead...
+        * a tradeoff for the 2nd approach: `fnid, modid` -> `len` mapping
+    * 1st approach presents significant overhead and hurdles to extensibility
+    * comes down to 2nd vs 3rd - we're already creating a mapping (if tradeoff above implemented)
+        * if not mapping, we introduce at least 8B of overhead per call more than 3rd (which for functions with small arguments becomes significant)
+            * `fnid` + `modid` (8B so far) + `len` vs `cap_id` (probably less than 256)
+    * seems like the 3rd option is the best
+        * mapping can be created as part of the "modmap" generation (the mapping can be encoded in the same file)
 
 # TOPIC: C++ support
 
@@ -91,6 +112,14 @@
 
 * investigate memory instruction instrumentation via Pin from the AURORA tool
     * [repo](https://github.com/RUB-SysSec/aurora)
+
+# TOPIC: Modification of incoming arguments
+* are there assumptions in the IR, that would break if we replaced arguments mid-function?
+    * the idea is to "introduce new `alloca`d variable (`%x`)" for each `%n` argument and replace each `%n` occurence with the new `%x`  
+* `const`ness vs `IR`-level modifications
+    * does `-O3`, etc. impact the number of arguments in IR? (e.g. via more agressive const propagation?)
+    * if prohibitive for argument "hijacking", can we at least "remove" `const`
+
 
 # TOPIC: Extras
 * **[CLOSED]** report mangling bug (after rebuild of latest llvm project)

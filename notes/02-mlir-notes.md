@@ -7,6 +7,7 @@
     * practical, I recommend going through this after reading this document
     * [Toy Tutorial](https://mlir.llvm.org/docs/Tutorials/Toy/)
 * [MLIR dialect for C/C++ based languages](https://llvm.github.io/clangir/)
+* [Evolution of ClangIR, LLVM Developer's Meeting, October 12, 2023](https://llvm.github.io/clangir/Files/2023-LLVMDevMtgClangIR.pdf)
 
 ## MLIR dialects
 
