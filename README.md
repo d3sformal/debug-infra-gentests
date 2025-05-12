@@ -24,28 +24,10 @@ cd sandbox/
 ./setup-llvm-build.sh
 ```
 
-For ClangIR-enabled LLVM:
-
-```sh
-cd sandbox/
-./setup-llvm-build-cir.sh
-```
-
 ### Building
 
 ```sh
 cd sandbox/build
-```
-
-or for ClangIR-enabled LLVM:
-
-```sh
-cd sandbox/build-cir
-```
-
-Then:
-
-```sh
 ninja
 # add -jN for parallelism or
 # ninja -j $(nproc)
