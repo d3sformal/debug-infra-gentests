@@ -4,6 +4,7 @@
 #include "encoding.hpp"
 #include "typeAlias.hpp"
 #include "llvm/Support/SHA256.h"
+#include "llvm/Support/raw_ostream.h"
 #include <array>
 #include <cassert>
 #include <iomanip>
@@ -57,10 +58,11 @@ llcap::FunctionId FunctionIDMapper::addFunction(const Str &FnInfo) {
 
 bool FunctionIDMapper::flush(FunctionIDMapper &&mapper, const Str &targetDir) {
   Str Dir = targetDir.size() > 0 ? targetDir : "module-maps";
-  ModuleMappingEncoding encoding(Dir, mapper.GetModuleMapId());
+  ModuleMappingEncoding encoding(Dir, mapper.GetModuleMapId(), mapper.GetFullModuleId());
 
   for (auto &&IdPair : mapper.FunctionIds) {
     if (!encoding.ready()) {
+      llvm::errs() << "Encoding failed\n";
       return false;
     }
     Str &fn_name = IdPair.first;
@@ -70,6 +72,7 @@ bool FunctionIDMapper::flush(FunctionIDMapper &&mapper, const Str &targetDir) {
   }
 
   if (!encoding.ready()) {
+    llvm::errs() << "Encoding failed @ end\n";
     return false;
   }
   return ModuleMappingEncoding::finish(std::move(encoding));

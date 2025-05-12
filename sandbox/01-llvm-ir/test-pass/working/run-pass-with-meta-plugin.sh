@@ -1,5 +1,5 @@
 #!/bin/sh
-set -x
+set -xe
 
 CLANG_COMPILER=$1; shift
 TARGET=$1; shift

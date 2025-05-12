@@ -7,7 +7,7 @@ static_assert(sizeof(int) == 4, "Expecting int to be 4 bytes");
 static_assert(sizeof(long long) == 8, "Expecting long long to be 8 bytes");
 
 #define GENFN(name, argt, argvar, msg)                                         \
-  GENFNDECL(name, argt, argvar) { /* printf("[HOOK] " msg, argvar); */ }
+  GENFNDECL(name, argt, argvar) { printf("[HOOK] " msg, argvar); }
 
   void hook_start(uint32_t module_id, uint32_t fn_id) {
     push_data(&module_id, sizeof(module_id));
@@ -34,5 +34,5 @@ GENFN(hook_uint64, ULLONG, d, "unsigned long long: %llu\n")
 
 GENFN(hook_stdstring8, const char *, str, "std::string: %s\n")
 
-void vstr_extra_cxx__string(std::string *str) { /* hook_stdstring8(str->c_str()); */ }
+void vstr_extra_cxx__string(std::string *str) { hook_stdstring8(str->c_str()); }
 #endif

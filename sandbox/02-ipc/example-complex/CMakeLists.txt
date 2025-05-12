@@ -1,7 +1,14 @@
 cmake_minimum_required(VERSION 3.30)
-project(MyExecutable)
+project(Example)
+option(ARG_CAPTURE_INSTR "Instrument for argument capture")
 
 add_compile_options(-Wall -Wextra -pedantic)
+
+if(ARG_CAPTURE_INSTR)
+add_compile_options(
+  "SHELL:-mllvm -Arg" 
+  "SHELL:-mllvm -llcap-fn-targets-file=./selected-fns.bin")
+endif()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(CZMQ REQUIRED libczmq)
@@ -14,9 +21,6 @@ IMPORTED_LOCATION ../ipc-hooklib/libmy-hook.so
 
 include_directories(${CMAKE_SOURCE_DIR})
 
-# for failed experiment with ZMQ
-# include_directories(${CZMQ_INCLUDE_DIRS})
-# target_link_libraries(hooklib INTERFACE ${CZMQ_LIBRARIES})
 
 add_executable(example main.cpp lib.cpp lib2.cpp)
 

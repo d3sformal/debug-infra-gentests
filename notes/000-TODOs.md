@@ -13,6 +13,7 @@
 * remove ZMQ references entirely (too expensive to maintain)
     * ensure ALL links to ZMQ functionality actually link to a revision where ZMQ is available
         * ensure the revision is the same, where possible
+    * also ensure legacy examples work (test-pass-working)
 
 # TOPIC: Data Capture Library
 

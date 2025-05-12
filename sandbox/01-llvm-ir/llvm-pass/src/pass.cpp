@@ -13,6 +13,8 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
+#include <fstream>
+#include <ios>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/Demangle/Demangle.h>
@@ -22,6 +24,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Type.h>
 #include <llvm/Passes/OptimizationLevel.h>
+#include <string>
 
 #include "mapping.hpp"
 #include "typeAlias.hpp"
@@ -33,7 +36,7 @@ const char *UNSIGNED_ATTR_KIND = "VSTR-param-attr-unsigned";
 namespace {
 
 namespace args {
-enum struct InstrumentationType { Call, Arg };
+enum InstrumentationType { Call, Arg };
 
 // -mllvm -llcap-filter-by-mangled
 cl::opt<bool>
@@ -50,10 +53,10 @@ cl::opt<std::string>
                       cl::desc("Output directory for function ID maps"));
 // -mllvm -Call
 // -mllvm -Arg
-cl::opt<InstrumentationType> InstrumentationType(
-    cl::desc("Choose instrumentation type:"),
-    cl::values(clEnumVal(InstrumentationType::Call, "Call tracing"),
-               clEnumVal(InstrumentationType::Arg, "Argument tracing")));
+cl::opt<InstrumentationType>
+    InstrumentationType(cl::desc("Choose instrumentation type:"),
+                        cl::values(clEnumVal(Call, "Call tracing"),
+                                   clEnumVal(Arg, "Argument tracing")));
 
 // -mllvm -llcap-fn-targets-file
 cl::opt<std::string>
@@ -352,7 +355,10 @@ bool isStdFn(const Function &Fn, const Str &DemangledName,
   return false;
 }
 
-void insertArgTracingHooks(Module &M, Function &Fn, IRBuilder<> &Builder) {
+void insertArgTracingHooks(Module &M, Function &Fn) {
+  BasicBlock &EntryBB = Fn.getEntryBlock();
+  IRBuilder<> Builder(&EntryBB.front());
+
   bool InstanceMember = Fn.getMetadata(VSTR_LLVM_CXX_THISPTR) != nullptr;
 
   // sret arguments are arguments that serve as a return value ?inside of a
@@ -409,12 +415,158 @@ void insertArgTracingHooks(Module &M, Function &Fn, IRBuilder<> &Builder) {
   }
 }
 
+bool instrumentArgs() {
+  return args::InstrumentationType.getValue() == args::InstrumentationType::Arg;
+}
+
+class Instrumentation {
+public:
+  virtual ~Instrumentation() = default;
+  virtual bool prepare() { return true; };
+  virtual void run() = 0;
+  virtual bool finish() = 0;
+};
+
+class FunctionEntryInsertion : public Instrumentation {
+private:
+  FunctionIDMapper m_fnIdMap;
+  Module &m_module;
+
+public:
+  FunctionEntryInsertion(Module &M)
+      : m_fnIdMap(M.getModuleIdentifier()), m_module(M) {}
+
+  bool prepare() override {
+    return args::MapFilesDirectory.getValue().length() != 0;
+  }
+
+  void run() override {
+    for (Function &Fn : m_module) {
+
+      // Skip library functions
+      StringRef MangledName = Fn.getFunction().getName();
+      Str DemangledName = llvm::demangle(MangledName);
+
+      IF_DEBUG {
+        if (MDNode *N = Fn.getMetadata("LLCAP-CLANG-LLVM-MAP-DATA")) {
+          errs() << DemangledName << ": \n";
+          N->dumpTree();
+        }
+      }
+
+      if (isStdFn(Fn, DemangledName, MangledName)) {
+        continue;
+      }
+
+      BasicBlock &EntryBB = Fn.getEntryBlock();
+      IRBuilder<> Builder(&EntryBB.front());
+
+      // TODO: this needs improvement (Vector types, ...)
+      Set<llvm::Type::TypeID> AllowedTypes;
+      {
+        using llvm::Type;
+        for (auto &&t : {Type::FloatTyID, Type::IntegerTyID, Type::DoubleTyID,
+                         Type::PointerTyID}) {
+          AllowedTypes.insert(t);
+        }
+      }
+
+      bool viable = !Fn.arg_empty();
+      if (viable) {
+        for (auto Arg = Fn.arg_begin(); Arg != Fn.arg_end(); ++Arg) {
+          if (AllowedTypes.find(Arg->getType()->getTypeID()) ==
+              AllowedTypes.end()) {
+            viable = false;
+            break;
+          }
+        }
+      }
+      // TODO handle viability
+      const auto FunId = m_fnIdMap.addFunction(DemangledName);
+
+      insertFnEntryHook(Builder, m_module, m_fnIdMap.GetModuleMapIntId(),
+                        FunId);
+    }
+  }
+
+  bool finish() override {
+    return FunctionIDMapper::flush(std::move(m_fnIdMap),
+                                   args::MapFilesDirectory.getValue());
+  }
+};
+
+class ArgumentInstrumentation : public Instrumentation {
+  Module &m_module;
+  Set<Str> &m_traced_functions;
+
+public:
+  ArgumentInstrumentation(Module &M, Set<Str> &traced_functions)
+      : m_module(M), m_traced_functions(traced_functions) {}
+
+  void run() override {
+    for (Function &Fn : m_module) {
+      StringRef MangledName = Fn.getFunction().getName();
+      Str DemangledName = llvm::demangle(MangledName);
+
+      if (m_traced_functions.find(DemangledName) == m_traced_functions.end()) {
+        errs() << "Skipping fn " << DemangledName << "\n";
+        continue;
+      }
+      errs() << "Instrumenting fn " << DemangledName << "\n";
+      insertArgTracingHooks(m_module, Fn);
+    }
+  }
+
+  bool finish() override { return true; }
+};
+
+Set<Str> collectTracedFunctionsForModule(Module &M) {
+  Set<Str> result;
+
+  Str Path = args::TargetsFilePath.getValue();
+  if (Path.empty()) {
+    return result;
+  }
+
+  std::ifstream Targets(Path, std::ios::binary);
+  if (!Targets) {
+    errs() << "Could not open targets file @ " << Path << "\n";
+    return result;
+  }
+
+  Str Data;
+  while (std::getline(Targets, Data, '\n')) {
+    if (Data.empty()) {
+      errs() << "Skip empty\n";
+      continue;
+    }
+
+    auto Pos = Data.find('\x00');
+    if (Pos == Str::npos) {
+      errs() << "functions-to-trace mapping: format invalid!\n";
+      return Set<Str>();
+    }
+
+    auto ModId = Data.substr(0, Pos);
+    if (ModId != M.getModuleIdentifier()) {
+      errs() << "skip on module mismatch " << ModId << "\n";
+      continue;
+    }
+
+    auto FnId = Data.substr(Pos + 1);
+    errs() << "Add " << FnId << "\n";
+    result.insert(FnId);
+  }
+
+  return result;
+}
+
 struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
     IF_VERBOSE errs() << "Running pass on module " << M.getModuleIdentifier()
                       << "\n";
-    FunctionIDMapper IDMap(M.getModuleIdentifier());
+
     IF_DEBUG {
       if (auto *Meta = M.getNamedMetadata("LLCAP-CLANG-LLVM-MAP-PRSGD")) {
         Meta->dump();
@@ -428,55 +580,30 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
       }
     }
 
-    for (Function &F : M) {
-      // Skip library functions
-      StringRef MangledName = F.getFunction().getName();
-      Str DemangledName = llvm::demangle(MangledName);
+    if (instrumentArgs()) {
+      errs() << "Instrumenting args...\n";
+      Set<Str> TracedFns = collectTracedFunctionsForModule(M);
+      ArgumentInstrumentation work(M, TracedFns);
+      work.run();
 
-      IF_DEBUG {
-        if (MDNode *N = F.getMetadata("LLCAP-CLANG-LLVM-MAP-DATA")) {
-          errs() << DemangledName << ": \n";
-          N->dumpTree();
-        }
+      if (!work.finish()) {
+        errs() << "Instrumentation failed - ArgumentInstrumentation!\n";
+        exit(1);
       }
+    } else {
+      errs() << "Instrumenting fn entry...\n";
+      FunctionEntryInsertion work(M);
+      work.run();
 
-      if (isStdFn(F, DemangledName, MangledName)) {
-        continue;
+      if (!work.finish()) {
+        errs() << "Instrumentation failed - FunctionEntryInsertion!\n";
+        errs() << "FunctionEntryInsertion requires -mllvm -llcap-mapdir DIR "
+                  "directory!\n";
+        exit(1);
       }
-
-      // TODO: this needs improvement (Vector types, ...)
-      Set<llvm::Type::TypeID> AllowedTypes;
-      {
-        using llvm::Type;
-        for (auto &&t : {Type::FloatTyID, Type::IntegerTyID, Type::DoubleTyID,
-                         Type::PointerTyID}) {
-          AllowedTypes.insert(t);
-        }
-      }
-
-      bool viable = !F.arg_empty();
-      if (viable) {
-        for (auto Arg = F.arg_begin(); Arg != F.arg_end(); ++Arg) {
-          if (AllowedTypes.find(Arg->getType()->getTypeID()) ==
-              AllowedTypes.end()) {
-            viable = false;
-            break;
-          }
-        }
-      }
-      // TODO handle viability
-      const auto FunId = IDMap.addFunction(DemangledName);
-      BasicBlock &EntryBB = F.getEntryBlock();
-      IRBuilder<> Builder(&EntryBB.front());
-      insertFnEntryHook(Builder, M, IDMap.GetModuleMapIntId(), FunId);
-      insertArgTracingHooks(M, F, Builder);
     }
+    errs() << "Instrumentation DONE!\n";
 
-    if (!FunctionIDMapper::flush(std::move(IDMap),
-                                 args::MapFilesDirectory.getValue())) {
-      errs() << "Failed to write function mapping!\n";
-      exit(1);
-    }
     return PreservedAnalyses::none();
   }
 };

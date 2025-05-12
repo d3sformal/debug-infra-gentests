@@ -24,6 +24,7 @@ public:
 
   FunctionIDMapper(const std::string &ModuleId);
   llcap::FunctionId addFunction(const std::string &FnInfo);
+  const std::string &GetFullModuleId() const { return FullModuleId; }
   const std::string &GetModuleMapId() const { return OutFileName; }
   llcap::ModuleId GetModuleMapIntId() const { return ModuleIntId; }
 };

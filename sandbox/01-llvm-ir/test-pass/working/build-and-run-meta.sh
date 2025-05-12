@@ -1,5 +1,5 @@
 #!/bin/sh
-set -x
+set -xe
 
 COMPILER=$1; shift
 SOURCE_FILE=$1; shift
@@ -8,6 +8,10 @@ if [ -z "$COMPILER" ] || [ -z "$SOURCE_FILE" ]; then
     echo "Usage: $0 <compiler> <file to instrument>" >&2
     exit 1
 fi
+
+echo "CLEANUP"
+rm -f ./module-maps/*
+
 echo "BUILD"
 ./rebuild-pass.sh
 ./rebuild-meta-plugin.sh

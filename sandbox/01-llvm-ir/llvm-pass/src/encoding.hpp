@@ -13,7 +13,7 @@ class ModuleMappingEncoding {
 
 public:
   ModuleMappingEncoding(const std::string &maps_directory,
-                        const std::string &name);
+                        const std::string &file_name, const std::string &module_name);
 
   static bool finish(ModuleMappingEncoding &&self);
 

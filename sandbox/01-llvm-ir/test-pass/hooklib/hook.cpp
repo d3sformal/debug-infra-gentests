@@ -9,8 +9,8 @@ static_assert(sizeof(long long) == 8, "Expecting long long to be 8 bytes");
 #define GENFN(name, argt, argvar, msg)                                         \
   GENFNDECL(name, argt, argvar) { printf("[HOOK] " msg, argvar); }
 
-  void hook_start(char *str, char* module_id, uint32_t id) {
-    printf("[HOOK %08X] start %s from module %s\n", id, str, module_id);
+  void hook_start(uint32_t module_id, uint32_t id) {
+    printf("[HOOK %08X] start from module %x\n", id, module_id);
   }
 
 GENFN(hook_cstring, const char *, str, "cstring: %s\n")
