@@ -15,6 +15,7 @@ cmake -D CMAKE_C_COMPILER=clang \
 cmake   -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_COMPILER=clang++ \
   -D CMAKE_CXX_FLAGS="-Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=./AstMetaAdd.so" \
+  -DARG_CAPTURE_INSTR=OFF \
   ./
 
 rm ./module-maps/* || true
