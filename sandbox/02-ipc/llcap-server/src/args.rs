@@ -60,7 +60,7 @@ pub enum Stage {
 
   CaptureArgs {
     /// input file from the call-tracing stage
-    #[arg(short, long, default_value = Constants::default_trace_out_path())]
+    #[arg(short, long, default_value = Constants::default_selected_functions_path())]
     in_file: Option<PathBuf>,
 
     /// the directory where function traces are saved (or offloaded)

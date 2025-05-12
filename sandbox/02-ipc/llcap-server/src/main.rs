@@ -98,9 +98,7 @@ fn main() -> Result<(), String> {
       }
 
       let traces = pairs.iter().map(|x| x.0).collect::<Vec<FunctionCallInfo>>();
-
       let selected_fns = obtain_function_id_selection(&traces, &modules);
-
       export_tracing_selection(&selected_fns)?;
 
       lg.info("Exiting...");
