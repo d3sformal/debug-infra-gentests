@@ -12,10 +12,11 @@ cmake -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_COMPILER=clang++ \
   ./
 
+# the mllvm args must precede plugin loading
+
 cmake   -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_COMPILER=clang++ \
-  -D CMAKE_CXX_FLAGS="-Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=./AstMetaAdd.so" \
-  -DARG_CAPTURE_INSTR=OFF \
+  -D CMAKE_CXX_FLAGS="-mllvm -Call -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=./AstMetaAdd.so" \
   ./
 
 rm ./module-maps/* || true
