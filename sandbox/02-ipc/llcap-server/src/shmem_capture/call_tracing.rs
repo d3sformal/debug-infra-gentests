@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use crate::{
-  call_tracing::{FunctionCallInfo, Message, ModIdT},
   log::Log,
   modmap::{ExtModuleMap, IntegralModId, MOD_ID_SIZE_B},
+  stages::call_tracing::{FunctionCallInfo, Message, ModIdT},
 };
 
 use super::{TracingInfra, mem_utils::read_w_alignment_chk};

@@ -23,4 +23,8 @@ impl Constants {
   pub const fn default_capture_out_path() -> &'static str {
     "./capture-out/"
   }
+
+  pub const fn default_selected_functions_path() -> &'static str {
+    "./selected-fns.bin"
+  }
 }
