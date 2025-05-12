@@ -509,10 +509,10 @@ public:
       Str DemangledName = llvm::demangle(MangledName);
 
       if (m_traced_functions.find(DemangledName) == m_traced_functions.end()) {
-        errs() << "Skipping fn " << DemangledName << "\n";
+        IF_VERBOSE errs() << "Skipping fn " << DemangledName << "\n";
         continue;
       }
-      errs() << "Instrumenting fn " << DemangledName << "\n";
+      IF_VERBOSE errs() << "Instrumenting fn " << DemangledName << "\n";
       insertArgTracingHooks(m_module, Fn);
     }
   }
@@ -537,7 +537,7 @@ Set<Str> collectTracedFunctionsForModule(Module &M) {
   Str Data;
   while (std::getline(Targets, Data, '\n')) {
     if (Data.empty()) {
-      errs() << "Skip empty\n";
+      IF_VERBOSE errs() << "Skip empty\n";
       continue;
     }
 
@@ -549,12 +549,12 @@ Set<Str> collectTracedFunctionsForModule(Module &M) {
 
     auto ModId = Data.substr(0, Pos);
     if (ModId != M.getModuleIdentifier()) {
-      errs() << "skip on module mismatch " << ModId << "\n";
+      IF_VERBOSE errs() << "skip on module mismatch " << ModId << "\n";
       continue;
     }
 
     auto FnId = Data.substr(Pos + 1);
-    errs() << "Add " << FnId << "\n";
+    IF_VERBOSE errs() << "Add " << FnId << "\n";
     result.insert(FnId);
   }
 
@@ -581,7 +581,7 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
     }
 
     if (instrumentArgs()) {
-      errs() << "Instrumenting args...\n";
+      IF_VERBOSE errs() << "Instrumenting args...\n";
       Set<Str> TracedFns = collectTracedFunctionsForModule(M);
       ArgumentInstrumentation work(M, TracedFns);
       work.run();
@@ -591,7 +591,7 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
         exit(1);
       }
     } else {
-      errs() << "Instrumenting fn entry...\n";
+      IF_VERBOSE errs() << "Instrumenting fn entry...\n";
       FunctionEntryInsertion work(M);
       work.run();
 
@@ -602,7 +602,7 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
         exit(1);
       }
     }
-    errs() << "Instrumentation DONE!\n";
+    IF_VERBOSE errs() << "Instrumentation DONE!\n";
 
     return PreservedAnalyses::none();
   }
