@@ -6,6 +6,7 @@ use crate::constants::Constants;
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
+  // TODO (do not) move to Stage::TraceCalls
   /// Sets path to module map directory as produced by the instrumentation
   #[arg(short, long)]
   pub modmap: PathBuf,
@@ -48,9 +49,13 @@ pub enum Stage {
     #[arg(short = 's', long, default_value = Constants::default_buff_size_bytes_str())]
     buff_size: u32,
 
-    /// output file, where a [TODO format] output will be stored
+    /// produce an export file
     #[arg(short, long, default_value = Constants::default_trace_out_path())]
     out_file: Option<PathBuf>,
+
+    /// imports an export file, export file will not be created
+    #[arg(short, long)]
+    import_path: Option<PathBuf>,
   },
 
   CaptureArgs {

@@ -76,7 +76,7 @@ impl From<&[&[u8]]> for FunctionMap {
   }
 }
 
-#[derive(Hash, Debug, PartialEq, Eq)]
+#[derive(Hash, Debug, PartialEq, Eq, Clone, Copy)]
 pub struct IntegralModId(pub u32);
 
 pub type RcvdModId = IntegralModId;
@@ -181,22 +181,29 @@ impl ExtModuleMap {
     Ok(())
   }
 
-  pub fn get_module_id(&self, hash: &RcvdModId) -> Option<usize> {
+  pub fn get_module_idx(&self, hash: &RcvdModId) -> Option<usize> {
     self.modhash_to_modidx.get(hash).copied()
   }
 
-  pub fn get_function_name(&self, mod_id: usize, fn_id: u32) -> Option<&String> {
-    if mod_id >= self.function_ids.len() {
+  pub fn find_module_hash_by_idx(&self, idx: usize) -> Option<RcvdModId> {
+    self
+      .modhash_to_modidx
+      .iter()
+      .find_map(|(k, v)| (*v == idx).then_some(*k))
+  }
+
+  pub fn get_function_name(&self, mod_idx: usize, fn_id: u32) -> Option<&String> {
+    if mod_idx >= self.function_ids.len() {
       None
-    } else if let Some(fn_name) = self.function_ids[mod_id].get(fn_id) {
+    } else if let Some(fn_name) = self.function_ids[mod_idx].get(fn_id) {
       Some(fn_name)
     } else {
       None
     }
   }
 
-  pub fn get_module_string_id(&self, mod_id: usize) -> Option<&String> {
-    self.module_paths.get(mod_id)
+  pub fn get_module_string_id(&self, mod_idx: usize) -> Option<&String> {
+    self.module_paths.get(mod_idx)
   }
 
   pub fn print_summary(&self) {
