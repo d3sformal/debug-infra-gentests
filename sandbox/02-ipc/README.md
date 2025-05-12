@@ -20,22 +20,31 @@ Aims:
 
 Requires the `AstMetaAdd` plugin (by [building LLVM](../../README.md#building)), as well as the [`llvm-pass`](../01-llvm-ir/llvm-pass/).
 
-To capture function calls from the `example-complex` application, perform:
-
+To capture function calls from the `example-complex` application, perform in one terminal:
+    
+    # generates module mapping
     cd ./example-complex
     ./build-call-trace.sh
-    cd ../llcap-server
+
+In another (or the same) terminal (inside this folder)
+
+    # runs the capturing "server"
+    cd ./llcap-server
     cargo r -- -vv --modmap ../example-complex/module-maps/ trace-calls -c 4 -s 4096
-    
-Select a function by index and do not modify the destination file
 
-    cp ./selected-fns.bin ../example-complex/selected-fns.bin
+Back in the first terminal:
 
-Now in another terminal (inside this folder)
-
-    cd ./example-complex
-    ./build-arg-trace.sh
+    # runs the target binary
     ./example
+
+In the second terminal, select function(s) by index, remember the destination file you input
+The llcap-server binary should terminate. In the first terminal:
+
+    # instruments the target for (WIP) argument tracing
+    ./build-arg-trace.sh <destination file of your function selection>
+    ./example
+
+You should see argument traces of the functions you selected.
 
 On the `llcap-server`-side you should see a summary of calls printed, something like this:
 
