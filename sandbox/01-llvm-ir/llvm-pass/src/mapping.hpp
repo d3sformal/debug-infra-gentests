@@ -4,8 +4,8 @@
 #include "constants.hpp"
 #include <array>
 #include <cassert>
-#include <llvm/ADT/StringRef.h>
 #include <string>
+#include <utility>
 #include <vector>
 
 class FunctionIDMapper {

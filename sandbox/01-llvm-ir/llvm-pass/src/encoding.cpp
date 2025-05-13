@@ -1,10 +1,12 @@
 #include "encoding.hpp"
 #include "typeAlias.hpp"
 #include "llvm/Support/raw_ostream.h"
+#include <filesystem>
 #include <fstream>
 
 ModuleMappingEncoding::ModuleMappingEncoding(const std::string &maps_directory,
-                                             const std::string &name, const std::string &module_name) {
+                                             const std::string &name,
+                                             const std::string &module_name) {
   Str Path = maps_directory + '/' + name;
   if (std::filesystem::exists(Path)) {
     llvm::errs() << "Module ID hash collision! Path:" << Path << '\n';

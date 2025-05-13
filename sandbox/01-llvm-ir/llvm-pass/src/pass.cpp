@@ -1,6 +1,10 @@
 #include "llvm/Pass.h"
 #include "../../custom-metadata-pass/ast-meta-add/llvm-metadata.h"
+#include "argMapping.hpp"
 #include "constants.hpp"
+#include "mapping.hpp"
+#include "typeAlias.hpp"
+#include "verbosity.hpp"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Function.h"
@@ -25,16 +29,13 @@
 #include <llvm/IR/Type.h>
 #include <llvm/Passes/OptimizationLevel.h>
 #include <string>
-
-#include "mapping.hpp"
-#include "typeAlias.hpp"
+#include <utility>
 
 using namespace llvm;
 
-const char *UNSIGNED_ATTR_KIND = "VSTR-param-attr-unsigned";
+static const char *UnsignedAttrKind = "VSTR-param-attr-unsigned";
 
 namespace {
-
 namespace args {
 enum InstrumentationType { Call, Arg };
 
@@ -69,9 +70,6 @@ cl::opt<std::string> ArgCaptureIdMapPath(
     "llcap-argcapture-file",
     cl::desc("Output file where argument tracing IDs are written"));
 } // namespace args
-
-#define IF_VERBOSE if (args::Verbose.getValue())
-#define IF_DEBUG if (args::Debug.getValue())
 
 // there is no way to tell built-ins from user functions in the IR,
 // we can only query external linkage and whether a function is a "declaration"
@@ -149,144 +147,13 @@ void insertFnEntryHook(IRBuilder<> &Builder, Module &M,
 // key differences accounted for: this pointer & sret arguments (returning a
 // struct in a register)
 
-// returns the LLVM argument indicies of Fn's arguments marked with the sret
-// attribute
-Set<size_t> getSretArgumentIndicies(const Function &Fn) {
-  Set<size_t> Res;
-  size_t Idx = 0;
-  for (auto It = Fn.arg_begin(); It != Fn.arg_end(); ++It) {
-    auto *Arg = It;
-    if (Arg->hasAttribute(Attribute::AttrKind::StructRet)) {
-      Res.insert(Idx);
-    }
-    ++Idx;
-  }
-  return Res;
-}
-
-// computes the Sret shift vector for Fn's arguments
-// the output vector is the same size as Fn's argument list
-// vec[i] = the shift that mut be applied to an AST arg idx
-// to convert it to the LLVM arg idx
-Vec<size_t> getSretArgumentShiftVec(const Function &Fn) {
-  auto SretIndicies = getSretArgumentIndicies(Fn);
-
-  Vec<size_t> Res;
-  Res.resize(Fn.arg_size());
-
-  size_t Shift = 0;
-  for (size_t I = 0; I < Fn.arg_size(); ++I) {
-    if (SretIndicies.find(I) != SretIndicies.end()) {
-      // we accumulate shift to Shift
-      // if an AST index would collide with an sret argument's one, the AST
-      // index (A) is translated by A + (current) Shift.
-
-      // Shift is incremented as EACH LLVM sret arg pushes all the remaining
-      // ones to the right
-      Res[I] = ++Shift;
-    } else {
-      Res[I] = Shift;
-    }
-  }
-  return Res;
-}
-
-// parses the metadata that encode the indicies of a custom type
-//
-// indicies are separated by VSTR_LLVM_CXX_SINGLECHAR_SEP and are decimal
-// numbers
-Vec<size_t> parseCustTypeIndicies(StringRef MetaValue, bool IsInstanceMember) {
-  llvm::SmallVector<StringRef> Split;
-  Vec<ssize_t> Res;
-
-  MetaValue.split(Split, VSTR_LLVM_CXX_SINGLECHAR_SEP, -1, false);
-
-  std::transform(
-      Split.begin(), Split.end(), std::back_inserter(Res), [](StringRef s) {
-        try {
-          return std::stoll(s.str());
-        } catch (...) {
-          errs() << "Warning - invalid numeric value in metadata: " << s
-                 << '\n';
-          return -1ll;
-        }
-      });
-
-  auto EndRes =
-      std::remove_if(Res.begin(), Res.end(), [](ssize_t i) { return i == -1; });
-
-  Vec<size_t> RealRes;
-  RealRes.reserve(Res.size());
-
-  std::transform(Res.begin(), EndRes, std::back_inserter(RealRes),
-                 [IsInstanceMember](ssize_t i) {
-                   assert(i >= 0);
-                   return static_cast<size_t>(i) + (IsInstanceMember ? 1 : 0);
-                 });
-
-  return RealRes;
-}
-
-// TODO: generalize for custom types - "Custom" in this name means "std::string"
-Maybe<Vec<size_t>> getCustomTypeIndicies(StringRef MetadataKey,
-                                         const Function &Fn,
-                                         bool IsInstanceMember) {
-  if (MDNode *N = Fn.getMetadata(MetadataKey)) {
-    if (N->getNumOperands() == 0) {
-      errs() << "Warning - unexpected string metadata node with NO operands!\n";
-      return std::nullopt;
-    }
-
-    if (MDString *op = dyn_cast_if_present<MDString>(N->getOperand(0));
-        op != nullptr) {
-      return parseCustTypeIndicies(op->getString(), IsInstanceMember);
-    } else {
-      errs() << "Warning - unexpected string metadata node with non-MDString "
-                "0th operand!\n";
-    }
-  } else {
-    IF_VERBOSE errs() << "No meta key " << MetadataKey << " found\n";
-  }
-  return std::nullopt;
-}
-
-// this is very dumb, but oh well...
-// checks if this LLVM argNo matches any "Custom type" AST argument index
-bool ArgNumbersMatch(size_t LlvmNumber, const Vec<size_t> &ShiftMap,
-                     const Set<size_t> &CustTypes) {
-  IF_VERBOSE {
-    llvm::errs()
-        << "Checking argument index match for argument with llvm index "
-        << LlvmNumber << '\n'
-        << "Custom type indicies: ";
-    for (auto &i : CustTypes) {
-      llvm::errs() << i << " ";
-    }
-    llvm::errs() << "\nShiftMap: ";
-
-    for (auto &i : ShiftMap) {
-      llvm::errs() << i << " ";
-    }
-  }
-
-  auto Res =
-      std::any_of(CustTypes.begin(), CustTypes.end(), [&](size_t AstIndex) {
-        return AstIndex + ShiftMap[AstIndex] == LlvmNumber;
-      });
-
-  IF_VERBOSE llvm::errs() << "\nResult: " << Res << '\n';
-  return Res;
-}
-
 void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
-                          const Vec<size_t> &ShiftMap,
-                          const Maybe<Set<size_t>> &CustTypes,
-                          const Maybe<Set<size_t>> &UnsignedMap) {
+                          const ClangMetadataToLLVMArgumentMapping &Mapping) {
   auto ArgNum = Arg->getArgNo();
   auto &Ctx = M.getContext();
   auto IsAttrUnsgined =
-      UnsignedMap && ArgNumbersMatch(ArgNum, ShiftMap, *UnsignedMap);
-  auto ArgT = Arg->getType();
+      Mapping.llvmArgNoMatches(ArgNum, VSTR_LLVM_UNSIGNED_IDCS);
+  auto *ArgT = Arg->getType();
   auto CallByte = M.getOrInsertFunction(
       "hook_char",
       FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt8Ty(Ctx)}, false));
@@ -330,15 +197,13 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
     Builder.CreateCall(CallFloat, {Arg});
   } else if (ArgT->isDoubleTy()) {
     Builder.CreateCall(CallDouble, {Arg});
-  } else if (CustTypes && ArgNumbersMatch(ArgNum, ShiftMap, *CustTypes)) {
+  } else if (Mapping.llvmArgNoMatches(ArgNum, VSTR_LLVM_CXX_DUMP_STDSTRING)) {
     auto CallCxxString = M.getOrInsertFunction(
         "vstr_extra_cxx__string",
         FunctionType::get(Type::getVoidTy(Ctx), {Arg->getType()}, false));
     Builder.CreateCall(CallCxxString, {Arg});
   } else {
     IF_VERBOSE errs() << "Skipping Argument\n";
-    IF_VERBOSE errs() << "State of CustTypes: " << CustTypes.has_value()
-                      << '\n';
     IF_VERBOSE Arg->dump();
   }
 }
@@ -347,9 +212,9 @@ bool isStdFn(const Function &Fn, const Str &DemangledName,
              const StringRef Name) {
   if (args::MangleFilter.getValue() && isStdFnDanger(Name)) {
     return true;
-    ;
-  } else if (!args::MangleFilter.getValue() &&
-             isStdFnBasedOnMetadata(Fn, DemangledName, Name)) {
+  }
+  if (!args::MangleFilter.getValue() &&
+      isStdFnBasedOnMetadata(Fn, DemangledName, Name)) {
     return true;
   }
   return false;
@@ -358,60 +223,12 @@ bool isStdFn(const Function &Fn, const Str &DemangledName,
 void insertArgTracingHooks(Module &M, Function &Fn) {
   BasicBlock &EntryBB = Fn.getEntryBlock();
   IRBuilder<> Builder(&EntryBB.front());
+  ClangMetadataToLLVMArgumentMapping Mapping(Fn);
+  Mapping.registerCustomTypeIndicies(VSTR_LLVM_CXX_DUMP_STDSTRING);
+  Mapping.registerCustomTypeIndicies(VSTR_LLVM_UNSIGNED_IDCS);
 
-  bool InstanceMember = Fn.getMetadata(VSTR_LLVM_CXX_THISPTR) != nullptr;
-
-  // sret arguments are arguments that serve as a return value ?inside of a
-  // register? in some cases when the function *returns a structure by
-  // value* e.g. std::string foo(void);
-
-  // theoretically, we can use F.returnDoesNotAlias() (noalias) as a
-  // heuristic for structReturn (sret in IR) arguments but that would need a
-  // bit more research (for all cases I've seen, the noalias attribute was
-  // set for the an sret parameter - makes sense, though I do not know if
-  // there are any contradictions to this)
-
-  // This map encodes at position ShiftMap[i] what shift should we consider
-  // when evaluating i-th argument (i.e. how many additional argumens are
-  // there without the this pointer - which can be detected in the AST phase
-  // and is accounted for)
-  const auto ShiftMap = getSretArgumentShiftVec(Fn);
-
-  auto CustTypeIdcs =
-      getCustomTypeIndicies(VSTR_LLVM_CXX_DUMP_STDSTRING, Fn, InstanceMember);
-  IF_VERBOSE {
-    llvm::errs() << "CustType indicies: ";
-    if (CustTypeIdcs) {
-      for (auto &&i : *CustTypeIdcs) {
-        llvm::errs() << i << " ";
-      }
-    }
-    llvm::errs() << '\n';
-  }
-  auto CustTypeIdxMap =
-      CustTypeIdcs
-          ? std::optional(std::set(CustTypeIdcs->begin(), CustTypeIdcs->end()))
-          : std::nullopt;
-
-  auto CustUnsignedIdcs =
-      getCustomTypeIndicies(VSTR_LLVM_UNSIGNED_IDCS, Fn, InstanceMember);
-  IF_VERBOSE {
-    llvm::errs() << "Unsigned indicies: ";
-    if (CustUnsignedIdcs) {
-      for (auto &&i : *CustUnsignedIdcs) {
-        llvm::errs() << i << " ";
-      }
-    }
-    llvm::errs() << '\n';
-  }
-  auto UnsignedMap = CustUnsignedIdcs
-                         ? std::optional(std::set(CustUnsignedIdcs->begin(),
-                                                  CustUnsignedIdcs->end()))
-                         : std::nullopt;
-
-  for (auto Arg = Fn.arg_begin(); Arg != Fn.arg_end(); ++Arg) {
-    insertArgCaptureHook(Builder, M, Arg, ShiftMap, CustTypeIdxMap,
-                         UnsignedMap);
+  for (auto *Arg = Fn.arg_begin(); Arg != Fn.arg_end(); ++Arg) {
+    insertArgCaptureHook(Builder, M, Arg, Mapping);
   }
 }
 
@@ -473,7 +290,7 @@ public:
 
       bool viable = !Fn.arg_empty();
       if (viable) {
-        for (auto Arg = Fn.arg_begin(); Arg != Fn.arg_end(); ++Arg) {
+        for (auto *Arg = Fn.arg_begin(); Arg != Fn.arg_end(); ++Arg) {
           if (AllowedTypes.find(Arg->getType()->getTypeID()) ==
               AllowedTypes.end()) {
             viable = false;
@@ -520,8 +337,9 @@ public:
   bool finish() override { return true; }
 };
 
-Set<Str> collectTracedFunctionsForModule(Module &M) {
-  Set<Str> result;
+auto collectTracedFunctionsForModule(Module &M) {
+  using RetT = Set<Str>;
+  RetT result;
 
   Str Path = args::TargetsFilePath.getValue();
   if (Path.empty()) {
@@ -543,8 +361,8 @@ Set<Str> collectTracedFunctionsForModule(Module &M) {
 
     auto Pos = Data.find('\x00');
     if (Pos == Str::npos) {
-      errs() << "functions-to-trace mapping: format invalid!\n";
-      return Set<Str>();
+      errs() << "functions-to-trace mapping: format invalid (fn id)!\n";
+      return RetT();
     }
 
     auto ModId = Data.substr(0, Pos);
@@ -564,6 +382,9 @@ Set<Str> collectTracedFunctionsForModule(Module &M) {
 struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
+    verbose(args::Verbose.getValue(), args::Verbose.getValue());
+    debug(args::Debug.getValue(), args::Debug.getValue());
+
     IF_VERBOSE errs() << "Running pass on module " << M.getModuleIdentifier()
                       << "\n";
 
@@ -583,19 +404,19 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
     if (instrumentArgs()) {
       IF_VERBOSE errs() << "Instrumenting args...\n";
       Set<Str> TracedFns = collectTracedFunctionsForModule(M);
-      ArgumentInstrumentation work(M, TracedFns);
-      work.run();
+      ArgumentInstrumentation Work(M, TracedFns);
+      Work.run();
 
-      if (!work.finish()) {
+      if (!Work.finish()) {
         errs() << "Instrumentation failed - ArgumentInstrumentation!\n";
         exit(1);
       }
     } else {
       IF_VERBOSE errs() << "Instrumenting fn entry...\n";
-      FunctionEntryInsertion work(M);
-      work.run();
+      FunctionEntryInsertion Work(M);
+      Work.run();
 
-      if (!work.finish()) {
+      if (!Work.finish()) {
         errs() << "Instrumentation failed - FunctionEntryInsertion!\n";
         errs() << "FunctionEntryInsertion requires -mllvm -llcap-mapdir DIR "
                   "directory!\n";

@@ -3,12 +3,11 @@
 #include "constants.hpp"
 #include "encoding.hpp"
 #include "typeAlias.hpp"
+#include <llvm/ADT/StringRef.h>
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
-#include <array>
 #include <cassert>
 #include <iomanip>
-#include <llvm/ADT/StringRef.h>
 #include <sstream>
 
 Arr<u8, sizeof(llcap::ModuleId)>
@@ -45,7 +44,8 @@ FunctionIDMapper::FunctionIDMapper(const Str &ModuleId)
                 8); // shift first to avoid overshift in the last iteration
     ModuleIntId += C;
 
-    SStream << std::setw(llcap::BYTE_ENCODING_SIZE) << (unsigned int)C;
+    SStream << std::setw(llcap::BYTE_ENCODING_SIZE)
+            << static_cast<unsigned int>(C);
   }
   OutFileName = SStream.str();
 }
@@ -58,7 +58,8 @@ llcap::FunctionId FunctionIDMapper::addFunction(const Str &FnInfo) {
 
 bool FunctionIDMapper::flush(FunctionIDMapper &&mapper, const Str &targetDir) {
   Str Dir = targetDir.size() > 0 ? targetDir : "module-maps";
-  ModuleMappingEncoding encoding(Dir, mapper.GetModuleMapId(), mapper.GetFullModuleId());
+  ModuleMappingEncoding encoding(Dir, mapper.GetModuleMapId(),
+                                 mapper.GetFullModuleId());
 
   for (auto &&IdPair : mapper.FunctionIds) {
     if (!encoding.ready()) {

@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <map>
 #include <set>
+#include <utility>
+#include <optional>
 
 using u64 = uint64_t;
 using u32 = uint32_t;
@@ -22,6 +24,7 @@ template <class T> using Maybe = std::optional<T>;
 template <class T> using Set = std::set<T>;
 template <class K, class V> using Map = std::map<K, V>;
 template <class T, size_t N> using Arr = std::array<T, N>;
+template <class T1, class T2> using Pair = std::pair<T1, T2>;
 using Str = std::string;
 
 #endif // LLCPASS_ALIASES
