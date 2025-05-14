@@ -431,6 +431,8 @@ Maybe<IdxMappingInfo> getIdxMappingInfo(Module &M) {
     return NONE;
   }
 
+  // TODO: make mandatory
+  Result.invalidIndexValue = 0xFFFFFFFFFFFFFFFF;
   // try get string from metadata
   if (auto MbStr = getMetadataStrVal(M.getNamedMetadata(MappingInvlIdxMetaKey));
       MbStr) {
@@ -439,11 +441,9 @@ Maybe<IdxMappingInfo> getIdxMappingInfo(Module &M) {
       Result.invalidIndexValue = *Parsed;
     } else {
       llvm::errs() << "Module invalid index hint could not be parsed\n";
-      return NONE;
     }
   } else {
     llvm::errs() << "Module missing invalid index hint\n";
-    return NONE;
   }
 
   IF_DEBUG llvm::errs() << "Module Index Map parsing OK\n";
