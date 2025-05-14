@@ -1,10 +1,9 @@
 #include "argMapping.hpp"
 #include "typeAlias.hpp"
+#include "utility.hpp"
 #include <algorithm>
 #include <cassert>
-#include <charconv>
 #include <iterator>
-#include <system_error>
 
 Set<size_t> getSretArgumentIndicies(const llvm::Function &Fn) {
   Set<size_t> Res;
@@ -43,22 +42,14 @@ Vec<size_t> getSretArgumentShiftVec(const llvm::Function &Fn) {
 }
 
 Vec<size_t> parseCustTypeIndicies(llvm::StringRef MetaValue,
-                                          bool IsInstanceMember, char Sep) {
+                                  bool IsInstanceMember, char Sep) {
   llvm::SmallVector<llvm::StringRef> Split;
   Vec<ssize_t> Res;
 
   MetaValue.split(Split, Sep, -1, false);
 
   std::ranges::transform(Split, std::back_inserter(Res), [](llvm::StringRef S) {
-    long long Res = -1LL;
-    auto [_, ec] = std::from_chars(S.data(), S.data() + S.size(), Res);
-
-    if (ec != std::errc()) {
-      llvm::errs() << "Warning - invalid numeric value in metadata: " << S
-                   << '\n';
-    }
-
-    return Res;
+    return valOrDefault(tryParse<long long>(S), -1LL);
   });
 
   auto [EndRes, _] =
@@ -79,7 +70,8 @@ Vec<size_t> parseCustTypeIndicies(llvm::StringRef MetaValue,
 
 Maybe<Vec<size_t>> getCustomTypeIndicies(llvm::StringRef MetadataKey,
                                          const llvm::Function &Fn,
-                                         bool IsInstanceMember) {
+                                         bool IsInstanceMember,
+                                         IdxMappingInfo Info) {
   if (llvm::MDNode *N = Fn.getMetadata(MetadataKey)) {
     if (N->getNumOperands() == 0) {
       llvm::errs()
@@ -90,7 +82,7 @@ Maybe<Vec<size_t>> getCustomTypeIndicies(llvm::StringRef MetadataKey,
     if (auto *Op = llvm::dyn_cast_if_present<llvm::MDString>(N->getOperand(0));
         Op != nullptr) {
       return parseCustTypeIndicies(Op->getString(), IsInstanceMember,
-                                   VSTR_LLVM_CXX_SINGLECHAR_SEP);
+                                   Info.custom);
     }
 
     llvm::errs()

@@ -6,9 +6,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <map>
+#include <optional>
 #include <set>
 #include <utility>
-#include <optional>
 
 using u64 = uint64_t;
 using u32 = uint32_t;

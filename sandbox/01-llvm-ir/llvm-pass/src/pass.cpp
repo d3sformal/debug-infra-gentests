@@ -4,6 +4,7 @@
 #include "constants.hpp"
 #include "mapping.hpp"
 #include "typeAlias.hpp"
+#include "utility.hpp"
 #include "verbosity.hpp"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallVector.h"
@@ -54,11 +55,13 @@ cl::opt<std::string>
 // -mllvm -Arg
 cl::opt<InstrumentationType> InstrumentationType(
     cl::desc("Choose instrumentation type:"),
-    cl::values(llvm ::cl ::OptionEnumValue{.Name = "Call",
-                                           .Value = int(InstrumentationType::Call),
-                                           .Description = "Call tracing"},
-               llvm ::cl ::OptionEnumValue{.Name="Arg", .Value=int(InstrumentationType::Arg),
-                                           .Description="Argument tracing"}));
+    cl::values(
+        llvm ::cl ::OptionEnumValue{.Name = "Call",
+                                    .Value = int(InstrumentationType::Call),
+                                    .Description = "Call tracing"},
+        llvm ::cl ::OptionEnumValue{.Name = "Arg",
+                                    .Value = int(InstrumentationType::Arg),
+                                    .Description = "Argument tracing"}));
 
 // -mllvm -llcap-fn-targets-file
 cl::opt<std::string>
@@ -107,6 +110,23 @@ bool isStdFnBasedOnMetadata(const Function &Fn,
     return false;
   }
   return true;
+}
+
+Maybe<Str> getMetadataStrVal(NamedMDNode *Node) {
+  if (Node == nullptr || Node->getNumOperands() == 0) {
+    return NONE;
+  }
+  MDNode *Inner = Node->getOperand(0);
+
+  if (Inner->getNumOperands() == 0) {
+    return NONE;
+  }
+
+  if (auto *Op = dyn_cast_if_present<MDString>(Inner->getOperand(0));
+      Op != nullptr) {
+    return Op->getString().str();
+  }
+  return NONE;
 }
 
 GlobalVariable *createGlobalStr(Module &M, StringRef Val, StringRef Id) {
@@ -185,18 +205,22 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
   auto CallDouble = M.getOrInsertFunction(
       "hook_double",
       FunctionType::get(Type::getVoidTy(Ctx), {Type::getDoubleTy(Ctx)}, false));
-  
+
   if (ArgT->isIntegerTy(8)) {
-    IF_VERBOSE errs() << "Inserting call 8" << (IsAttrUnsgined ? "U" : "S") << '\n';
+    IF_VERBOSE errs() << "Inserting call 8" << (IsAttrUnsgined ? "U" : "S")
+                      << '\n';
     Builder.CreateCall(IsAttrUnsgined ? CallUnsByte : CallByte, {Arg});
   } else if (ArgT->isIntegerTy(16)) {
-    IF_VERBOSE errs() << "Inserting call 16" << (IsAttrUnsgined ? "U" : "S") << '\n';
+    IF_VERBOSE errs() << "Inserting call 16" << (IsAttrUnsgined ? "U" : "S")
+                      << '\n';
     Builder.CreateCall(IsAttrUnsgined ? CallUnsShort : CallShort, {Arg});
   } else if (ArgT->isIntegerTy(32)) {
-    IF_VERBOSE errs() << "Inserting call 32" << (IsAttrUnsgined ? "U" : "S") << '\n';
+    IF_VERBOSE errs() << "Inserting call 32" << (IsAttrUnsgined ? "U" : "S")
+                      << '\n';
     Builder.CreateCall(IsAttrUnsgined ? CallUnsInt32 : CallInt32, {Arg});
   } else if (ArgT->isIntegerTy(64)) {
-    IF_VERBOSE errs() << "Inserting call 64" << (IsAttrUnsgined ? "U" : "S") << '\n';
+    IF_VERBOSE errs() << "Inserting call 64" << (IsAttrUnsgined ? "U" : "S")
+                      << '\n';
     Builder.CreateCall(IsAttrUnsgined ? CallUnsInt64 : CallInt64, {Arg});
   } else if (ArgT->isFloatTy()) {
     IF_VERBOSE errs() << "Inserting call f32\n";
@@ -228,10 +252,10 @@ bool isStdFn(const Function &Fn, const Str &DemangledName,
   return false;
 }
 
-void insertArgTracingHooks(Module &M, Function &Fn) {
+void insertArgTracingHooks(Module &M, Function &Fn, IdxMappingInfo &IdxInfo) {
   BasicBlock &EntryBB = Fn.getEntryBlock();
   IRBuilder<> Builder(&EntryBB.front());
-  ClangMetadataToLLVMArgumentMapping Mapping(Fn);
+  ClangMetadataToLLVMArgumentMapping Mapping(Fn, IdxInfo);
   Mapping.registerCustomTypeIndicies(VSTR_LLVM_CXX_DUMP_STDSTRING);
   Mapping.registerCustomTypeIndicies(VSTR_LLVM_UNSIGNED_IDCS);
 
@@ -243,6 +267,10 @@ void insertArgTracingHooks(Module &M, Function &Fn) {
 bool instrumentArgs() {
   return args::InstrumentationType.getValue() == args::InstrumentationType::Arg;
 }
+
+const char *MappingParseGuideMetaKey = "LLCAP-CLANG-LLVM-MAP-PRSGD";
+const char *MappingInvlIdxMetaKey = "LLCAP-CLANG-LLVM-MAP-INVLD_IDX";
+const char *MappingMetaKey = "LLCAP-CLANG-LLVM-MAP-DATA";
 
 class Instrumentation {
 public:
@@ -273,7 +301,7 @@ public:
       Str DemangledName = llvm::demangle(MangledName);
 
       IF_DEBUG {
-        if (MDNode *N = Fn.getMetadata("LLCAP-CLANG-LLVM-MAP-DATA")) {
+        if (MDNode *N = Fn.getMetadata(MappingMetaKey)) {
           errs() << DemangledName << ": \n";
           N->dumpTree();
         }
@@ -322,10 +350,12 @@ public:
 class ArgumentInstrumentation : public Instrumentation {
   Module &m_module;
   Set<Str> &m_traced_functions;
+  IdxMappingInfo m_idxInfo;
 
 public:
-  ArgumentInstrumentation(Module &M, Set<Str> &TracedFunctions)
-      : m_module(M), m_traced_functions(TracedFunctions) {}
+  ArgumentInstrumentation(Module &M, Set<Str> &TracedFunctions,
+                          IdxMappingInfo Info)
+      : m_module(M), m_traced_functions(TracedFunctions), m_idxInfo(Info) {}
 
   void run() override {
     for (Function &Fn : m_module) {
@@ -337,7 +367,7 @@ public:
         continue;
       }
       IF_VERBOSE errs() << "Instrumenting fn " << DemangledName << "\n";
-      insertArgTracingHooks(m_module, Fn);
+      insertArgTracingHooks(m_module, Fn, m_idxInfo);
     }
   }
 
@@ -348,7 +378,7 @@ auto collectTracedFunctionsForModule(Module &M) {
   using RetT = Set<Str>;
   RetT Result;
 
-  const Str& Path = args::TargetsFilePath.getValue();
+  const Str &Path = args::TargetsFilePath.getValue();
   if (Path.empty()) {
     return Result;
   }
@@ -386,6 +416,40 @@ auto collectTracedFunctionsForModule(Module &M) {
   return Result;
 }
 
+Maybe<IdxMappingInfo> getIdxMappingInfo(Module &M) {
+  IdxMappingInfo Result;
+
+  if (auto MbStr =
+          getMetadataStrVal(M.getNamedMetadata(MappingParseGuideMetaKey));
+      MbStr && MbStr->size() == 3) {
+    Result.primary = MbStr->at(0);
+    Result.group = MbStr->at(1);
+    Result.argParamPair = MbStr->at(2);
+    Result.custom = VSTR_LLVM_CXX_SINGLECHAR_SEP;
+  } else {
+    llvm::errs() << "Module missing parse guide\n";
+    return NONE;
+  }
+
+  // try get string from metadata
+  if (auto MbStr = getMetadataStrVal(M.getNamedMetadata(MappingInvlIdxMetaKey));
+      MbStr) {
+    // try parse u64 from the string
+    if (auto Parsed = tryParse<u64>(*MbStr); Parsed) {
+      Result.invalidIndexValue = *Parsed;
+    } else {
+      llvm::errs() << "Module invalid index hint could not be parsed\n";
+      return NONE;
+    }
+  } else {
+    llvm::errs() << "Module missing invalid index hint\n";
+    return NONE;
+  }
+
+  IF_DEBUG llvm::errs() << "Module Index Map parsing OK\n";
+  return Result;
+}
+
 struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
@@ -394,24 +458,21 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 
     IF_VERBOSE errs() << "Running pass on module " << M.getModuleIdentifier()
                       << "\n";
-
-    IF_DEBUG {
-      if (auto *Meta = M.getNamedMetadata("LLCAP-CLANG-LLVM-MAP-PRSGD")) {
-        Meta->dump();
-      } else {
-        IF_VERBOSE llvm::errs() << "Module meta no parse guide";
-      }
-      if (auto *Meta = M.getNamedMetadata("LLCAP-CLANG-LLVM-MAP-INVLD_IDX")) {
-        Meta->dump();
-      } else {
-        IF_VERBOSE llvm::errs() << "Module meta no invalid index value";
-      }
+    IdxMappingInfo MappingInfo;
+    if (auto MbInfo = getIdxMappingInfo(M); MbInfo) {
+      MappingInfo = *MbInfo;
+    } else {
+      IF_VERBOSE errs() << "Skipping entire module " + M.getModuleIdentifier()
+                        << '\n';
+      // not really sure if "all" collides with other modules or not? => remain
+      // pessimistic
+      return PreservedAnalyses::none();
     }
 
     if (instrumentArgs()) {
       IF_VERBOSE errs() << "Instrumenting args...\n";
       Set<Str> TracedFns = collectTracedFunctionsForModule(M);
-      ArgumentInstrumentation Work(M, TracedFns);
+      ArgumentInstrumentation Work(M, TracedFns, MappingInfo);
       Work.run();
 
       if (!Work.finish()) {
@@ -437,19 +498,21 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 };
 } // namespace
 
-
 namespace {
-  // Register the pass for the new pass manager
-   llvm::PassPluginLibraryInfo getInsertFunctionCallPassPluginInfo() {
-    const auto Callback = [](PassBuilder &PB) {
-      PB.registerPipelineStartEPCallback(
-          [](ModulePassManager &MPM, OptimizationLevel) {
-            MPM.addPass(InsertFunctionCallPass());
-            return true;
-          });
-    };
-    return {.APIVersion=LLVM_PLUGIN_API_VERSION, .PluginName="InsertFunctionCallPass", .PluginVersion="0.0.1", .RegisterPassBuilderCallbacks=Callback};
-  }
+// Register the pass for the new pass manager
+llvm::PassPluginLibraryInfo getInsertFunctionCallPassPluginInfo() {
+  const auto Callback = [](PassBuilder &PB) {
+    PB.registerPipelineStartEPCallback(
+        [](ModulePassManager &MPM, OptimizationLevel) {
+          MPM.addPass(InsertFunctionCallPass());
+          return true;
+        });
+  };
+  return {.APIVersion = LLVM_PLUGIN_API_VERSION,
+          .PluginName = "InsertFunctionCallPass",
+          .PluginVersion = "0.0.1",
+          .RegisterPassBuilderCallbacks = Callback};
+}
 } // namespace
 
 // Register the plugin

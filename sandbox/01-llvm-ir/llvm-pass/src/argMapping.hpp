@@ -26,9 +26,17 @@ std::vector<size_t> getSretArgumentShiftVec(const llvm::Function &Fn);
 std::vector<size_t> parseCustTypeIndicies(llvm::StringRef MetaValue,
                                           bool IsInstanceMember, char Sep);
 
+struct IdxMappingInfo {
+  char primary;
+  char group;
+  char argParamPair;
+  char custom;
+  uint64_t invalidIndexValue;
+};
+
 std::optional<std::vector<size_t>>
 getCustomTypeIndicies(llvm::StringRef MetadataKey, const llvm::Function &Fn,
-                      bool IsInstanceMember);
+                      bool IsInstanceMember, IdxMappingInfo Info);
 
 class ClangMetadataToLLVMArgumentMapping {
   // This map encodes at position ShiftMap[i] what shift should we consider
@@ -39,9 +47,11 @@ class ClangMetadataToLLVMArgumentMapping {
   bool m_instanceMember;
   std::map<llvm::StringRef, std::set<size_t>> m_typeIndicies;
   llvm::Function &m_fn;
+  IdxMappingInfo m_seps;
 
 public:
-  ClangMetadataToLLVMArgumentMapping(llvm::Function &Fn) : m_fn(Fn) {
+  ClangMetadataToLLVMArgumentMapping(llvm::Function &Fn, IdxMappingInfo Seps)
+      : m_fn(Fn), m_seps(Seps) {
     m_shiftMap = getSretArgumentShiftVec(m_fn);
     m_instanceMember =
         m_fn.getMetadata(llvm::StringRef(VSTR_LLVM_CXX_THISPTR)) != nullptr;
@@ -80,8 +90,8 @@ public:
 
   bool registerCustomTypeIndicies(const llvm::StringRef &MetadataKey) {
     auto CustTypeIdcs =
-        getCustomTypeIndicies(MetadataKey, m_fn, m_instanceMember);
-      IF_DEBUG {
+        getCustomTypeIndicies(MetadataKey, m_fn, m_instanceMember, m_seps);
+    IF_DEBUG {
       llvm::errs() << "CustType indicies: ";
       if (CustTypeIdcs) {
         for (auto &&I : *CustTypeIdcs) {
