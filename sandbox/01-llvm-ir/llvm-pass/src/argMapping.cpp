@@ -1,13 +1,16 @@
 #include "argMapping.hpp"
 #include "typeAlias.hpp"
+#include <algorithm>
+#include <cassert>
 #include <charconv>
+#include <iterator>
 #include <system_error>
 
 Set<size_t> getSretArgumentIndicies(const llvm::Function &Fn) {
   Set<size_t> Res;
   size_t Idx = 0;
   for (const auto *It = Fn.arg_begin(); It != Fn.arg_end(); ++It) {
-    auto *Arg = It;
+    const auto *Arg = It;
     if (Arg->hasAttribute(llvm::Attribute::AttrKind::StructRet)) {
       Res.insert(Idx);
     }
@@ -16,15 +19,15 @@ Set<size_t> getSretArgumentIndicies(const llvm::Function &Fn) {
   return Res;
 }
 
-std::vector<size_t> getSretArgumentShiftVec(const llvm::Function &Fn) {
+Vec<size_t> getSretArgumentShiftVec(const llvm::Function &Fn) {
   auto SretIndicies = getSretArgumentIndicies(Fn);
 
-  std::vector<size_t> Res;
+  Vec<size_t> Res;
   Res.resize(Fn.arg_size());
 
   size_t Shift = 0;
   for (size_t I = 0; I < Fn.arg_size(); ++I) {
-    if (SretIndicies.find(I) != SretIndicies.end()) {
+    if (SretIndicies.contains(I)) {
       // we accumulate shift to Shift
       // if an AST index would collide with an sret argument's one, the AST
       // index (A) is translated by A + (current) Shift.
@@ -39,38 +42,36 @@ std::vector<size_t> getSretArgumentShiftVec(const llvm::Function &Fn) {
   return Res;
 }
 
-std::vector<size_t> parseCustTypeIndicies(llvm::StringRef MetaValue,
+Vec<size_t> parseCustTypeIndicies(llvm::StringRef MetaValue,
                                           bool IsInstanceMember, char Sep) {
   llvm::SmallVector<llvm::StringRef> Split;
-  std::vector<ssize_t> Res;
+  Vec<ssize_t> Res;
 
   MetaValue.split(Split, Sep, -1, false);
 
-  std::transform(Split.begin(), Split.end(), std::back_inserter(Res),
-                 [](llvm::StringRef s) {
-                   long long Res = -1ll;
-                   auto [_, ec] =
-                       std::from_chars(s.data(), s.data() + s.size(), Res);
+  std::ranges::transform(Split, std::back_inserter(Res), [](llvm::StringRef S) {
+    long long Res = -1LL;
+    auto [_, ec] = std::from_chars(S.data(), S.data() + S.size(), Res);
 
-                   if (ec != std::errc()) {
-                     llvm::errs()
-                         << "Warning - invalid numeric value in metadata: " << s
-                         << '\n';
-                   }
+    if (ec != std::errc()) {
+      llvm::errs() << "Warning - invalid numeric value in metadata: " << S
+                   << '\n';
+    }
 
-                   return Res;
-                 });
+    return Res;
+  });
 
-  auto EndRes =
-      std::remove_if(Res.begin(), Res.end(), [](ssize_t i) { return i == -1; });
+  auto [EndRes, _] =
+      std::ranges::remove_if(Res, [](ssize_t I) { return I == -1; });
 
-  std::vector<size_t> RealRes;
-  RealRes.reserve(Res.size());
+  Vec<size_t> RealRes;
+  assert(std::distance(Res.begin(), EndRes) >= 0);
+  RealRes.reserve(static_cast<size_t>(std::distance(Res.begin(), EndRes)));
 
   std::transform(Res.begin(), EndRes, std::back_inserter(RealRes),
-                 [IsInstanceMember](ssize_t i) {
-                   assert(i >= 0);
-                   return static_cast<size_t>(i) + (IsInstanceMember ? 1 : 0);
+                 [IsInstanceMember](ssize_t I) {
+                   assert(I >= 0);
+                   return static_cast<size_t>(I) + (IsInstanceMember ? 1 : 0);
                  });
 
   return RealRes;
@@ -83,13 +84,12 @@ Maybe<Vec<size_t>> getCustomTypeIndicies(llvm::StringRef MetadataKey,
     if (N->getNumOperands() == 0) {
       llvm::errs()
           << "Warning - unexpected string metadata node with NO operands!\n";
-      return std::nullopt;
+      return NONE;
     }
 
-    if (llvm::MDString *op =
-            llvm::dyn_cast_if_present<llvm::MDString>(N->getOperand(0));
-        op != nullptr) {
-      return parseCustTypeIndicies(op->getString(), IsInstanceMember,
+    if (auto *Op = llvm::dyn_cast_if_present<llvm::MDString>(N->getOperand(0));
+        Op != nullptr) {
+      return parseCustTypeIndicies(Op->getString(), IsInstanceMember,
                                    VSTR_LLVM_CXX_SINGLECHAR_SEP);
     }
 
@@ -99,5 +99,5 @@ Maybe<Vec<size_t>> getCustomTypeIndicies(llvm::StringRef MetadataKey,
   } else {
     IF_VERBOSE llvm::errs() << "No meta key " << MetadataKey << " found\n";
   }
-  return std::nullopt;
+  return NONE;
 }

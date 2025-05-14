@@ -12,13 +12,14 @@ class ModuleMappingEncoding {
   void setFailed() { m_failed = true; };
 
 public:
-  ModuleMappingEncoding(const std::string &maps_directory,
-                        const std::string &file_name,
-                        const std::string &module_name);
+  ModuleMappingEncoding(const std::string &MapsDirectory,
+                        const std::string &FileName,
+                        const std::string &ModuleName);
 
-  static bool finish(ModuleMappingEncoding &&self);
+  static bool finish(ModuleMappingEncoding &&Self);
 
-  bool ready();
+  bool ready() const { return !m_failed; }
+
   bool addFunction(const std::string &, llcap::FunctionId);
 };
 

@@ -14,19 +14,19 @@ class FunctionIDMapper {
   std::string OutFileName;
   std::vector<std::pair<std::string, llcap::FunctionId>> FunctionIds;
   llcap::FunctionId FunctionId{0};
-  static constexpr size_t sha256Bytes = 32;
+  static constexpr size_t SHA256_BYTES = 32;
 
   static std::array<uint8_t, sizeof(llcap::ModuleId)>
-  collapseHash(const std::array<uint8_t, sha256Bytes> &data);
+  collapseHash(const std::array<uint8_t, SHA256_BYTES> &Data);
 
 public:
-  static bool flush(FunctionIDMapper &&mapper, const std::string &targetDir);
+  static bool flush(FunctionIDMapper &&Mapper, const std::string &TargetDir);
 
   FunctionIDMapper(const std::string &ModuleId);
   llcap::FunctionId addFunction(const std::string &FnInfo);
-  const std::string &GetFullModuleId() const { return FullModuleId; }
-  const std::string &GetModuleMapId() const { return OutFileName; }
-  llcap::ModuleId GetModuleMapIntId() const { return ModuleIntId; }
+  [[nodiscard]] const std::string &getFullModuleId() const { return FullModuleId; }
+  [[nodiscard]] const std::string &getModuleMapId() const { return OutFileName; }
+  [[nodiscard]] llcap::ModuleId getModuleMapIntId() const { return ModuleIntId; }
 };
 
 #endif

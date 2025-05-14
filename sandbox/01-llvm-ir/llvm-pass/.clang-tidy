@@ -1,4 +1,4 @@
-Checks: '-*,clang-diagnostic-*,llvm-*,misc-*,readability-*,performance*,bugprone*,cppcoreguidelines*,modernize*,portability*,-modernize-use-trailing-return-type'
+Checks: '-*,clang-diagnostic-*,llvm-*,misc-*,readability-*,performance*,bugprone*,modernize*,portability*,-modernize-use-trailing-return-type,-readability-identifier-length,-readability-magic-numbers,-bugprone-easily-swappable-parameters'
 CheckOptions:
   - key:             readability-identifier-naming.ClassCase
     value:           CamelCase
@@ -6,12 +6,16 @@ CheckOptions:
     value:           CamelCase
   - key:             readability-identifier-naming.FunctionCase
     value:           camelBack
-  - key:             readability-identifier-naming.MemberCase
-    value:           CamelCase
   - key:             readability-identifier-naming.ParameterCase
     value:           CamelCase
   - key:             readability-identifier-naming.UnionCase
     value:           CamelCase
+  - key:             readability-identifier-naming.ClassMemberPrefix
+    value:           m_
+  - key:             readability-identifier-naming.ClassMemberCase
+    value:           camelBack
+  - key:             readability-identifier-naming.ConstexprVariableCase
+    value:           UPPER_CASE
   - key:             readability-identifier-naming.VariableCase
     value:           CamelCase
   - key:             readability-identifier-naming.IgnoreMainLikeFunctions

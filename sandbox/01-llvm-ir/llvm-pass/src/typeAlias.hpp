@@ -21,6 +21,9 @@ using i8 = int8_t;
 
 template <class T> using Vec = std::vector<T>;
 template <class T> using Maybe = std::optional<T>;
+
+inline constexpr std::nullopt_t NONE = std::nullopt;
+
 template <class T> using Set = std::set<T>;
 template <class K, class V> using Map = std::map<K, V>;
 template <class T, size_t N> using Arr = std::array<T, N>;

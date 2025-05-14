@@ -7,11 +7,20 @@
 #include "verbosity.hpp"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallVector.h"
+#include <llvm/ADT/StringRef.h>
+#include <llvm/Analysis/TargetLibraryInfo.h>
+#include <llvm/Demangle/Demangle.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
 #include "llvm/IR/Function.h"
+#include <llvm/IR/GlobalVariable.h>
 #include "llvm/IR/IRBuilder.h"
+#include <llvm/IR/LLVMContext.h>
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
+#include <llvm/IR/Type.h>
+#include <llvm/Passes/OptimizationLevel.h>
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Support/Casting.h"
@@ -19,25 +28,14 @@
 #include "llvm/Support/raw_ostream.h"
 #include <fstream>
 #include <ios>
-#include <llvm/ADT/StringRef.h>
-#include <llvm/Analysis/TargetLibraryInfo.h>
-#include <llvm/Demangle/Demangle.h>
-#include <llvm/IR/Constants.h>
-#include <llvm/IR/DerivedTypes.h>
-#include <llvm/IR/GlobalVariable.h>
-#include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/Type.h>
-#include <llvm/Passes/OptimizationLevel.h>
 #include <string>
 #include <utility>
 
 using namespace llvm;
 
-static const char *UnsignedAttrKind = "VSTR-param-attr-unsigned";
-
 namespace {
 namespace args {
-enum InstrumentationType { Call, Arg };
+enum class InstrumentationType : u8 { Call, Arg };
 
 // -mllvm -llcap-filter-by-mangled
 cl::opt<bool>
@@ -54,10 +52,13 @@ cl::opt<std::string>
                       cl::desc("Output directory for function ID maps"));
 // -mllvm -Call
 // -mllvm -Arg
-cl::opt<InstrumentationType>
-    InstrumentationType(cl::desc("Choose instrumentation type:"),
-                        cl::values(clEnumVal(Call, "Call tracing"),
-                                   clEnumVal(Arg, "Argument tracing")));
+cl::opt<InstrumentationType> InstrumentationType(
+    cl::desc("Choose instrumentation type:"),
+    cl::values(llvm ::cl ::OptionEnumValue{.Name = "Call",
+                                           .Value = int(InstrumentationType::Call),
+                                           .Description = "Call tracing"},
+               llvm ::cl ::OptionEnumValue{.Name="Arg", .Value=int(InstrumentationType::Arg),
+                                           .Description="Argument tracing"}));
 
 // -mllvm -llcap-fn-targets-file
 cl::opt<std::string>
@@ -76,12 +77,12 @@ cl::opt<std::string> ArgCaptureIdMapPath(
 // this function examines the mangled name of a function and tells (nonportably)
 // which function is and is not in the std:: namespace (_Z*St/i/c/a/o/e/s) or
 // has a reserved name (two underscores)
-bool isStdFnDanger(const StringRef mangled) {
-  return mangled.starts_with("_ZNSt") || mangled.starts_with("_ZZNSt") ||
-         mangled.starts_with("_ZSt") || mangled.starts_with("_ZNSo") ||
-         mangled.starts_with("_ZNSi") || mangled.starts_with("_ZNSe") ||
-         mangled.starts_with("_ZNSc") || mangled.starts_with("_ZNSs") ||
-         mangled.starts_with("_ZNSa") || mangled.starts_with("__");
+bool isStdFnDanger(const StringRef Mangled) {
+  return Mangled.starts_with("_ZNSt") || Mangled.starts_with("_ZZNSt") ||
+         Mangled.starts_with("_ZSt") || Mangled.starts_with("_ZNSo") ||
+         Mangled.starts_with("_ZNSi") || Mangled.starts_with("_ZNSe") ||
+         Mangled.starts_with("_ZNSc") || Mangled.starts_with("_ZNSs") ||
+         Mangled.starts_with("_ZNSa") || Mangled.starts_with("__");
 }
 
 bool isStdFnBasedOnMetadata(const Function &Fn,
@@ -95,8 +96,8 @@ bool isStdFnBasedOnMetadata(const Function &Fn,
                         << MangledName << ' ' << DemangledName << '\n';
     }
 
-    if (MDString *op = dyn_cast_if_present<MDString>(N->getOperand(0));
-        op == nullptr) {
+    if (auto *Op = dyn_cast_if_present<MDString>(N->getOperand(0));
+        Op == nullptr) {
       IF_VERBOSE {
         errs() << "Invalid metadata for node in function: " << MangledName
                << ' ' << DemangledName << "\nNode:\n";
@@ -184,27 +185,34 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
   auto CallDouble = M.getOrInsertFunction(
       "hook_double",
       FunctionType::get(Type::getVoidTy(Ctx), {Type::getDoubleTy(Ctx)}, false));
-
+  
   if (ArgT->isIntegerTy(8)) {
+    IF_VERBOSE errs() << "Inserting call 8" << (IsAttrUnsgined ? "U" : "S") << '\n';
     Builder.CreateCall(IsAttrUnsgined ? CallUnsByte : CallByte, {Arg});
   } else if (ArgT->isIntegerTy(16)) {
+    IF_VERBOSE errs() << "Inserting call 16" << (IsAttrUnsgined ? "U" : "S") << '\n';
     Builder.CreateCall(IsAttrUnsgined ? CallUnsShort : CallShort, {Arg});
   } else if (ArgT->isIntegerTy(32)) {
+    IF_VERBOSE errs() << "Inserting call 32" << (IsAttrUnsgined ? "U" : "S") << '\n';
     Builder.CreateCall(IsAttrUnsgined ? CallUnsInt32 : CallInt32, {Arg});
   } else if (ArgT->isIntegerTy(64)) {
+    IF_VERBOSE errs() << "Inserting call 64" << (IsAttrUnsgined ? "U" : "S") << '\n';
     Builder.CreateCall(IsAttrUnsgined ? CallUnsInt64 : CallInt64, {Arg});
   } else if (ArgT->isFloatTy()) {
+    IF_VERBOSE errs() << "Inserting call f32\n";
     Builder.CreateCall(CallFloat, {Arg});
   } else if (ArgT->isDoubleTy()) {
+    IF_VERBOSE errs() << "Inserting call f64\n";
     Builder.CreateCall(CallDouble, {Arg});
   } else if (Mapping.llvmArgNoMatches(ArgNum, VSTR_LLVM_CXX_DUMP_STDSTRING)) {
+    IF_VERBOSE errs() << "Inserting call std::string\n";
     auto CallCxxString = M.getOrInsertFunction(
         "vstr_extra_cxx__string",
         FunctionType::get(Type::getVoidTy(Ctx), {Arg->getType()}, false));
     Builder.CreateCall(CallCxxString, {Arg});
   } else {
     IF_VERBOSE errs() << "Skipping Argument\n";
-    IF_VERBOSE Arg->dump();
+    IF_DEBUG Arg->dump();
   }
 }
 
@@ -282,18 +290,17 @@ public:
       Set<llvm::Type::TypeID> AllowedTypes;
       {
         using llvm::Type;
-        for (auto &&t : {Type::FloatTyID, Type::IntegerTyID, Type::DoubleTyID,
+        for (auto &&T : {Type::FloatTyID, Type::IntegerTyID, Type::DoubleTyID,
                          Type::PointerTyID}) {
-          AllowedTypes.insert(t);
+          AllowedTypes.insert(T);
         }
       }
 
-      bool viable = !Fn.arg_empty();
-      if (viable) {
+      bool Viable = !Fn.arg_empty();
+      if (Viable) {
         for (auto *Arg = Fn.arg_begin(); Arg != Fn.arg_end(); ++Arg) {
-          if (AllowedTypes.find(Arg->getType()->getTypeID()) ==
-              AllowedTypes.end()) {
-            viable = false;
+          if (!AllowedTypes.contains(Arg->getType()->getTypeID())) {
+            Viable = false;
             break;
           }
         }
@@ -301,7 +308,7 @@ public:
       // TODO handle viability
       const auto FunId = m_fnIdMap.addFunction(DemangledName);
 
-      insertFnEntryHook(Builder, m_module, m_fnIdMap.GetModuleMapIntId(),
+      insertFnEntryHook(Builder, m_module, m_fnIdMap.getModuleMapIntId(),
                         FunId);
     }
   }
@@ -317,16 +324,16 @@ class ArgumentInstrumentation : public Instrumentation {
   Set<Str> &m_traced_functions;
 
 public:
-  ArgumentInstrumentation(Module &M, Set<Str> &traced_functions)
-      : m_module(M), m_traced_functions(traced_functions) {}
+  ArgumentInstrumentation(Module &M, Set<Str> &TracedFunctions)
+      : m_module(M), m_traced_functions(TracedFunctions) {}
 
   void run() override {
     for (Function &Fn : m_module) {
       StringRef MangledName = Fn.getFunction().getName();
       Str DemangledName = llvm::demangle(MangledName);
 
-      if (m_traced_functions.find(DemangledName) == m_traced_functions.end()) {
-        IF_VERBOSE errs() << "Skipping fn " << DemangledName << "\n";
+      if (!m_traced_functions.contains(DemangledName)) {
+        IF_DEBUG errs() << "Skipping fn " << DemangledName << "\n";
         continue;
       }
       IF_VERBOSE errs() << "Instrumenting fn " << DemangledName << "\n";
@@ -339,23 +346,23 @@ public:
 
 auto collectTracedFunctionsForModule(Module &M) {
   using RetT = Set<Str>;
-  RetT result;
+  RetT Result;
 
-  Str Path = args::TargetsFilePath.getValue();
+  const Str& Path = args::TargetsFilePath.getValue();
   if (Path.empty()) {
-    return result;
+    return Result;
   }
 
   std::ifstream Targets(Path, std::ios::binary);
   if (!Targets) {
     errs() << "Could not open targets file @ " << Path << "\n";
-    return result;
+    return Result;
   }
 
   Str Data;
   while (std::getline(Targets, Data, '\n')) {
     if (Data.empty()) {
-      IF_VERBOSE errs() << "Skip empty\n";
+      IF_DEBUG errs() << "Skip empty\n";
       continue;
     }
 
@@ -367,16 +374,16 @@ auto collectTracedFunctionsForModule(Module &M) {
 
     auto ModId = Data.substr(0, Pos);
     if (ModId != M.getModuleIdentifier()) {
-      IF_VERBOSE errs() << "skip on module mismatch " << ModId << "\n";
+      IF_DEBUG errs() << "Skip on module mismatch " << ModId << "\n";
       continue;
     }
 
     auto FnId = Data.substr(Pos + 1);
-    IF_VERBOSE errs() << "Add " << FnId << "\n";
-    result.insert(FnId);
+    IF_VERBOSE errs() << "Add \"to trace\" " << FnId << "\n";
+    Result.insert(FnId);
   }
 
-  return result;
+  return Result;
 }
 
 struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
@@ -430,17 +437,20 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 };
 } // namespace
 
-// Register the pass for the new pass manager
-llvm::PassPluginLibraryInfo getInsertFunctionCallPassPluginInfo() {
-  const auto callback = [](PassBuilder &PB) {
-    PB.registerPipelineStartEPCallback(
-        [](ModulePassManager &MPM, OptimizationLevel) {
-          MPM.addPass(InsertFunctionCallPass());
-          return true;
-        });
-  };
-  return {LLVM_PLUGIN_API_VERSION, "InsertFunctionCallPass", "0.0.1", callback};
-}
+
+namespace {
+  // Register the pass for the new pass manager
+   llvm::PassPluginLibraryInfo getInsertFunctionCallPassPluginInfo() {
+    const auto Callback = [](PassBuilder &PB) {
+      PB.registerPipelineStartEPCallback(
+          [](ModulePassManager &MPM, OptimizationLevel) {
+            MPM.addPass(InsertFunctionCallPass());
+            return true;
+          });
+    };
+    return {.APIVersion=LLVM_PLUGIN_API_VERSION, .PluginName="InsertFunctionCallPass", .PluginVersion="0.0.1", .RegisterPassBuilderCallbacks=Callback};
+  }
+} // namespace
 
 // Register the plugin
 extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {

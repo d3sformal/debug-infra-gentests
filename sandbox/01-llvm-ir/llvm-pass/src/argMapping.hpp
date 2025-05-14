@@ -5,6 +5,7 @@
 #include "verbosity.hpp"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Function.h"
+#include <algorithm>
 #include <map>
 #include <set>
 #include <vector>
@@ -45,48 +46,46 @@ public:
     m_instanceMember =
         m_fn.getMetadata(llvm::StringRef(VSTR_LLVM_CXX_THISPTR)) != nullptr;
   }
-  bool llvmArgNoMatches(size_t LlvmArgNo,
-                        const llvm::StringRef &MetadataKey) const {
-    IF_VERBOSE {
+  [[nodiscard]] bool
+  llvmArgNoMatches(size_t LlvmArgNo, const llvm::StringRef &MetadataKey) const {
+    IF_DEBUG {
       llvm::errs()
           << "Checking argument index match for argument with llvm index "
           << LlvmArgNo << '\n'
           << "Custom type indicies " << MetadataKey << ": ";
     }
-    if (m_typeIndicies.find(MetadataKey) == m_typeIndicies.end()) {
-      IF_VERBOSE { llvm::errs() << "none\n"; }
+    if (!m_typeIndicies.contains(MetadataKey)) {
+      IF_DEBUG { llvm::errs() << "none\n"; }
       return false;
     }
 
     const auto &CustTypes = m_typeIndicies.at(MetadataKey);
-    IF_VERBOSE {
-      for (auto &i : CustTypes) {
-        llvm::errs() << i << " ";
+    IF_DEBUG {
+      for (const auto &I : CustTypes) {
+        llvm::errs() << I << " ";
       }
       llvm::errs() << "\nShiftMap: ";
 
-      for (auto &i : m_shiftMap) {
-        llvm::errs() << i << " ";
+      for (const auto &I : m_shiftMap) {
+        llvm::errs() << I << " ";
       }
     }
 
-    auto Res =
-        std::any_of(CustTypes.begin(), CustTypes.end(), [&](size_t AstIndex) {
-          return AstIndex + m_shiftMap[AstIndex] == LlvmArgNo;
-        });
+    auto Res = std::ranges::any_of(CustTypes, [&](size_t AstIndex) {
+      return AstIndex + m_shiftMap[AstIndex] == LlvmArgNo;
+    });
 
-    IF_VERBOSE llvm::errs() << "\nResult: " << Res << '\n';
     return Res;
   }
 
   bool registerCustomTypeIndicies(const llvm::StringRef &MetadataKey) {
     auto CustTypeIdcs =
         getCustomTypeIndicies(MetadataKey, m_fn, m_instanceMember);
-    IF_VERBOSE {
+      IF_DEBUG {
       llvm::errs() << "CustType indicies: ";
       if (CustTypeIdcs) {
-        for (auto &&i : *CustTypeIdcs) {
-          llvm::errs() << i << " ";
+        for (auto &&I : *CustTypeIdcs) {
+          llvm::errs() << I << " ";
         }
       }
       llvm::errs() << '\n';

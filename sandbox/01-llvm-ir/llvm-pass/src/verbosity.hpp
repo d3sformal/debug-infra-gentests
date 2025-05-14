@@ -1,7 +1,7 @@
 #ifndef IF_VERBOSE
 
 bool verbose(bool Set, bool Value);
-#define IF_VERBOSE if (verbose(false, false))
+#define IF_VERBOSE if (debug(false, false) || verbose(false, false))
 
 #endif
 
