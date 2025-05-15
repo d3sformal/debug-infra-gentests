@@ -1,8 +1,11 @@
-use std::ffi::{CStr, c_void};
+use std::{
+  ffi::{CStr, c_void},
+  marker::PhantomData,
+};
 
 use libc::{
   MAP_FAILED, MAP_SHARED_VALIDATE, O_CREAT, O_EXCL, O_RDWR, PROT_READ, PROT_WRITE, ftruncate, mmap,
-  shm_open,
+  munmap, shm_open,
 };
 
 use super::{
@@ -10,16 +13,17 @@ use super::{
   wrappers::{PERMS_PERMISSIVE, get_errno_string, to_cstr},
 };
 
-#[derive(Debug)]
-pub struct ShmemHandle {
+#[derive(Debug)] // do not derive Clone or Copy!
+pub struct ShmemHandle<'a> {
   pub mem: *mut c_void,
   len: u32,
   _fd: i32,
   /// null-char-terminated string
   cname: String,
+  marker: PhantomData<&'a u8>,
 }
 
-impl ShmemHandle {
+impl ShmemHandle<'_> {
   fn new(mem_ptr: *mut c_void, len: u32, fd: i32, name: String) -> Self {
     assert!(!mem_ptr.is_null());
     assert!(mem_ptr != MAP_FAILED);
@@ -29,6 +33,7 @@ impl ShmemHandle {
       len,
       _fd: fd,
       cname: format!("{}\x00", name),
+      marker: PhantomData,
     }
   }
 
@@ -95,7 +100,7 @@ impl ShmemHandle {
 
   pub fn try_unmap(self) -> Result<(), String> {
     // SAFETY: syscall docs, ShmHandle's invariant
-    let unmap_res = unsafe { libc::munmap(self.mem, self.len as usize) };
+    let unmap_res = unsafe { munmap(self.mem, self.len as usize) };
     if unmap_res != 0 {
       return Err(format!(
         "Failed to unmap memory @ {:?} of len {}: {}",

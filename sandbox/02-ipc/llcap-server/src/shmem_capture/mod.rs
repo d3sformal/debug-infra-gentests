@@ -18,11 +18,11 @@ struct MetaDescriptor {
 }
 
 /// a handle to all shared memory infrastructure necessary for function tracing
-pub struct TracingInfra {
+pub struct TracingInfra<'a> {
   pub sem_free: Semaphore,
   pub sem_full: Semaphore,
-  pub meta_buffer: ShmemHandle,
-  pub backing_buffer: ShmemHandle,
+  pub meta_buffer: ShmemHandle<'a>,
+  pub backing_buffer: ShmemHandle<'a>,
 }
 
 pub fn cleanup_shmem(prefix: &str) -> Result<(), String> {
@@ -109,9 +109,9 @@ pub fn init_shmem(
       total_len: buff_count * buff_len,
     };
     aligned_to::<MetaDescriptor>(meta_mem_handle.mem as *const u8)?;
-    // SAFETY: line above
+    // SAFETY: line above, the memory at meta_mem_handle.mem does not need to be dropped
     unsafe {
-      *(meta_mem_handle.mem as *mut MetaDescriptor) = target_descriptor;
+      (meta_mem_handle.mem as *mut MetaDescriptor).write(target_descriptor);
     }
   }
 

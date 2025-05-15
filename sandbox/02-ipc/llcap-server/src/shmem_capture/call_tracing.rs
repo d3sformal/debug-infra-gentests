@@ -230,10 +230,10 @@ pub fn msg_handler(
       update_from_buffer(buff_ptr as *const u8, buff_size, modules, state)?;
 
     // SAFETY: protocol, the way update_from_buffer interacts with buff_ptr ensures alignment,
-    // aliasing is ensured as this buffer should only be handled here
+    // aliasing is ensured as this buffer should only be handled here, u32@buff_ptr does not need a drop
     // Protocol: Set buffer's length to zero
     unsafe {
-      *(buff_ptr as *mut u32) = 0;
+      (buff_ptr as *mut u32).write(0);
     }
     post_free_buffer(infra, buff_idx)?;
 

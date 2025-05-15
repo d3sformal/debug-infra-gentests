@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use libc::{O_CREAT, O_EXCL, SEM_FAILED, c_int, mode_t, sem_open, sem_t};
 
 use crate::log::Log;
@@ -11,7 +13,9 @@ pub enum Semaphore {
     // SAFETY INVARIANT: sem is a valid pointer to an initialized semaphore obtained via correspodnging syscalls
     sem: *mut sem_t, // should mark !Send & !Sync
     cname: String,
+    marker: PhantomData<sem_t>,
   },
+  // this variant exists to disallow some interactions with semaphore after closing it
   Closed {
     // for our API, the sem potiner is not needed anymore @ this point (can change anytime ofc)
     cname: String,
@@ -21,7 +25,11 @@ pub enum Semaphore {
 impl Semaphore {
   pub fn try_post(&mut self) -> Result<(), String> {
     match self {
-      Semaphore::Open { sem, cname: _ } =>
+      Semaphore::Open {
+        sem,
+        cname: _,
+        marker: _pd,
+      } =>
       // SAFETY: Self invariant
       {
         if unsafe { libc::sem_post(*sem) } == -1 {
@@ -36,7 +44,11 @@ impl Semaphore {
 
   pub fn try_wait(&mut self) -> Result<(), String> {
     match self {
-      Semaphore::Open { sem, cname: _ } =>
+      Semaphore::Open {
+        sem,
+        cname: _,
+        marker: _pd,
+      } =>
       // SAFETY: Self invariant
       {
         if unsafe { libc::sem_wait(*sem) } == -1 {
@@ -54,11 +66,19 @@ impl Semaphore {
 
   pub fn try_close(self) -> Result<Semaphore, (Semaphore, String)> {
     match self {
-      Semaphore::Open { sem, cname } => {
+      Semaphore::Open {
+        sem,
+        cname,
+        marker: _pd,
+      } => {
         // SAFETY: Self invariant
         if unsafe { libc::sem_close(sem) } != 0 {
           Err((
-            Semaphore::Open { sem, cname },
+            Semaphore::Open {
+              sem,
+              cname,
+              marker: _pd,
+            },
             format!("Failed to close semaphore: {}", get_errno_string()),
           ))
         } else {
@@ -71,7 +91,11 @@ impl Semaphore {
 
   fn cname(&self) -> &String {
     match self {
-      Semaphore::Open { sem: _, cname } => cname,
+      Semaphore::Open {
+        sem: _,
+        cname,
+        marker: _pd,
+      } => cname,
       Semaphore::Closed { cname } => cname,
     }
   }
@@ -121,6 +145,7 @@ impl Semaphore {
       Ok(Self::Open {
         sem: result,
         cname: s_name,
+        marker: PhantomData,
       })
     }
   }
