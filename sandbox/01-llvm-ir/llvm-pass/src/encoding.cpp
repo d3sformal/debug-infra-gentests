@@ -3,6 +3,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include <filesystem>
 #include <fstream>
+#include <utility>
 
 ModuleMappingEncoding::ModuleMappingEncoding(const Str &MapsDirectory,
                                              const Str &Name,
@@ -24,21 +25,6 @@ ModuleMappingEncoding::ModuleMappingEncoding(const Str &MapsDirectory,
   m_file << ModuleName << m_sep;
   // plain m_file just does not work?
   m_failed = !m_file;
-}
-
-bool ModuleMappingEncoding::encodeFunction(const Str &FunctionName,
-                                        llcap::FunctionId Function) {
-  if (!ready()) {
-    return false;
-  }
-
-  m_file << FunctionName << m_innserSep << Function << m_sep;
-
-  if (!m_file) {
-    llvm::errs() << "Could not add function " << '\n';
-    setFailed();
-  }
-  return !!m_file;
 }
 
 bool ModuleMappingEncoding::finish(ModuleMappingEncoding &&Self) {

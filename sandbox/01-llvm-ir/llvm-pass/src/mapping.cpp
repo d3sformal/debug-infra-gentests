@@ -1,13 +1,16 @@
 #include "mapping.hpp"
 
+#include "argMapping.hpp"
 #include "constants.hpp"
 #include "encoding.hpp"
 #include "typeAlias.hpp"
 #include <llvm/ADT/StringRef.h>
+#include "llvm/IR/Function.h"
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cassert>
 #include <iomanip>
+#include <ranges>
 #include <sstream>
 
 Arr<u8, sizeof(llcap::ModuleId)>
@@ -50,9 +53,11 @@ FunctionIDMapper::FunctionIDMapper(const Str &ModuleId)
   OutFileName = SStream.str();
 }
 
-llcap::FunctionId FunctionIDMapper::addFunction(const Str &FnInfo) {
+llcap::FunctionId
+FunctionIDMapper::addFunction(const Str &FnInfo,
+                              ClangMetadataToLLVMArgumentMapping &Mapping) {
   auto Inserted = FunctionId++;
-  FunctionIds.emplace_back(FnInfo, Inserted);
+  FunctionIds.emplace_back(FnInfo, Inserted, Mapping.getArgumentSizeTypes());
   return Inserted;
 }
 
@@ -62,13 +67,16 @@ bool FunctionIDMapper::flush(FunctionIDMapper &&Mapper, const Str &TargetDir) {
   ModuleMappingEncoding Encoding(Dir, LocalMapper.getModuleMapId(),
                                  LocalMapper.getFullModuleId());
 
-  for (auto &&[FnName, Id] : LocalMapper.FunctionIds) {
+  for (auto &&[FnName, Id, Sizes] : LocalMapper.FunctionIds) {
     if (!Encoding.ready()) {
       llvm::errs() << "Encoding failed\n";
       return false;
     }
 
-    Encoding.encodeFunction(FnName, Id);
+    Encoding.encodeFunction(FnName, Id,
+                            Sizes | std::views::transform([](const auto &Pr) {
+                              return Pr.second;
+                            }));
   }
 
   if (!Encoding.ready()) {

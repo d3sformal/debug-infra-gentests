@@ -271,18 +271,25 @@ bool isStdFn(const Function &Fn, const Str &DemangledName,
   return false;
 }
 
-void insertArgTracingHooks(Module &M, Function &Fn, IdxMappingInfo &IdxInfo) {
-  BasicBlock &EntryBB = Fn.getEntryBlock();
-  IRBuilder<> Builder(&EntryBB.front());
+ClangMetadataToLLVMArgumentMapping
+getFullyRegisteredArgMapping(Function &Fn, IdxMappingInfo &IdxInfo) {
   ClangMetadataToLLVMArgumentMapping Mapping(Fn, IdxInfo);
   Mapping.registerCustomTypeIndicies(VSTR_LLVM_CXX_DUMP_STDSTRING,
                                      LlcapSizeType::LLSZ_CUSTOM);
   Mapping.registerCustomTypeIndicies(
       VSTR_LLVM_UNSIGNED_IDCS,
       LlcapSizeType::LLSZ_INVALID); // invalid size -> indeterminate size means
-                                    // that this type index is just a "flag" and has
-                                    // no effect on the final size read
+                                    // that this type index is just a "flag" and
+                                    // has no effect on the final size read
+  return Mapping;
+}
 
+void insertArgTracingHooks(Module &M, Function &Fn, IdxMappingInfo &IdxInfo) {
+  BasicBlock &EntryBB = Fn.getEntryBlock();
+  IRBuilder<> Builder(&EntryBB.front());
+
+  ClangMetadataToLLVMArgumentMapping Mapping =
+      getFullyRegisteredArgMapping(Fn, IdxInfo);
   for (auto *Arg = Fn.arg_begin(); Arg != Fn.arg_end(); ++Arg) {
     insertArgCaptureHook(Builder, M, Arg, Mapping,
                          Mapping.getArgumentSizeTypes());
@@ -309,10 +316,11 @@ class FunctionEntryInsertion : public Instrumentation {
 private:
   FunctionIDMapper m_fnIdMap;
   Module &m_module;
+  IdxMappingInfo m_seps;
 
 public:
-  FunctionEntryInsertion(Module &M)
-      : m_fnIdMap(M.getModuleIdentifier()), m_module(M) {}
+  FunctionEntryInsertion(Module &M, IdxMappingInfo Seps)
+      : m_fnIdMap(M.getModuleIdentifier()), m_module(M), m_seps(Seps) {}
 
   bool prepare() override {
     return args::MapFilesDirectory.getValue().length() != 0;
@@ -359,7 +367,9 @@ public:
         }
       }
       // TODO handle viability
-      const auto FunId = m_fnIdMap.addFunction(DemangledName);
+      ClangMetadataToLLVMArgumentMapping Mapping =
+          getFullyRegisteredArgMapping(Fn, m_seps);
+      const auto FunId = m_fnIdMap.addFunction(DemangledName, Mapping);
 
       insertFnEntryHook(Builder, m_module, m_fnIdMap.getModuleMapIntId(),
                         FunId);
@@ -506,7 +516,7 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
       }
     } else {
       IF_VERBOSE errs() << "Instrumenting fn entry...\n";
-      FunctionEntryInsertion Work(M);
+      FunctionEntryInsertion Work(M, MappingInfo);
       Work.run();
 
       if (!Work.finish()) {
