@@ -1,11 +1,10 @@
 #ifndef LLCAP_TYPEMAP
 #define LLCAP_TYPEMAP
 
-#include "../../custom-metadata-pass/ast-meta-add/llvm-metadata.h"
+#include "typeids.h"
 #include "verbosity.hpp"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Function.h"
-#include <algorithm>
 #include <map>
 #include <set>
 #include <vector>
@@ -45,71 +44,24 @@ class ClangMetadataToLLVMArgumentMapping {
   // and is accounted for)
   std::vector<size_t> m_shiftMap;
   bool m_instanceMember;
-  std::map<llvm::StringRef, std::set<size_t>> m_typeIndicies;
+  std::map<llvm::StringRef, std::pair<LlcapSizeType, std::set<size_t>>>
+      m_typeIndicies;
   llvm::Function &m_fn;
   IdxMappingInfo m_seps;
 
+  [[nodiscard]] LlcapSizeType llvmArgNoSizeType(size_t LlvmArgNo) const;
+
 public:
-  ClangMetadataToLLVMArgumentMapping(llvm::Function &Fn, IdxMappingInfo Seps)
-      : m_fn(Fn), m_seps(Seps) {
-    m_shiftMap = getSretArgumentShiftVec(m_fn);
-    m_instanceMember =
-        m_fn.getMetadata(llvm::StringRef(VSTR_LLVM_CXX_THISPTR)) != nullptr;
-  }
-  [[nodiscard]] bool
-  llvmArgNoMatches(size_t LlvmArgNo, const llvm::StringRef &MetadataKey) const {
-    IF_DEBUG {
-      llvm::errs()
-          << "Checking argument index match for argument with llvm index "
-          << LlvmArgNo << '\n'
-          << "Custom type indicies " << MetadataKey << ": ";
-    }
-    if (!m_typeIndicies.contains(MetadataKey)) {
-      IF_DEBUG { llvm::errs() << "none\n"; }
-      return false;
-    }
+  ClangMetadataToLLVMArgumentMapping(llvm::Function &Fn, IdxMappingInfo Seps);
 
-    const auto &CustTypes = m_typeIndicies.at(MetadataKey);
-    IF_DEBUG {
-      for (const auto &I : CustTypes) {
-        llvm::errs() << I << " ";
-      }
-      llvm::errs() << "\nShiftMap: ";
+  [[nodiscard]] bool llvmArgNoMatches(size_t LlvmArgNo,
+                                      const llvm::StringRef &MetadataKey) const;
 
-      for (const auto &I : m_shiftMap) {
-        llvm::errs() << I << " ";
-      }
-    }
+  bool registerCustomTypeIndicies(const llvm::StringRef &MetadataKey,
+                                  LlcapSizeType AssociatedSize);
 
-    auto Res = std::ranges::any_of(CustTypes, [&](size_t AstIndex) {
-      return AstIndex + m_shiftMap[AstIndex] == LlvmArgNo;
-    });
-
-    return Res;
-  }
-
-  bool registerCustomTypeIndicies(const llvm::StringRef &MetadataKey) {
-    auto CustTypeIdcs =
-        getCustomTypeIndicies(MetadataKey, m_fn, m_instanceMember, m_seps);
-    IF_DEBUG {
-      llvm::errs() << "CustType indicies: ";
-      if (CustTypeIdcs) {
-        for (auto &&I : *CustTypeIdcs) {
-          llvm::errs() << I << " ";
-        }
-      }
-      llvm::errs() << '\n';
-    }
-    std::optional<std::set<size_t>> CustTypeIdxMap =
-        CustTypeIdcs ? std::optional(
-                           std::set(CustTypeIdcs->begin(), CustTypeIdcs->end()))
-                     : std::nullopt;
-    if (CustTypeIdxMap) {
-      m_typeIndicies[MetadataKey] = *CustTypeIdxMap;
-      return true;
-    }
-    return false;
-  }
+  [[nodiscard]] std::vector<std::pair<size_t, LlcapSizeType>>
+  getArgumentSizeTypes() const;
 };
 
 #endif

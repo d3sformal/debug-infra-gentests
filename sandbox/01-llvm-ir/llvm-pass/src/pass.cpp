@@ -4,6 +4,7 @@
 #include "constants.hpp"
 #include "mapping.hpp"
 #include "typeAlias.hpp"
+#include "typeids.h"
 #include "utility.hpp"
 #include "verbosity.hpp"
 #include "llvm/ADT/APInt.h"
@@ -30,6 +31,7 @@
 #include <fstream>
 #include <ios>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 using namespace llvm;
@@ -169,75 +171,92 @@ void insertFnEntryHook(IRBuilder<> &Builder, Module &M,
 // struct in a register)
 
 void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
-                          const ClangMetadataToLLVMArgumentMapping &Mapping) {
-  auto ArgNum = Arg->getArgNo();
+                          const ClangMetadataToLLVMArgumentMapping &Mapping,
+                          const Vec<Pair<size_t, LlcapSizeType>> &Sizes) {
   auto &Ctx = M.getContext();
+  auto GetOrInsertHookFn = [&](const char *HookName, auto *TypePtr) {
+    return M.getOrInsertFunction(
+        HookName, FunctionType::get(Type::getVoidTy(Ctx), {TypePtr}, false));
+  };
+
+  auto ArgNum = Arg->getArgNo();
+  auto *ArgT = Arg->getType();
+
+  if (ArgT->isFloatTy()) {
+    IF_VERBOSE errs() << "Inserting call f32\n";
+    auto CallFloat = GetOrInsertHookFn("hook_float", Type::getFloatTy(Ctx));
+    Builder.CreateCall(CallFloat, {Arg});
+    return;
+  }
+
+  if (ArgT->isDoubleTy()) {
+    IF_VERBOSE errs() << "Inserting call f64\n";
+    auto CallDouble = GetOrInsertHookFn("hook_double", Type::getDoubleTy(Ctx));
+    Builder.CreateCall(CallDouble, {Arg});
+    return;
+  }
+
+  auto CallByte = GetOrInsertHookFn("hook_char", Type::getInt8Ty(Ctx));
+  auto CallUnsByte = GetOrInsertHookFn("hook_uchar", Type::getInt8Ty(Ctx));
+  auto CallShort = GetOrInsertHookFn("hook_short", Type::getInt8Ty(Ctx));
+  auto CallUnsShort = GetOrInsertHookFn("hook_ushort", Type::getInt8Ty(Ctx));
+  auto CallInt32 = GetOrInsertHookFn("hook_int32", Type::getInt32Ty(Ctx));
+  auto CallUnsInt32 = GetOrInsertHookFn("hook_uint32", Type::getInt32Ty(Ctx));
+  auto CallInt64 = GetOrInsertHookFn("hook_int64", Type::getInt64Ty(Ctx));
+  auto CallUnsInt64 = GetOrInsertHookFn("hook_uint64", Type::getInt64Ty(Ctx));
+
+  const Map<LlcapSizeType, Pair<FunctionCallee, FunctionCallee>>
+      IntTypeSizeMap = {
+          {LlcapSizeType::LLSZ_8, Pair{CallUnsByte, CallByte}},
+          {LlcapSizeType::LLSZ_16, Pair{CallUnsShort, CallShort}},
+          {LlcapSizeType::LLSZ_32, Pair{CallUnsInt32, CallInt32}},
+          {LlcapSizeType::LLSZ_64, Pair{CallUnsInt64, CallInt64}}};
+  static_assert(
+      std::underlying_type_t<LlcapSizeType>(LlcapSizeType::LLSZ_8) * 8 == 8,
+      "Failed basic check");
+
   auto IsAttrUnsgined =
       Mapping.llvmArgNoMatches(ArgNum, VSTR_LLVM_UNSIGNED_IDCS);
-  auto *ArgT = Arg->getType();
-  auto CallByte = M.getOrInsertFunction(
-      "hook_char",
-      FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt8Ty(Ctx)}, false));
-  auto CallUnsByte = M.getOrInsertFunction(
-      "hook_uchar",
-      FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt8Ty(Ctx)}, false));
-  auto CallShort = M.getOrInsertFunction(
-      "hook_short",
-      FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt8Ty(Ctx)}, false));
-  auto CallUnsShort = M.getOrInsertFunction(
-      "hook_ushort",
-      FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt8Ty(Ctx)}, false));
-  auto CallInt32 = M.getOrInsertFunction(
-      "hook_int32",
-      FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt32Ty(Ctx)}, false));
-  auto CallUnsInt32 = M.getOrInsertFunction(
-      "hook_uint32",
-      FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt32Ty(Ctx)}, false));
-  auto CallInt64 = M.getOrInsertFunction(
-      "hook_int64",
-      FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt64Ty(Ctx)}, false));
-  auto CallUnsInt64 = M.getOrInsertFunction(
-      "hook_uint64",
-      FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt64Ty(Ctx)}, false));
-  auto CallFloat = M.getOrInsertFunction(
-      "hook_float",
-      FunctionType::get(Type::getVoidTy(Ctx), {Type::getFloatTy(Ctx)}, false));
-  auto CallDouble = M.getOrInsertFunction(
-      "hook_double",
-      FunctionType::get(Type::getVoidTy(Ctx), {Type::getDoubleTy(Ctx)}, false));
-
-  if (ArgT->isIntegerTy(8)) {
-    IF_VERBOSE errs() << "Inserting call 8" << (IsAttrUnsgined ? "U" : "S")
-                      << '\n';
-    Builder.CreateCall(IsAttrUnsgined ? CallUnsByte : CallByte, {Arg});
-  } else if (ArgT->isIntegerTy(16)) {
-    IF_VERBOSE errs() << "Inserting call 16" << (IsAttrUnsgined ? "U" : "S")
-                      << '\n';
-    Builder.CreateCall(IsAttrUnsgined ? CallUnsShort : CallShort, {Arg});
-  } else if (ArgT->isIntegerTy(32)) {
-    IF_VERBOSE errs() << "Inserting call 32" << (IsAttrUnsgined ? "U" : "S")
-                      << '\n';
-    Builder.CreateCall(IsAttrUnsgined ? CallUnsInt32 : CallInt32, {Arg});
-  } else if (ArgT->isIntegerTy(64)) {
-    IF_VERBOSE errs() << "Inserting call 64" << (IsAttrUnsgined ? "U" : "S")
-                      << '\n';
-    Builder.CreateCall(IsAttrUnsgined ? CallUnsInt64 : CallInt64, {Arg});
-  } else if (ArgT->isFloatTy()) {
-    IF_VERBOSE errs() << "Inserting call f32\n";
-    Builder.CreateCall(CallFloat, {Arg});
-  } else if (ArgT->isDoubleTy()) {
-    IF_VERBOSE errs() << "Inserting call f64\n";
-    Builder.CreateCall(CallDouble, {Arg});
-  } else if (Mapping.llvmArgNoMatches(ArgNum, VSTR_LLVM_CXX_DUMP_STDSTRING)) {
-    IF_VERBOSE errs() << "Inserting call std::string\n";
-    auto CallCxxString = M.getOrInsertFunction(
-        "vstr_extra_cxx__string",
-        FunctionType::get(Type::getVoidTy(Ctx), {Arg->getType()}, false));
-    Builder.CreateCall(CallCxxString, {Arg});
-  } else {
-    IF_VERBOSE errs() << "Skipping Argument\n";
-    IF_DEBUG Arg->dump();
+  auto ThisArgSize = Sizes[ArgNum].second;
+  if (!isValid(ThisArgSize)) {
+    errs()
+        << "Encountered an invalid argument size specifier, cannot instrument";
+    IF_VERBOSE {
+      errs() << " arg:\n";
+      Arg->dump();
+    }
+    errs() << "\n";
+    return;
   }
+
+  if (IntTypeSizeMap.contains(ThisArgSize)) {
+    const unsigned int Bits =
+        std::underlying_type_t<LlcapSizeType>(ThisArgSize) * 8;
+    if (ArgT->isIntegerTy(Bits)) {
+      auto &&[UnsFn, SignFn] = IntTypeSizeMap.at(ThisArgSize);
+      IF_VERBOSE errs() << "Inserting call " << std::to_string(Bits)
+                        << (IsAttrUnsgined ? "U\n" : "S\n");
+      Builder.CreateCall(IsAttrUnsgined ? UnsFn : SignFn, {Arg});
+      return;
+    }
+  }
+
+  if (Mapping.llvmArgNoMatches(ArgNum, VSTR_LLVM_CXX_DUMP_STDSTRING)) {
+    if (!ArgT->isPointerTy()) {
+      errs() << "std::string hooks cannot handle non-pointer argument of this "
+                "type yet\n";
+      return;
+    }
+
+    IF_VERBOSE errs() << "Inserting call std::string\n";
+    auto CallCxxString = GetOrInsertHookFn("vstr_extra_cxx__string", ArgT);
+    Builder.CreateCall(CallCxxString, {Arg});
+    return;
+  }
+
+  errs() << "Encountered an unknown argument size specifier "
+         << std::underlying_type_t<LlcapSizeType>(ThisArgSize) << '\n';
+  IF_VERBOSE Arg->dump();
 }
 
 bool isStdFn(const Function &Fn, const Str &DemangledName,
@@ -256,11 +275,17 @@ void insertArgTracingHooks(Module &M, Function &Fn, IdxMappingInfo &IdxInfo) {
   BasicBlock &EntryBB = Fn.getEntryBlock();
   IRBuilder<> Builder(&EntryBB.front());
   ClangMetadataToLLVMArgumentMapping Mapping(Fn, IdxInfo);
-  Mapping.registerCustomTypeIndicies(VSTR_LLVM_CXX_DUMP_STDSTRING);
-  Mapping.registerCustomTypeIndicies(VSTR_LLVM_UNSIGNED_IDCS);
+  Mapping.registerCustomTypeIndicies(VSTR_LLVM_CXX_DUMP_STDSTRING,
+                                     LlcapSizeType::LLSZ_CUSTOM);
+  Mapping.registerCustomTypeIndicies(
+      VSTR_LLVM_UNSIGNED_IDCS,
+      LlcapSizeType::LLSZ_INVALID); // invalid size -> indeterminate size means
+                                    // that this type index is just a "flag" and has
+                                    // no effect on the final size read
 
   for (auto *Arg = Fn.arg_begin(); Arg != Fn.arg_end(); ++Arg) {
-    insertArgCaptureHook(Builder, M, Arg, Mapping);
+    insertArgCaptureHook(Builder, M, Arg, Mapping,
+                         Mapping.getArgumentSizeTypes());
   }
 }
 
