@@ -20,7 +20,7 @@ public:
 
   bool ready() const { return !m_failed; }
 
-  bool addFunction(const std::string &, llcap::FunctionId);
+  bool encodeFunction(const std::string &, llcap::FunctionId);
 };
 
 #endif

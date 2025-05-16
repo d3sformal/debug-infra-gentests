@@ -26,7 +26,7 @@ ModuleMappingEncoding::ModuleMappingEncoding(const Str &MapsDirectory,
   m_failed = !m_file;
 }
 
-bool ModuleMappingEncoding::addFunction(const Str &FunctionName,
+bool ModuleMappingEncoding::encodeFunction(const Str &FunctionName,
                                         llcap::FunctionId Function) {
   if (!ready()) {
     return false;

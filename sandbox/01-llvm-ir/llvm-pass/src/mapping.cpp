@@ -62,15 +62,13 @@ bool FunctionIDMapper::flush(FunctionIDMapper &&Mapper, const Str &TargetDir) {
   ModuleMappingEncoding Encoding(Dir, LocalMapper.getModuleMapId(),
                                  LocalMapper.getFullModuleId());
 
-  for (auto &&IdPair : LocalMapper.FunctionIds) {
+  for (auto &&[FnName, Id] : LocalMapper.FunctionIds) {
     if (!Encoding.ready()) {
       llvm::errs() << "Encoding failed\n";
       return false;
     }
-    Str &FnName = IdPair.first;
-    llcap::FunctionId Id = IdPair.second;
 
-    Encoding.addFunction(FnName, Id);
+    Encoding.encodeFunction(FnName, Id);
   }
 
   if (!Encoding.ready()) {
