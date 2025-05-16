@@ -37,7 +37,7 @@ index 3faf63e395a..cd65c6a5669 100644
    void setRangeEnd(SourceLocation E) { EndRangeLoc = E; }
  
 diff --git a/clang/lib/CodeGen/CodeGenFunction.cpp b/clang/lib/CodeGen/CodeGenFunction.cpp
-index 4d29ceace64..275c7431045 100644
+index 4d29ceace64..036297cb4d3 100644
 --- a/clang/lib/CodeGen/CodeGenFunction.cpp
 +++ b/clang/lib/CodeGen/CodeGenFunction.cpp
 @@ -11,6 +11,8 @@
@@ -57,12 +57,7 @@ index 4d29ceace64..275c7431045 100644
  #include "llvm/Frontend/OpenMP/OMPIRBuilder.h"
  #include "llvm/IR/DataLayout.h"
  #include "llvm/IR/Dominators.h"
-@@ -45,14 +48,294 @@
- #include "llvm/IR/Intrinsics.h"
- #include "llvm/IR/MDBuilder.h"
- #include "llvm/Support/CRC.h"
-+#include "llvm/Support/Casting.h"
- #include "llvm/Support/xxhash.h"
+@@ -49,10 +52,288 @@
  #include "llvm/Transforms/Scalar/LowerExpectIntrinsic.h"
  #include "llvm/Transforms/Utils/PromoteMemToReg.h"
  #include <optional>
@@ -225,28 +220,27 @@ index 4d29ceace64..275c7431045 100644
 +      unsigned NumberOfArgs;
 +      
 +      IRArgs()
-+      : PaddingArgIndex(InvalidIndex), FirstArgIndex(InvalidIndex),
++      : PaddingArgIndex(llcap::INVLD_IDX), FirstArgIndex(llcap::INVLD_IDX),
 +      NumberOfArgs(0) {}
 +    };
 +    
 +    SmallVector<IRArgs, 8> ArgInfo;
 +    
 +  public:
-+    static const unsigned InvalidIndex = ~0U;
 +    ClangToLLVMArgMapping(const ASTContext &Context, const CGFunctionInfo &FI,
 +                          bool OnlyRequiredArgs = false)
-+        : InallocaArgNo(InvalidIndex), SRetArgNo(InvalidIndex), TotalIRArgs(0),
++        : InallocaArgNo(llcap::INVLD_IDX), SRetArgNo(llcap::INVLD_IDX), TotalIRArgs(0),
 +          ArgInfo(OnlyRequiredArgs ? FI.getNumRequiredArgs() : FI.arg_size()) {
 +      construct(Context, FI, OnlyRequiredArgs);
 +    }
 +  
-+    bool hasInallocaArg() const { return InallocaArgNo != InvalidIndex; }
++    bool hasInallocaArg() const { return InallocaArgNo != llcap::INVLD_IDX; }
 +    unsigned getInallocaArgNo() const {
 +      assert(hasInallocaArg());
 +      return InallocaArgNo;
 +    }
 +  
-+    bool hasSRetArg() const { return SRetArgNo != InvalidIndex; }
++    bool hasSRetArg() const { return SRetArgNo != llcap::INVLD_IDX; }
 +    unsigned getSRetArgNo() const {
 +      assert(hasSRetArg());
 +      return SRetArgNo;
@@ -256,7 +250,7 @@ index 4d29ceace64..275c7431045 100644
 +  
 +    bool hasPaddingArg(unsigned ArgNo) const {
 +      assert(ArgNo < ArgInfo.size());
-+      return ArgInfo[ArgNo].PaddingArgIndex != InvalidIndex;
++      return ArgInfo[ArgNo].PaddingArgIndex != llcap::INVLD_IDX;
 +    }
 +    unsigned getPaddingArgNo(unsigned ArgNo) const {
 +      assert(hasPaddingArg(ArgNo));
@@ -352,7 +346,7 @@ index 4d29ceace64..275c7431045 100644
  namespace llvm {
  extern cl::opt<bool> EnableSingleByteCoverage;
  } // namespace llvm
-@@ -1123,6 +1406,55 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
+@@ -1123,6 +1404,38 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
          getLLVMContext(), VScaleRange->first, VScaleRange->second));
    }
  
@@ -365,19 +359,16 @@ index 4d29ceace64..275c7431045 100644
 +    
 +    // constructing a type info map:
 +    ClangToLLVMArgMapping mapping(FD->getASTContext(), FnInfo);
-+    constexpr char PRIM_SEP = ' ';
-+    constexpr char GROUP_SEP = '#';
-+    constexpr char IDX_SZ_SEP = '-';
 +    
-+    std::string AttrmapResult = std::to_string(mapping.totalIRArgs()) + PRIM_SEP + std::to_string(FnInfo.arg_size()) + PRIM_SEP;
++    std::string AttrmapResult = std::to_string(mapping.totalIRArgs()) + llcap::PRIM_SEP + std::to_string(FnInfo.arg_size()) + llcap::PRIM_SEP;
 +    // this may expose invalid entries but bettter to have all the information
 +    size_t ArgMapIters = std::max((size_t)FnInfo.arg_size(), FD->param_size()); 
 +    for (size_t i = 0; i < ArgMapIters; ++i) {
 +      auto irArgs = mapping.getIRArgs(i);
 +      
-+      AttrmapResult += (std::to_string(irArgs.first) + IDX_SZ_SEP + std::to_string(irArgs.second));
++      AttrmapResult += (std::to_string(irArgs.first) + llcap::IDX_SZ_SEP + std::to_string(irArgs.second));
 +      if (i < ArgMapIters - 1) {
-+        AttrmapResult += GROUP_SEP;
++        AttrmapResult += llcap::GROUP_SEP;
 +      }
 +
 +      // e.g. "3 2 1-1#2-1"
@@ -389,22 +380,53 @@ index 4d29ceace64..275c7431045 100644
 +
 +    Fn->addMetadata("LLCAP-CLANG-LLVM-MAP-DATA", *llvm::MDNode::get(Fn->getContext(),
 +    llvm::MDString::get(Fn->getContext(), AttrmapResult)));
-+    
-+    // PRSGD: "PaRSe GuiDe"
-+    auto* Node = Fn->getParent()->getOrInsertNamedMetadata("LLCAP-CLANG-LLVM-MAP-PRSGD");
-+    if (Node->getOperand(0) == nullptr) {
-+      Node->addOperand(llvm::MDNode::get(Fn->getParent()->getContext(),
-+      llvm::MDString::get(Fn->getParent()->getContext(), std::string() + PRIM_SEP + GROUP_SEP + IDX_SZ_SEP)));
-+    }
-+    
-+    Node = Fn->getParent()->getOrInsertNamedMetadata("LLCAP-CLANG-LLVM-MAP-INVLD_IDX");
-+    if (Node->getOperand(0) == nullptr) {
-+      Node->addOperand(llvm::MDNode::get(Fn->getParent()->getContext(),
-+      llvm::MDString::get(Fn->getParent()->getContext(), std::to_string(ClangToLLVMArgMapping::InvalidIndex))));
-+    }
-+
 +  }
 +
    llvm::BasicBlock *EntryBB = createBasicBlock("entry", CurFn);
  
    // Create a marker to make it easy to insert allocas into the entryblock
+diff --git a/clang/lib/CodeGen/CodeGenModule.cpp b/clang/lib/CodeGen/CodeGenModule.cpp
+index e917f3c42da..7ffa85cde38 100644
+--- a/clang/lib/CodeGen/CodeGenModule.cpp
++++ b/clang/lib/CodeGen/CodeGenModule.cpp
+@@ -999,6 +999,20 @@ void CodeGenModule::Release() {
+       NMD->addOperand(MD);
+   }
+ 
++  auto* Node = getModule().getOrInsertNamedMetadata(llcap::PARSE_GUIDE_MD_KEY);
++  if (Node != nullptr) {
++    Node->clearOperands();
++    Node->addOperand(llvm::MDNode::get(getModule().getContext(),
++    llvm::MDString::get(getModule().getContext(), std::string() + llcap::PRIM_SEP + llcap::GROUP_SEP + llcap::IDX_SZ_SEP)));
++  }
++
++  Node = getModule().getOrInsertNamedMetadata(llcap::INVL_IDX_MD_KEY);
++  if (Node != nullptr) {
++    Node->clearOperands();
++    Node->addOperand(llvm::MDNode::get(getModule().getContext(),
++    llvm::MDString::get(getModule().getContext(), std::to_string(llcap::INVLD_IDX))));
++  }
++
+   if (CodeGenOpts.DwarfVersion) {
+     getModule().addModuleFlag(llvm::Module::Max, "Dwarf Version",
+                               CodeGenOpts.DwarfVersion);
+diff --git a/clang/lib/CodeGen/CodeGenModule.h b/clang/lib/CodeGen/CodeGenModule.h
+index 59f400570fb..a89f6349125 100644
+--- a/clang/lib/CodeGen/CodeGenModule.h
++++ b/clang/lib/CodeGen/CodeGenModule.h
+@@ -56,6 +56,15 @@ class FileSystem;
+ }
+ }
+ 
++namespace llcap {
++  inline constexpr char PRIM_SEP = ' ';
++  inline constexpr char GROUP_SEP = '#';
++  inline constexpr char IDX_SZ_SEP = '-';
++  inline constexpr char PARSE_GUIDE_MD_KEY[27] = "LLCAP-CLANG-LLVM-MAP-PRSGD";
++  inline constexpr char INVL_IDX_MD_KEY[31] = "LLCAP-CLANG-LLVM-MAP-INVLD-IDX";
++  inline constexpr unsigned int INVLD_IDX = ~0U;
++}
++
+ namespace clang {
+ class ASTContext;
+ class AtomicType;

@@ -269,7 +269,7 @@ bool instrumentArgs() {
 }
 
 const char *MappingParseGuideMetaKey = "LLCAP-CLANG-LLVM-MAP-PRSGD";
-const char *MappingInvlIdxMetaKey = "LLCAP-CLANG-LLVM-MAP-INVLD_IDX";
+const char *MappingInvlIdxMetaKey = "LLCAP-CLANG-LLVM-MAP-INVLD-IDX";
 const char *MappingMetaKey = "LLCAP-CLANG-LLVM-MAP-DATA";
 
 class Instrumentation {
