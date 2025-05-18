@@ -48,6 +48,13 @@ fn main() -> Result<(), String> {
   lg.info(format!("Verbosity: {}", cli.verbose));
   let mut recorded_frequencies: HashMap<FunctionCallInfo, u64> = HashMap::new();
 
+  if cli.cleanup {
+    lg.info("Cleanup");
+    return cleanup_shmem(&cli.fd_prefix);
+  }
+
+  let modules = obtain_module_map(&cli.modmap)?;
+
   match cli.stage {
     args::Stage::TraceCalls {
       buff_count,
@@ -55,12 +62,6 @@ fn main() -> Result<(), String> {
       mut out_file,
       import_path,
     } => {
-      if cli.cleanup {
-        lg.info("Cleanup");
-        return cleanup_shmem(&cli.fd_prefix);
-      }
-
-      let modules = obtain_module_map(&cli.modmap)?;
       if import_path.is_some() {
         out_file = None;
       }
@@ -71,7 +72,7 @@ fn main() -> Result<(), String> {
         lg.info("Import done");
         result
       } else {
-        lg.info("Initializing semaphores");
+        lg.info("Initializing tracing infrastructure");
         let mut tracing_infra = init_tracing(&cli.fd_prefix, buff_count, buff_size)?;
 
         lg.info("Listening!");
