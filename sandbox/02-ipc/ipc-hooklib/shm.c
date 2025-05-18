@@ -1,10 +1,9 @@
 #include "shm.h"
 #include <assert.h>
-#include <stdbool.h>
-#include <stdint.h>
 #include <errno.h>
 #include <fcntl.h> /* For O_* constants */
 #include <semaphore.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -74,7 +73,8 @@ static int s_shm_initialized = SHM_FAIL_NORET;
 static int close_fd(int fd, const char *fd_name, const char *fail_msg) {
   if (fd != -1) {
     if (close(fd) == -1) {
-      printf("%s name: %s, fd: %d: %s\n", fail_msg, fd_name, fd, strerror(errno));
+      printf("%s name: %s, fd: %d: %s\n", fail_msg, fd_name, fd,
+             strerror(errno));
       return -1;
     }
     return 0;
@@ -86,17 +86,20 @@ static int close_fd(int fd, const char *fd_name, const char *fail_msg) {
 // for write permissions, pass nonzero write arg - TODO refactor
 // returns 0 if both target and fd are valid resources
 // returns -1 if any step failed, target and fd invalid
-static int map_shmem(const char *name, void **target, int *fd, size_t len, int write) {
+static int map_shmem(const char *name, void **target, int *fd, size_t len,
+                     int write) {
   int rv = -1;
   *fd = -1;
 
-  *fd = shm_open(name, write != 0 ? O_RDWR : O_RDONLY , 0);
+  *fd = shm_open(name, write != 0 ? O_RDWR : O_RDONLY, 0);
   if (*fd == -1) {
     printf("Failed to create shm FD for %s: %s\n", name, strerror(errno));
     return rv;
   }
 
-  void *mem_ptr = mmap(NULL, len, write != 0 ? (PROT_READ | PROT_WRITE) : PROT_READ, MAP_SHARED, *fd, 0);
+  void *mem_ptr =
+      mmap(NULL, len, write != 0 ? (PROT_READ | PROT_WRITE) : PROT_READ,
+           MAP_SHARED, *fd, 0);
   if (mem_ptr == MAP_FAILED) {
     printf("Failed to map from FD %s: %s\n", name, strerror(errno));
     close_fd(*fd, name, "Cleanup map_shmem failed to close FD");
@@ -177,7 +180,10 @@ static int update_buffer_idx(void) {
   }
 
   s_bumper = 0;
-  s_writing_to_buffer_idx = s_writing_to_buffer_idx + 1 == s_buff_info.buff_count ? 0 : s_writing_to_buffer_idx + 1;
+  s_writing_to_buffer_idx =
+      s_writing_to_buffer_idx + 1 == s_buff_info.buff_count
+          ? 0
+          : s_writing_to_buffer_idx + 1;
   return 0;
 }
 
@@ -196,7 +202,8 @@ size_t get_buff_total_sz(void) {
 }
 
 // sets up the semaphores and information required for buffer management
-// if this returns 0, s_buff_info, s_sem_full and s_sem_free are ready to be used
+// if this returns 0, s_buff_info, s_sem_full and s_sem_free are ready to be
+// used
 static int setup_infra(void) {
   int rv = SHM_FAIL_NORET;
 
@@ -204,22 +211,26 @@ static int setup_infra(void) {
     return rv;
   }
   static_assert(sizeof(size_t) > sizeof(uint32_t),
-  "Next line kinda depends on this");
-  printf("Buffers description: cnt: %u len: %u tot: %u\n", s_buff_info.buff_count, s_buff_info.buff_len, s_buff_info.total_len);
+                "Next line kinda depends on this");
+  printf("Buffers description: cnt: %u len: %u tot: %u\n",
+         s_buff_info.buff_count, s_buff_info.buff_len, s_buff_info.total_len);
   size_t buff_total_size = get_buff_total_sz();
   if (buff_total_size != (size_t)s_buff_info.total_len ||
       sizeof(s_bumper) >= s_buff_info.buff_len) {
     return rv;
   }
 
-  //  If O_CREAT is specified, and a semaphore with the given name already exists, then mode and value are ignored. (this should be the case, because we will want to first run the server and then the instrumented binary)
+  //  If O_CREAT is specified, and a semaphore with the given name already
+  //  exists, then mode and value are ignored. (this should be the case, because
+  //  we will want to first run the server and then the instrumented binary)
   s_sem_full = sem_open(s_sem_full_name, O_CREAT, SEMPERMS, 0);
   if (s_sem_full == SEM_FAILED) {
     printf("Failed to initialize FULL semaphore: %s\n", strerror(errno));
     return rv;
   }
 
-  s_sem_free = sem_open(s_sem_free_name, O_CREAT, SEMPERMS, s_buff_info.buff_count);
+  s_sem_free =
+      sem_open(s_sem_free_name, O_CREAT, SEMPERMS, s_buff_info.buff_count);
   if (s_sem_free == SEM_FAILED) {
     printf("Failed to initialize FREE semaphore: %s\n", strerror(errno));
     goto sem_full_cleanup;
@@ -230,7 +241,7 @@ static int setup_infra(void) {
   printf("Semaphore value: %d\n", sem_value);
   return 0;
 
-  sem_full_cleanup:
+sem_full_cleanup:
   semaphore_close(s_sem_full, s_sem_full_name);
   s_sem_full = SEM_FAILED;
   return rv;
@@ -293,8 +304,7 @@ sem_free_cleanup:
 static void *get_buffer(size_t idx) {
   static_assert(sizeof(char) == 1, "Byte is a byte");
   assert(idx < s_buff_info.buff_len);
-  return (void *)((char *)s_shared_buffers_ptr +
-                  idx * s_buff_info.buff_len);
+  return (void *)((char *)s_shared_buffers_ptr + idx * s_buff_info.buff_len);
 }
 
 static void *get_buffer_end(void) {
@@ -306,7 +316,8 @@ static void *get_buffer_end(void) {
 
   //         offset to start of data---vvvvvv-vvvvvvvv    vvvvvvvvvv----offset
   //         into the data
-  return (void *)((char *)get_buffer(s_writing_to_buffer_idx) + sizeof(s_bumper) + s_bumper);
+  return (void *)((char *)get_buffer(s_writing_to_buffer_idx) +
+                  sizeof(s_bumper) + s_bumper);
 }
 
 // used when local buffer is full and a new one is needed
@@ -333,7 +344,7 @@ static uint32_t get_buff_data_free_space(void) {
   return get_buff_data_space() - s_bumper;
 }
 
-static int can_push_data_of_size(size_t len, bool* allocated) {
+static int can_push_data_of_size(size_t len, bool *allocated) {
   // check overflow
   if (SIZE_MAX - len < get_buff_data_space()) {
     printf("Overflow on data size %lu\n", len);
@@ -377,15 +388,16 @@ static int unchecked_push_data(const void *source, uint32_t len) {
 
   memcpy(destination, source, len);
   s_bumper += len;
-  // in case of a crash, the last buffer's size MUST be known even if it was in progress
-  *(uint32_t*)get_buffer(s_writing_to_buffer_idx) = s_bumper;
+  // in case of a crash, the last buffer's size MUST be known even if it was in
+  // progress
+  *(uint32_t *)get_buffer(s_writing_to_buffer_idx) = s_bumper;
   return 0;
 }
 
 void ensure_align(uint32_t align) {
   void *destination = get_buffer_end();
-  uint64_t dest_n = (uint64_t) destination;
-  uint64_t rem = dest_n % (uint64_t) align;
+  uint64_t dest_n = (uint64_t)destination;
+  uint64_t rem = dest_n % (uint64_t)align;
   if (rem == 0) {
     return;
   }
@@ -393,17 +405,20 @@ void ensure_align(uint32_t align) {
   uint64_t to_align = align - rem;
   bool allocated = false;
   // we need to either:
-  // A) request a new buffer (which is aligned based on the size... TODO - ensure alginment to at least 8)
-  // B) force bump s_bumber to skip unaligned bytes (maybe sanitize the skipped bytes with zeroes)
+  // A) request a new buffer (which is aligned based on the size... TODO -
+  // ensure alginment to at least 8) B) force bump s_bumber to skip unaligned
+  // bytes (maybe sanitize the skipped bytes with zeroes)
 
-  // note that we cannot "just" push data without checking for the allocation first
-  // if we were to allocate AND push data, we would have misaligned buffers again
-  // for push + allocation throughout the push, we would also NOT have alignment guaranteed 
+  // note that we cannot "just" push data without checking for the allocation
+  // first if we were to allocate AND push data, we would have misaligned
+  // buffers again for push + allocation throughout the push, we would also NOT
+  // have alignment guaranteed
   if (can_push_data_of_size((size_t)to_align, &allocated) == 0) {
     if (!allocated) {
-      // if request above allocated new buffer, we are safe, if not, we have to push to_align bytes
+      // if request above allocated new buffer, we are safe, if not, we have to
+      // push to_align bytes
       unsigned char data = 0x00;
-      while(to_align > 0) {
+      while (to_align > 0) {
         push_data(&data, 1);
         --to_align;
       }
@@ -412,7 +427,6 @@ void ensure_align(uint32_t align) {
     printf("Failed to align to: %lu\n", to_align);
     return;
   }
-
 }
 
 int push_data(const void *source, uint32_t len) {
@@ -429,10 +443,10 @@ int push_data(const void *source, uint32_t len) {
 
 // terminates the protocol
 int termination_sequence(void) {
-  // we'll post to the "full" semaphore exactly 2 * N times (N = number of buffers)
-  // this is in order to guarantee N consecutive "empty" buffers being sent
-  // the above relies on the fact that the other side of the communication sets
-  // the payload length (inside a buffer) to zero before "pushing it back"
+  // we'll post to the "full" semaphore exactly 2 * N times (N = number of
+  // buffers) this is in order to guarantee N consecutive "empty" buffers being
+  // sent the above relies on the fact that the other side of the communication
+  // sets the payload length (inside a buffer) to zero before "pushing it back"
   for (uint32_t i = 0; i < 2 * s_buff_info.buff_count; ++i) {
     if (sem_post(s_sem_full) != 0) {
       printf("Failed posting a full buffer! %s\n", strerror(errno));
@@ -449,7 +463,7 @@ void deinit(void) {
   if (move_to_next_buff() != 0) {
     printf("Failed to obtain a free buffer!\n");
   }
-  
+
   if (termination_sequence() != 0) {
     printf("Failed to send termination sequence during deinit\n");
   }
@@ -472,12 +486,14 @@ void deinit(void) {
 // after a crash, there can be a buffer, that needs to be flushed
 // we find this by looking at the payload length of a buffer (the first 4 bytes)
 // if there is 0 -> buffer has been flushed (responsibility of the other side)
-//  -> we do "nothing" and only signal on the full semaphore (to make sure the other side reads a "zero-length" buffer and terminates)
+//  -> we do "nothing" and only signal on the full semaphore (to make sure the
+//  other side reads a "zero-length" buffer and terminates)
 // if there is non-zero -> buffer was used and not flushed (due to a crash)
-//  -> we signal 2 times on the semaphore, once for the outgoing data and once for the terminating message
+//  -> we signal 2 times on the semaphore, once for the outgoing data and once
+//  for the terminating message
 int after_crash_recovery(void) {
-  // first, wait for the "free semaphore" to be N - 1 or N, N = number of buffers
-  // (one is "used" or none are "used")
+  // first, wait for the "free semaphore" to be N - 1 or N, N = number of
+  // buffers (one is "used" or none are "used")
   int res = -1;
   printf("Recovering after crash!\n");
   do {
