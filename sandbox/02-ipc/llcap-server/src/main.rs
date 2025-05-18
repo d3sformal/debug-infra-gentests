@@ -11,12 +11,29 @@ mod libc_wrappers;
 mod log;
 mod modmap;
 mod shmem_capture;
+mod sizetype_handlers;
 mod stages;
 use shmem_capture::{call_tracing::msg_handler, cleanup_shmem, deinit_tracing, init_tracing};
 use stages::call_tracing::{
   FunctionCallInfo, export_data, export_tracing_selection, import_data,
   obtain_function_id_selection, print_summary,
 };
+
+fn obtain_module_map(path: &std::path::PathBuf) -> Result<ExtModuleMap, String> {
+  let lg = Log::get("obtain_module_map");
+  let mb_modules = ExtModuleMap::try_from(path);
+  match mb_modules {
+    Ok(m) => Ok(m),
+    Err(e) => {
+      lg.crit(format!(
+        "Could not parse module mapping from {}:\n{}",
+        path.to_string_lossy(),
+        e
+      ));
+      Err("".to_owned())
+    }
+  }
+}
 
 fn main() -> Result<(), String> {
   Log::set_verbosity(255);
@@ -29,18 +46,6 @@ fn main() -> Result<(), String> {
   let cli = cli.unwrap();
   Log::set_verbosity(cli.verbose);
   lg.info(format!("Verbosity: {}", cli.verbose));
-
-  let modules = ExtModuleMap::try_from(cli.modmap.clone());
-  if modules.is_err() {
-    lg.crit(format!(
-      "Could not parse module mapping from {}:\n{}",
-      cli.modmap.to_string_lossy(),
-      modules.unwrap_err()
-    ));
-    return Err("".to_owned());
-  }
-
-  let modules = modules.unwrap();
   let mut recorded_frequencies: HashMap<FunctionCallInfo, u64> = HashMap::new();
 
   match cli.stage {
@@ -55,6 +60,7 @@ fn main() -> Result<(), String> {
         return cleanup_shmem(&cli.fd_prefix);
       }
 
+      let modules = obtain_module_map(&cli.modmap)?;
       if import_path.is_some() {
         out_file = None;
       }

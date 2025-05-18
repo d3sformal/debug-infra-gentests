@@ -2,21 +2,19 @@ use std::{collections::HashMap, fs, path::PathBuf};
 
 use crate::Log;
 use crate::constants::Constants;
+use crate::sizetype_handlers::ArgSizeTypeRef;
 
-#[derive(Debug)]
 pub struct FunctionMap {
   fnid_to_demangled_name: HashMap<u32, String>,
+  fnid_to_argument_reader: HashMap<u32, Vec<ArgSizeTypeRef>>,
 }
 
 impl FunctionMap {
-  pub fn new(values: &[(u32, String)]) -> Self {
+  pub fn new(values: &[(u32, String)], readers: HashMap<u32, Vec<ArgSizeTypeRef>>) -> Self {
     Self {
       fnid_to_demangled_name: HashMap::from_iter(values.to_owned()),
+      fnid_to_argument_reader: readers,
     }
-  }
-
-  pub fn insert(&mut self, id: u32, name: String) -> Option<String> {
-    self.fnid_to_demangled_name.insert(id, name)
   }
 
   pub fn get(&self, id: u32) -> Option<&String> {
@@ -24,9 +22,19 @@ impl FunctionMap {
   }
 }
 
-fn parse_fn_id_pair(inp: &[&[u8]]) -> Result<(u32, String), String> {
-  if inp.len() != 2 {
-    return Err("Invalid ID format, expecting two items per line".into());
+fn bytes_to_num<T: num_traits::Num>(inp: &[u8]) -> Result<T, String>
+where
+  <T as num_traits::Num>::FromStrRadixErr: ToString,
+{
+  let radix10 = Constants::parse_fnid_radix();
+  String::from_utf8(inp.to_vec())
+    .map_err(|e| e.to_string())
+    .and_then(|v| T::from_str_radix(&v, radix10).map_err(|e| e.to_string()))
+}
+
+fn parse_fn_id_tuple(inp: &[&[u8]]) -> Result<(u32, String, Vec<u16>), String> {
+  if inp.len() < 3 {
+    return Err("Invalid ID format, expecting at least 3 items per line".into());
   }
 
   let try_name = String::from_utf8(inp[0].to_vec());
@@ -34,17 +42,25 @@ fn parse_fn_id_pair(inp: &[&[u8]]) -> Result<(u32, String), String> {
     return Err(e.to_string());
   }
 
-  let try_num = String::from_utf8(inp[1].to_vec())
-    .map_err(|e| e.to_string())
-    .and_then(|v| {
-      u32::from_str_radix(&v, Constants::parse_fnid_radix()).map_err(|e| e.to_string())
-    });
+  let fnid: u32 = bytes_to_num(inp[1])?;
 
-  try_num.map(|id| (id, try_name.unwrap()))
+  let arg_count: usize = bytes_to_num(inp[2])?;
+  if 3 + arg_count != inp.len() {
+    return Err("Invalid argumetn count - not in sync with the data".to_string());
+  }
+
+  let mut argument_specifiers: Vec<u16> = Vec::new();
+  for v in inp.iter().skip(3) {
+    let arg_spec: u16 = bytes_to_num(v)?;
+    argument_specifiers.push(arg_spec);
+  }
+
+  Ok((fnid, try_name.unwrap(), argument_specifiers))
 }
 
-impl From<&[&[u8]]> for FunctionMap {
-  fn from(value: &[&[u8]]) -> Self {
+impl TryFrom<&[&[u8]]> for FunctionMap {
+  type Error = String;
+  fn try_from(value: &[&[u8]]) -> Result<Self, Self::Error> {
     let newline_split = value.iter().filter(|v| !v.is_empty());
     let zero_splits: Vec<Vec<&[u8]>> = newline_split
       .map(|v: &&[u8]| v.split(|v| *v == 0x0).collect::<Vec<&[u8]>>())
@@ -53,26 +69,43 @@ impl From<&[&[u8]]> for FunctionMap {
 
     let parsed_pairs = zero_splits
       .iter()
-      .map(|split_pair| parse_fn_id_pair(split_pair));
+      .map(|split_pair| parse_fn_id_tuple(split_pair));
 
-    let mut target = Self::new(&[]);
+    let mut target = Self::new(&[], HashMap::new());
 
-    let lg = Log::get("FunctionMap::From(..bytes..)");
+    let lg = Log::get("FunctionMap::TryFrom[u8]");
     for pair_res in parsed_pairs {
       match pair_res {
         Err(e) => lg.warn(format!("Could not parse function ID pair: {e}")),
-        Ok((id, name)) => {
-          if let Some(old_name) = target.insert(id, name.clone()) {
+        Ok((id, name, specifiers)) => {
+          if let Some(old_name) = target.fnid_to_demangled_name.insert(id, name.clone()) {
             lg.warn(format!(
-              "Duplicate function ID, this should not happen within a module! Function ID: {}, name 1: {}, name 2: {}",
+              "Duplicate function ID - demangled name, this should not happen within a module! Function ID: {}, name 1: {}, name 2: {}",
               id, old_name, name
+            ));
+          }
+          let mut size_types: Vec<ArgSizeTypeRef> = Vec::with_capacity(specifiers.len());
+
+          for sz_type in &specifiers {
+            let spec = ArgSizeTypeRef::try_from(*sz_type)?;
+            size_types.push(spec);
+          }
+
+          lg.trace(format!(
+            "Added fn:\n{}:\n\tid:{}\targs: {:?}",
+            name, id, size_types
+          ));
+          if let Some(old_thing) = target.fnid_to_argument_reader.insert(id, size_types) {
+            lg.warn(format!(
+              "Duplicate function ID - argument size type, this should not happen within a module! Function ID: {}, name: {}, old types: {:?}, new specifiers: {:?}",
+              id, name, old_thing, specifiers
             ));
           }
         }
       }
     }
 
-    target
+    Ok(target)
   }
 }
 
@@ -112,7 +145,6 @@ impl TryFrom<&str> for IntegralModId {
   }
 }
 
-#[derive(Debug)]
 pub struct ExtModuleMap {
   modhash_to_modidx: HashMap<RcvdModId, usize>,
   function_ids: Vec<FunctionMap>,
@@ -173,7 +205,7 @@ impl ExtModuleMap {
       Err("Empty module file".to_owned())
     }?;
 
-    let fn_map = FunctionMap::from(fn_map);
+    let fn_map = FunctionMap::try_from(fn_map)?;
 
     self.modhash_to_modidx.insert(modhash, index);
     self.function_ids.push(fn_map);
@@ -220,17 +252,17 @@ impl ExtModuleMap {
   }
 }
 
-impl TryFrom<PathBuf> for ExtModuleMap {
+impl TryFrom<&PathBuf> for ExtModuleMap {
   type Error = String;
 
-  fn try_from(path: PathBuf) -> Result<Self, Self::Error> {
+  fn try_from(path: &PathBuf) -> Result<Self, Self::Error> {
     if !path.exists() || !path.is_dir() {
       return Err(format!("{} is not a directory", path.to_string_lossy()));
     }
 
     let mut target = ExtModuleMap::new();
 
-    let dir = std::fs::read_dir(&path)
+    let dir = std::fs::read_dir(path)
       .map_err(|x| format!("Cannot open directory {}: {}", path.to_string_lossy(), x))?;
 
     for file in dir {
