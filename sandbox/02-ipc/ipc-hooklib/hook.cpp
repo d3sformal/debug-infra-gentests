@@ -1,5 +1,6 @@
 #include "hook.h"
 #include "./shm.h"
+#include <cstring>
 #include <stdint.h>
 #include <string>
 
@@ -9,30 +10,43 @@ static_assert(sizeof(long long) == 8, "Expecting long long to be 8 bytes");
 #define GENFN(name, argt, argvar, msg)                                         \
   GENFNDECL(name, argt, argvar) { printf("[HOOK] " msg, argvar); }
 
+#define GENFN_PUSH(name, argt, argvar, msg) \
+  GENFNDECL(name, argt, argvar) { printf("[HOOK] " msg, argvar); push_data(&argvar, sizeof(argt)); }
+  
   void hook_start(uint32_t module_id, uint32_t fn_id) {
     push_data(&module_id, sizeof(module_id));
     push_data(&fn_id, sizeof(fn_id));
   }
 
-GENFN(hook_cstring, const char *, str, "cstring: %s\n")
-GENFN(hook_int32, int, i, "int: %d\n")
+  void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id) {
+    ensure_align(4);
+    push_data(&module_id, sizeof(module_id));
+    push_data(&fn_id, sizeof(fn_id));
+  }
 
-GENFN(hook_int64, LLONG, d, "long long: %lld\n")
+  void hook_cstring(const char * str) {
+    printf("[HOOK] cstring: %s\n", str); 
+    push_data(str, (uint32_t)strlen(str) + 1); 
+  }
 
-GENFN(hook_float, float, str, "float: %f\n")
-GENFN(hook_double, double, str, "double: %lf\n")
+GENFN_PUSH(hook_int32, int, i, "int: %d\n")
 
-GENFN(hook_short, short, str, "short: %d\n")
-GENFN(hook_char, char, str, "byte: %d\n")
+GENFN_PUSH(hook_int64, LLONG, d, "long long: %lld\n")
 
-GENFN(hook_uchar, UCHAR, str, "unsigned byte: %u\n")
-GENFN(hook_ushort, USHORT, str, "unsigned short: %d\n")
-GENFN(hook_uint32, UINT, i, "unsigned int: %u\n")
-GENFN(hook_uint64, ULLONG, d, "unsigned long long: %llu\n")
+GENFN_PUSH(hook_float, float, str, "float: %f\n")
+GENFN_PUSH(hook_double, double, str, "double: %lf\n")
+
+GENFN_PUSH(hook_short, short, str, "short: %d\n")
+GENFN_PUSH(hook_char, char, str, "byte: %d\n")
+
+GENFN_PUSH(hook_uchar, UCHAR, str, "unsigned byte: %u\n")
+GENFN_PUSH(hook_ushort, USHORT, str, "unsigned short: %d\n")
+GENFN_PUSH(hook_uint32, UINT, i, "unsigned int: %u\n")
+GENFN_PUSH(hook_uint64, ULLONG, d, "unsigned long long: %llu\n")
 
 #ifdef __cplusplus
 
 GENFN(hook_stdstring8, const char *, str, "std::string: %s\n")
 
-void vstr_extra_cxx__string(std::string *str) { hook_stdstring8(str->c_str()); }
+void vstr_extra_cxx__string(std::string *str) { hook_cstring(str->c_str()); }
 #endif

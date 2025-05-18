@@ -333,7 +333,7 @@ static uint32_t get_buff_data_free_space(void) {
   return get_buff_data_space() - s_bumper;
 }
 
-static int can_push_data_of_size(size_t len) {
+static int can_push_data_of_size(size_t len, bool* allocated) {
   // check overflow
   if (SIZE_MAX - len < get_buff_data_space()) {
     printf("Overflow on data size %lu\n", len);
@@ -351,9 +351,12 @@ static int can_push_data_of_size(size_t len) {
       printf("Failed to obtain a free buffer!\n");
       return -1;
     }
+    if (allocated != NULL) {
+      *allocated = true;
+    }
     // safe recursive call as len is checked with maximum buffer size above
     // (get_buff_data_space)
-    return can_push_data_of_size(len);
+    return can_push_data_of_size(len, NULL);
   }
 
   return 0;
@@ -379,11 +382,44 @@ static int unchecked_push_data(const void *source, uint32_t len) {
   return 0;
 }
 
+void ensure_align(uint32_t align) {
+  void *destination = get_buffer_end();
+  uint64_t dest_n = (uint64_t) destination;
+  uint64_t rem = dest_n % (uint64_t) align;
+  if (rem == 0) {
+    return;
+  }
+
+  uint64_t to_align = align - rem;
+  bool allocated = false;
+  // we need to either:
+  // A) request a new buffer (which is aligned based on the size... TODO - ensure alginment to at least 8)
+  // B) force bump s_bumber to skip unaligned bytes (maybe sanitize the skipped bytes with zeroes)
+
+  // note that we cannot "just" push data without checking for the allocation first
+  // if we were to allocate AND push data, we would have misaligned buffers again
+  // for push + allocation throughout the push, we would also NOT have alignment guaranteed 
+  if (can_push_data_of_size((size_t)to_align, &allocated) == 0) {
+    if (!allocated) {
+      // if request above allocated new buffer, we are safe, if not, we have to push to_align bytes
+      unsigned char data = 0x00;
+      while(to_align > 0) {
+        push_data(&data, 1);
+        --to_align;
+      }
+    }
+  } else {
+    printf("Failed to align to: %lu\n", to_align);
+    return;
+  }
+
+}
+
 int push_data(const void *source, uint32_t len) {
   if (s_shm_initialized != SHM_OK) {
     return -1;
   }
-  if (s_buff_info.buff_len <= len || can_push_data_of_size(len) != 0) {
+  if (s_buff_info.buff_len <= len || can_push_data_of_size(len, NULL) != 0) {
     printf("Failed to push data due to len: %u\n", len);
     return -1;
   }
