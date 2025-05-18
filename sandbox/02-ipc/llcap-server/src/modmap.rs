@@ -4,21 +4,32 @@ use crate::Log;
 use crate::constants::Constants;
 use crate::sizetype_handlers::ArgSizeTypeRef;
 
+#[derive(Debug)]
 pub struct FunctionMap {
   fnid_to_demangled_name: HashMap<u32, String>,
-  fnid_to_argument_reader: HashMap<u32, Vec<ArgSizeTypeRef>>,
+  demangled_name_to_fnid: HashMap<String, u32>,
+  fnid_to_argument_sizes: HashMap<u32, Vec<ArgSizeTypeRef>>,
 }
 
 impl FunctionMap {
   pub fn new(values: &[(u32, String)], readers: HashMap<u32, Vec<ArgSizeTypeRef>>) -> Self {
     Self {
+      fnid_to_argument_sizes: readers,
+      demangled_name_to_fnid: HashMap::from_iter(values.iter().map(|(x, y)| (y.clone(), *x))),
       fnid_to_demangled_name: HashMap::from_iter(values.to_owned()),
-      fnid_to_argument_reader: readers,
     }
   }
 
-  pub fn get(&self, id: u32) -> Option<&String> {
+  pub fn get_name(&self, id: u32) -> Option<&String> {
     self.fnid_to_demangled_name.get(&id)
+  }
+
+  pub fn get_arg_size_ref(&self, id: u32) -> Option<&Vec<ArgSizeTypeRef>> {
+    self.fnid_to_argument_sizes.get(&id)
+  }
+
+  pub fn get_id(&self, name: &String) -> Option<&u32> {
+    self.demangled_name_to_fnid.get(name)
   }
 }
 
@@ -84,6 +95,8 @@ impl TryFrom<&[&[u8]]> for FunctionMap {
               id, old_name, name
             ));
           }
+          target.demangled_name_to_fnid.insert(name.clone(), id);
+
           let mut size_types: Vec<ArgSizeTypeRef> = Vec::with_capacity(specifiers.len());
 
           for sz_type in &specifiers {
@@ -95,7 +108,7 @@ impl TryFrom<&[&[u8]]> for FunctionMap {
             "Added fn:\n{}:\n\tid:{}\targs: {:?}",
             name, id, size_types
           ));
-          if let Some(old_thing) = target.fnid_to_argument_reader.insert(id, size_types) {
+          if let Some(old_thing) = target.fnid_to_argument_sizes.insert(id, size_types) {
             lg.warn(format!(
               "Duplicate function ID - argument size type, this should not happen within a module! Function ID: {}, name: {}, old types: {:?}, new specifiers: {:?}",
               id, name, old_thing, specifiers
@@ -145,6 +158,7 @@ impl TryFrom<&str> for IntegralModId {
   }
 }
 
+#[derive(Debug)]
 pub struct ExtModuleMap {
   modhash_to_modidx: HashMap<RcvdModId, usize>,
   function_ids: Vec<FunctionMap>,
@@ -224,11 +238,40 @@ impl ExtModuleMap {
       .find_map(|(k, v)| (*v == idx).then_some(*k))
   }
 
+  pub fn find_module_hash_by_name(&self, name: &String) -> Option<RcvdModId> {
+    self
+      .module_paths
+      .iter()
+      .enumerate()
+      .find_map(|(i, v)| (v == name).then(|| self.find_module_hash_by_idx(i)))
+      .flatten()
+  }
+
   pub fn get_function_name(&self, mod_idx: usize, fn_id: u32) -> Option<&String> {
     if mod_idx >= self.function_ids.len() {
       None
-    } else if let Some(fn_name) = self.function_ids[mod_idx].get(fn_id) {
-      Some(fn_name)
+    } else {
+      self.function_ids[mod_idx].get_name(fn_id)
+    }
+  }
+
+  pub fn get_function_id(&self, mod_idx: usize, fn_name: &String) -> Option<&u32> {
+    if mod_idx >= self.function_ids.len() {
+      None
+    } else {
+      self.function_ids[mod_idx].get_id(fn_name)
+    }
+  }
+
+  pub fn get_function_arg_size_descriptors(
+    &self,
+    mod_idx: usize,
+    fn_id: u32,
+  ) -> Option<&Vec<ArgSizeTypeRef>> {
+    if mod_idx >= self.function_ids.len() {
+      None
+    } else if let Some(fn_args) = self.function_ids[mod_idx].get_arg_size_ref(fn_id) {
+      Some(fn_args)
     } else {
       None
     }

@@ -59,6 +59,15 @@ pub enum Stage {
   },
 
   CaptureArgs {
+    // TODO merge later
+    /// Buffer count
+    #[arg(short = 'c', long, default_value = Constants::default_buff_count_str())]
+    buff_count: u32,
+
+    /// Buffer size in bytes
+    #[arg(short = 's', long, default_value = Constants::default_buff_size_bytes_str())]
+    buff_size: u32,
+
     /// input file from the call-tracing stage
     #[arg(short, long, default_value = Constants::default_selected_functions_path())]
     in_file: Option<PathBuf>,

@@ -6,7 +6,10 @@ use crate::{
   stages::call_tracing::{FunctionCallInfo, Message, ModIdT},
 };
 
-use super::{TracingInfra, mem_utils::read_w_alignment_chk};
+use super::{
+  Either, TracingInfra, buff_bounds_or_end, get_buffer_start, mem_utils::read_w_alignment_chk,
+  post_free_buffer, wait_for_free_buffer,
+};
 
 pub struct CallTraceMessageState {
   modidx_wip: Option<ModIdT>,
@@ -32,38 +35,6 @@ impl CallTraceMessageState {
   }
 }
 
-enum Either<T, S> {
-  Left(T),
-  Right(S),
-}
-
-// raw_buff arg: poitner validity must be ensured by protocol, target type is copied, no allocation over the same memory region
-// Okay Left = return state, no further processing needed
-// Okay Right = [start, end) buffer's data bounds
-fn buff_bounds_or_end(
-  raw_buff: *const u8,
-  state: &mut CallTraceMessageState,
-) -> Result<Either<(), (*const u8, *const u8)>, String> {
-  // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
-  let valid_size: u32 = unsafe { read_w_alignment_chk(raw_buff) }?;
-
-  if valid_size == 0 {
-    if let Some(m_id) = state.modidx_wip {
-      return Err(format!(
-        "Comms corruption - partial state with empty message following it! Module id {}",
-        m_id
-      ));
-    }
-
-    state.add_message(Message::ControlEnd);
-    return Ok(Either::Left(()));
-  }
-
-  let start = raw_buff.wrapping_byte_add(std::mem::size_of_val(&valid_size));
-  let buff_end = start.wrapping_byte_add(valid_size as usize);
-  Ok(Either::Right((start, buff_end)))
-}
-
 /// performs a read operation on a given buffer, after this function, no data inside a buffer is relevant to us anymore
 fn update_from_buffer(
   mut raw_buff: *const u8,
@@ -72,8 +43,18 @@ fn update_from_buffer(
   mut state: CallTraceMessageState,
 ) -> Result<CallTraceMessageState, String> {
   let lg = Log::get("update_from_buffer");
-  let (buff_start, buff_end) = match buff_bounds_or_end(raw_buff, &mut state)? {
-    Either::Left(()) => return Ok(state),
+  let (buff_start, buff_end) = match buff_bounds_or_end(raw_buff)? {
+    Either::Left(()) => {
+      if let Some(m_id) = state.modidx_wip {
+        return Err(format!(
+          "Comms corruption - partial state with empty message following it! Module id {}",
+          m_id
+        ));
+      }
+
+      state.add_message(Message::ControlEnd);
+      return Ok(state);
+    }
     Either::Right(v) => v,
   };
 
@@ -148,47 +129,6 @@ fn determine_module_idx(
   })
 }
 
-fn wait_for_free_buffer(infra: &mut TracingInfra) -> Result<(), String> {
-  let sem_res = infra.sem_full.try_wait();
-  if let Err(e) = sem_res {
-    Err(format!("While waiting for buffer: {}", e))
-  } else {
-    Ok(())
-  }
-}
-
-fn post_free_buffer(infra: &mut TracingInfra, dbg_buff_idx: usize) -> Result<(), String> {
-  let sem_res = infra.sem_free.try_post();
-  if let Err(e) = sem_res {
-    return Err(format!(
-      "While posting a free buffer (idx {dbg_buff_idx}): {}",
-      e
-    ));
-  }
-  Ok(())
-}
-
-// get the start of a buffer at an offset
-fn get_buffer_start(infra: &TracingInfra, buff_offset: usize) -> Result<*mut u8, String> {
-  let buffers = &infra.backing_buffer;
-  if buff_offset >= buffers.len() as usize {
-    return Err(format!(
-      "Calculated offset too large: {}, compared to the buffers len {}",
-      buff_offset,
-      buffers.len()
-    ));
-  }
-  let buff_ptr = buffers.mem.wrapping_byte_add(buff_offset) as *mut u8;
-
-  if buff_ptr.is_null() || buff_ptr < buffers.mem as *mut u8 {
-    return Err(format!(
-      "Buffer pointer is invalid: {:?}, mem: {:?}",
-      buff_ptr, buffers
-    ));
-  }
-  Ok(buff_ptr)
-}
-
 fn process_messages(
   messages: &Vec<Message>,
   recorded_frequencies: &mut HashMap<FunctionCallInfo, u64>,
@@ -214,12 +154,12 @@ pub fn msg_handler(
   buff_size: usize,
   buff_num: usize,
   modules: &ExtModuleMap,
-  recorded_frequencies: &mut HashMap<FunctionCallInfo, u64>,
-) -> Result<(), String> {
+) -> Result<HashMap<FunctionCallInfo, u64>, String> {
   let lg = Log::get("msghandler");
   let mut buff_idx: usize = 0;
   let mut end_message_counter = 0;
   let mut state = CallTraceMessageState::new(None, vec![]);
+  let mut recorded_frequencies = HashMap::new();
   loop {
     wait_for_free_buffer(infra)?;
 
@@ -250,11 +190,11 @@ pub fn msg_handler(
       end_message_counter += 1;
       if end_message_counter == buff_num {
         lg.trace("End condition");
-        return Ok(());
+        return Ok(recorded_frequencies);
       }
     } else {
       end_message_counter = 0;
-      process_messages(&messages, recorded_frequencies)?;
+      process_messages(&messages, &mut recorded_frequencies)?;
     }
 
     buff_idx += 1;

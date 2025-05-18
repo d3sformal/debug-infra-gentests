@@ -120,7 +120,10 @@ pub fn obtain_function_id_selection(
   result
 }
 
-pub fn export_tracing_selection(selection: &[LLVMFunId]) -> Result<(), String> {
+pub fn export_tracing_selection(
+  selection: &[LLVMFunId],
+  mapping: &ExtModuleMap,
+) -> Result<(), String> {
   let lg = Log::get("export_tracing_selection");
   let default_path = Constants::default_selected_functions_path();
   println!(
@@ -143,18 +146,36 @@ pub fn export_tracing_selection(selection: &[LLVMFunId]) -> Result<(), String> {
   let file = File::create(&path);
   if let Ok(mut file) = file {
     for selected in selection {
-      let to_write = format!("{}\x00{}\n", selected.fn_module, selected.fn_name);
-      let expected_len = selected.fn_module.len() + selected.fn_name.len() + 2;
+      let mod_hash = mapping.find_module_hash_by_name(&selected.fn_module);
+      if mod_hash.is_none() {
+        return Err(format!(
+          "Could not resolve module hash from {}",
+          selected.fn_module
+        ));
+      }
+      let mod_hash = mod_hash.unwrap();
+      let fn_id = mapping.get_function_id(
+        mapping.get_module_idx(&mod_hash).unwrap(),
+        &selected.fn_name,
+      );
+      if fn_id.is_none() {
+        return Err(format!(
+          "Could not resolve id of function {}, mod: {}, mapping: {:?}",
+          selected.fn_name, selected.fn_module, mapping
+        ));
+      }
+      let fn_id = fn_id.unwrap();
+
+      let to_write = format!(
+        "{}\x00{}\x00{}\x00{}\n",
+        selected.fn_module, mod_hash.0, selected.fn_name, fn_id
+      );
 
       let wr_res = file.write(to_write.as_bytes());
-      if let Ok(written_bytes) = wr_res {
-        if expected_len != written_bytes {
-          lg.crit("Something went wrong when writing the file - byte count mismatch");
-        }
-      } else {
+      if let Err(e) = wr_res {
         lg.crit(format!(
           "Something went wrong when writing the file {:?}",
-          wr_res.err().unwrap()
+          e
         ));
       }
     }

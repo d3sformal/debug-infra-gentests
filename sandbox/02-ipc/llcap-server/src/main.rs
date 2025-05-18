@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use args::Cli;
 use clap::Parser;
 use log::Log;
@@ -13,7 +11,10 @@ mod modmap;
 mod shmem_capture;
 mod sizetype_handlers;
 mod stages;
-use shmem_capture::{call_tracing::msg_handler, cleanup_shmem, deinit_tracing, init_tracing};
+use shmem_capture::{
+  arg_capture::wip_capture_args, call_tracing::msg_handler, cleanup_shmem, deinit_tracing,
+  init_tracing,
+};
 use stages::call_tracing::{
   FunctionCallInfo, export_data, export_tracing_selection, import_data,
   obtain_function_id_selection, print_summary,
@@ -46,7 +47,6 @@ fn main() -> Result<(), String> {
   let cli = cli.unwrap();
   Log::set_verbosity(cli.verbose);
   lg.info(format!("Verbosity: {}", cli.verbose));
-  let mut recorded_frequencies: HashMap<FunctionCallInfo, u64> = HashMap::new();
 
   if cli.cleanup {
     lg.info("Cleanup");
@@ -77,21 +77,24 @@ fn main() -> Result<(), String> {
 
         lg.info("Listening!");
 
-        if let Err(e) = msg_handler(
+        let pairs = match msg_handler(
           &mut tracing_infra,
           buff_size as usize,
           buff_count as usize,
           &modules,
-          &mut recorded_frequencies,
         ) {
-          lg.crit(&e);
-        }
-
+          Ok(freqs) => Ok(freqs.into_iter().collect::<Vec<(_, _)>>()),
+          Err(e) => {
+            lg.crit(&e);
+            Err(e)
+          }
+        };
         lg.info("Shutting down call tracing infrastructure...");
         deinit_tracing(tracing_infra)?;
 
-        recorded_frequencies.into_iter().collect::<Vec<(_, _)>>()
+        pairs?
       };
+
       pairs.sort_by(|a, b| b.1.cmp(&a.1));
       print_summary(&mut pairs, &modules);
 
@@ -106,15 +109,32 @@ fn main() -> Result<(), String> {
 
       let traces = pairs.iter().map(|x| x.0).collect::<Vec<FunctionCallInfo>>();
       let selected_fns = obtain_function_id_selection(&traces, &modules);
-      export_tracing_selection(&selected_fns)?;
+      export_tracing_selection(&selected_fns, &modules)?;
 
       lg.info("Exiting...");
     }
     args::Stage::CaptureArgs {
+      buff_count,
+      buff_size,
       in_file: _,
       out_dir: _,
       mem_limit: _,
-    } => todo!(),
+    } => {
+      lg.info("Initializing tracing infrastructure");
+      let mut tracing_infra = init_tracing(&cli.fd_prefix, buff_count, buff_size)?;
+
+      lg.info("Listening!");
+
+      wip_capture_args(
+        &mut tracing_infra,
+        buff_size as usize,
+        buff_count as usize,
+        &modules,
+      )?;
+
+      lg.info("Shutting down tracing infrastructure...");
+      deinit_tracing(tracing_infra)?;
+    }
   }
 
   Ok(())

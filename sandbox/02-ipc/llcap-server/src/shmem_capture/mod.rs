@@ -1,7 +1,8 @@
+pub mod arg_capture;
 pub mod call_tracing;
 pub mod mem_utils;
 
-use mem_utils::aligned_to;
+use mem_utils::{aligned_to, read_w_alignment_chk};
 
 use crate::libc_wrappers::fd::try_shm_unlink_fd;
 use crate::libc_wrappers::sem::Semaphore;
@@ -23,6 +24,11 @@ pub struct TracingInfra<'a> {
   pub sem_full: Semaphore,
   pub meta_buffer: ShmemHandle<'a>,
   pub backing_buffer: ShmemHandle<'a>,
+}
+
+enum Either<T, S> {
+  Left(T),
+  Right(S),
 }
 
 pub fn cleanup_shmem(prefix: &str) -> Result<(), String> {
@@ -215,4 +221,61 @@ pub fn deinit_tracing(infra: TracingInfra) -> Result<(), String> {
   } else {
     Ok(())
   }
+}
+
+fn wait_for_free_buffer(infra: &mut TracingInfra) -> Result<(), String> {
+  let sem_res = infra.sem_full.try_wait();
+  if let Err(e) = sem_res {
+    Err(format!("While waiting for buffer: {}", e))
+  } else {
+    Ok(())
+  }
+}
+
+fn post_free_buffer(infra: &mut TracingInfra, dbg_buff_idx: usize) -> Result<(), String> {
+  let sem_res = infra.sem_free.try_post();
+  if let Err(e) = sem_res {
+    return Err(format!(
+      "While posting a free buffer (idx {dbg_buff_idx}): {}",
+      e
+    ));
+  }
+  Ok(())
+}
+
+// get the start of a buffer at an offset
+fn get_buffer_start(infra: &TracingInfra, buff_offset: usize) -> Result<*mut u8, String> {
+  let buffers = &infra.backing_buffer;
+  if buff_offset >= buffers.len() as usize {
+    return Err(format!(
+      "Calculated offset too large: {}, compared to the buffers len {}",
+      buff_offset,
+      buffers.len()
+    ));
+  }
+  let buff_ptr = buffers.mem.wrapping_byte_add(buff_offset) as *mut u8;
+
+  if buff_ptr.is_null() || buff_ptr < buffers.mem as *mut u8 {
+    return Err(format!(
+      "Buffer pointer is invalid: {:?}, mem: {:?}",
+      buff_ptr, buffers
+    ));
+  }
+  Ok(buff_ptr)
+}
+
+// raw_buff arg: poitner validity must be ensured by protocol, target type is copied, no allocation over the same memory region
+// Okay Left = ending (empty) message reached, no further processing needed
+// Okay Right = [start, end) buffer's data bounds
+fn buff_bounds_or_end(raw_buff: *const u8) -> Result<Either<(), (*const u8, *const u8)>, String> {
+  // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
+  let valid_size: u32 = unsafe { read_w_alignment_chk(raw_buff) }?;
+
+  if valid_size == 0 {
+    return Ok(Either::Left(()));
+  }
+
+  let start = raw_buff.wrapping_byte_add(std::mem::size_of_val(&valid_size));
+  let buff_end = start.wrapping_byte_add(valid_size as usize);
+  Ok(Either::Right((start, buff_end)))
 }

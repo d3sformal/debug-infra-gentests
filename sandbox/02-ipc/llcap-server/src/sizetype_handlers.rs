@@ -40,6 +40,7 @@ impl TryFrom<u16> for ArgSizeTypeRef {
 pub trait SizeTypeReader {
   fn read_reset(&mut self) -> bool;
   fn read(&mut self, data: &[u8]) -> Result<ReadProgress, String>;
+  fn done(&self) -> bool;
 }
 
 pub trait SizeTypeWriter {
@@ -88,6 +89,7 @@ impl FixedSizeTyReader {
 impl SizeTypeReader for FixedSizeTyReader {
   fn read(&mut self, data: &[u8]) -> Result<ReadProgress, String> {
     if self.data.required_size == 0 {
+      self.done_read = true;
       return Ok(ReadProgress::Done {
         payload: Vec::with_capacity(0),
         consumed_bytes: 0,
@@ -134,6 +136,10 @@ impl SizeTypeReader for FixedSizeTyReader {
 
     self.done_read = false;
     true
+  }
+
+  fn done(&self) -> bool {
+    self.done_read
   }
 }
 
@@ -189,5 +195,91 @@ impl SizeTypeWriter for FixedSizeTyWriter {
     } else {
       Ok(WriteProgress::NotYet)
     }
+  }
+}
+
+pub enum CStringTypeReader {
+  Start,
+  Reading { payload: Vec<u8> },
+  ReachedZero,
+}
+
+impl CStringTypeReader {
+  pub fn new() -> Self {
+    CStringTypeReader::Start
+  }
+}
+
+// true if zero byte reached
+fn consume_until_zero_or_end(out: &mut Vec<u8>, inp: &[u8]) -> bool {
+  for i in inp {
+    out.push(*i);
+    if *i == 0 {
+      return true;
+    }
+  }
+
+  false
+}
+
+impl SizeTypeReader for CStringTypeReader {
+  fn read_reset(&mut self) -> bool {
+    if !self.done() {
+      return false;
+    }
+    *self = CStringTypeReader::Start;
+    true
+  }
+
+  fn read(&mut self, data: &[u8]) -> Result<ReadProgress, String> {
+    // this "pair" thing is necessary to make borrow checker happy
+    let (target, retval) = match self {
+      CStringTypeReader::Start => {
+        let mut output: Vec<u8> = vec![];
+        if consume_until_zero_or_end(&mut output, data) {
+          let len = output.len();
+          (
+            CStringTypeReader::ReachedZero,
+            Ok(ReadProgress::Done {
+              payload: output,
+              consumed_bytes: len,
+            }),
+          )
+        } else {
+          (
+            CStringTypeReader::Reading { payload: output },
+            Ok(ReadProgress::NotYet),
+          )
+        }
+      }
+      CStringTypeReader::Reading { payload } => {
+        let mut new_vec = vec![];
+        if consume_until_zero_or_end(payload, data) {
+          std::mem::swap(&mut new_vec, payload);
+          let len = payload.len();
+          (
+            CStringTypeReader::ReachedZero,
+            Ok(ReadProgress::Done {
+              payload: new_vec,
+              consumed_bytes: len,
+            }),
+          )
+        } else {
+          std::mem::swap(&mut new_vec, payload);
+          (
+            CStringTypeReader::Reading { payload: new_vec },
+            Ok(ReadProgress::NotYet),
+          )
+        }
+      }
+      CStringTypeReader::ReachedZero => (CStringTypeReader::ReachedZero, Ok(ReadProgress::Nop)),
+    };
+    // I think this is not the best design (changing of self), but whatever
+    *self = target;
+    retval
+  }
+
+  fn done(&self) -> bool {
+    matches!(self, Self::ReachedZero)
   }
 }
