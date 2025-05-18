@@ -143,6 +143,25 @@ GlobalVariable *createGlobalStr(Module &M, StringRef Val, StringRef Id) {
   return GV;
 }
 
+void insertArgCapturePreambleHook(IRBuilder<> &Builder, Module &M,
+                                  llcap::ModuleId ModuleIntId,
+                                  llcap::FunctionId FunctionIntId) {
+  static_assert(sizeof(llcap::FunctionId) ==
+                4); // this does not imply incorrectness, just that everything
+  // must be checked
+  auto *FnIdConstant = ConstantInt::get(
+      M.getContext(), APInt(sizeof(llcap::FunctionId) * 8, FunctionIntId));
+  static_assert(sizeof(llcap::ModuleId) == 4);
+  auto *ModIdConstant = ConstantInt::get(
+      M.getContext(), APInt(sizeof(llcap::ModuleId) * 8, ModuleIntId));
+  auto Callee = M.getOrInsertFunction(
+      "hook_arg_preabmle",
+      FunctionType::get(Type::getVoidTy(M.getContext()),
+                        {ModIdConstant->getType(), FnIdConstant->getType()},
+                        false));
+  Builder.CreateCall(Callee, {ModIdConstant, FnIdConstant});
+}
+
 void insertFnEntryHook(IRBuilder<> &Builder, Module &M,
                        llcap::ModuleId ModuleIntId,
                        llcap::FunctionId FunctionIntId) {
@@ -275,25 +294,14 @@ ClangMetadataToLLVMArgumentMapping
 getFullyRegisteredArgMapping(Function &Fn, IdxMappingInfo &IdxInfo) {
   ClangMetadataToLLVMArgumentMapping Mapping(Fn, IdxInfo);
   Mapping.registerCustomTypeIndicies(VSTR_LLVM_CXX_DUMP_STDSTRING,
-                                     LlcapSizeType::LLSZ_CUSTOM);
+                                     LlcapSizeType::LLSZ_CSTR); // TODO: change later (to reconstruct the capacity?) to CUSTOM
+                                     // CSTR is here only for demo now
   Mapping.registerCustomTypeIndicies(
       VSTR_LLVM_UNSIGNED_IDCS,
       LlcapSizeType::LLSZ_INVALID); // invalid size -> indeterminate size means
                                     // that this type index is just a "flag" and
                                     // has no effect on the final size read
   return Mapping;
-}
-
-void insertArgTracingHooks(Module &M, Function &Fn, IdxMappingInfo &IdxInfo) {
-  BasicBlock &EntryBB = Fn.getEntryBlock();
-  IRBuilder<> Builder(&EntryBB.front());
-
-  ClangMetadataToLLVMArgumentMapping Mapping =
-      getFullyRegisteredArgMapping(Fn, IdxInfo);
-  for (auto *Arg = Fn.arg_begin(); Arg != Fn.arg_end(); ++Arg) {
-    insertArgCaptureHook(Builder, M, Arg, Mapping,
-                         Mapping.getArgumentSizeTypes());
-  }
 }
 
 bool instrumentArgs() {
@@ -384,71 +392,135 @@ public:
 
 class ArgumentInstrumentation : public Instrumentation {
   Module &m_module;
-  Set<Str> &m_traced_functions;
+  llcap::ModuleId m_moduleId;
+  Map<Str, llcap::FunctionId> &m_traced_functions;
   IdxMappingInfo m_idxInfo;
 
 public:
-  ArgumentInstrumentation(Module &M, Set<Str> &TracedFunctions,
-                          IdxMappingInfo Info)
-      : m_module(M), m_traced_functions(TracedFunctions), m_idxInfo(Info) {}
+  ArgumentInstrumentation(
+      Module &M, Pair<llcap::ModuleId, Map<Str, uint32_t>> &TracedFunctions,
+      IdxMappingInfo Info)
+      : m_module(M), m_moduleId(TracedFunctions.first),
+        m_traced_functions(TracedFunctions.second), m_idxInfo(Info) {}
 
   void run() override {
     for (Function &Fn : m_module) {
       StringRef MangledName = Fn.getFunction().getName();
       Str DemangledName = llvm::demangle(MangledName);
 
-      if (!m_traced_functions.contains(DemangledName)) {
+      auto FnId = m_traced_functions.find(DemangledName);
+      if (FnId == m_traced_functions.end()) {
         IF_DEBUG errs() << "Skipping fn " << DemangledName << "\n";
         continue;
       }
       IF_VERBOSE errs() << "Instrumenting fn " << DemangledName << "\n";
-      insertArgTracingHooks(m_module, Fn, m_idxInfo);
+
+      BasicBlock &EntryBB = Fn.getEntryBlock();
+      IRBuilder<> Builder(&EntryBB.front());
+
+      ClangMetadataToLLVMArgumentMapping Mapping =
+          getFullyRegisteredArgMapping(Fn, m_idxInfo);
+      insertArgCapturePreambleHook(Builder, m_module, m_moduleId, FnId->second);
+
+      for (auto *Arg = Fn.arg_begin(); Arg != Fn.arg_end(); ++Arg) {
+        insertArgCaptureHook(Builder, m_module, Arg, Mapping,
+                             Mapping.getArgumentSizeTypes());
+      }
     }
   }
 
   bool finish() override { return true; }
 };
 
-auto collectTracedFunctionsForModule(Module &M) {
-  using RetT = Set<Str>;
-  RetT Result;
+Maybe<Pair<llcap::ModuleId, Map<Str, uint32_t>>>
+collectTracedFunctionsForModule(Module &M) {
+  Map<Str, uint32_t> Map;
+
+  Maybe<llcap::ModuleId> NumericModId = NONE;
 
   const Str &Path = args::TargetsFilePath.getValue();
   if (Path.empty()) {
-    return Result;
+    return NONE;
   }
 
   std::ifstream Targets(Path, std::ios::binary);
   if (!Targets) {
     errs() << "Could not open targets file @ " << Path << "\n";
-    return Result;
+    return NONE;
   }
 
+  auto NextPosMove = [](Str &Data, u64 &Pos, auto &NextPos, const char *Msg) {
+    constexpr char SEP = '\x00';
+    NextPos = Data.find(SEP, Pos);
+    if (NextPos == Str::npos) {
+      errs() << "functions-to-trace mapping: format invalid (" << Msg << ")!\n";
+      return false;
+    }
+    return true;
+  };
+
   Str Data;
+  u64 Pos = 0;
   while (std::getline(Targets, Data, '\n')) {
     if (Data.empty()) {
       IF_DEBUG errs() << "Skip empty\n";
+      Pos = 0;
       continue;
     }
 
-    auto Pos = Data.find('\x00');
-    if (Pos == Str::npos) {
-      errs() << "functions-to-trace mapping: format invalid (fn id)!\n";
-      return RetT();
+    u64 NextPos = Pos;
+    if (!NextPosMove(Data, Pos, NextPos, "mod id")) {
+      return NONE;
     }
 
-    auto ModId = Data.substr(0, Pos);
+    Str ModId = Data.substr(Pos, NextPos - Pos);
     if (ModId != M.getModuleIdentifier()) {
       IF_DEBUG errs() << "Skip on module mismatch " << ModId << "\n";
+      Pos = 0;
       continue;
     }
 
-    auto FnId = Data.substr(Pos + 1);
-    IF_VERBOSE errs() << "Add \"to trace\" " << FnId << "\n";
-    Result.insert(FnId);
+    Pos = NextPos + 1;
+
+    if (!NextPosMove(Data, Pos, NextPos, "mod id n")) {
+      return NONE;
+    }
+
+    Maybe<u64> ModIdRes =
+        tryParse<llcap::ModuleId>(Data.substr(Pos, NextPos - Pos));
+    if (!ModIdRes) {
+      IF_DEBUG errs()
+          << "functions-to-trace mapping: format invalid (mod id n)\n";
+      return NONE;
+    }
+    NumericModId = ModIdRes;
+
+    Pos = NextPos + 1;
+    if (!NextPosMove(Data, Pos, NextPos, "fn id")) {
+      return NONE;
+    }
+
+    auto FnId = Data.substr(Pos, NextPos - Pos);
+
+    Pos = NextPos + 1;
+    auto FnIdNumeric = tryParse<llcap::ModuleId>(Data.substr(Pos));
+    if (!FnIdNumeric) {
+      IF_DEBUG errs()
+          << "functions-to-trace mapping: format invalid (fn id n)\n";
+      return NONE;
+    }
+
+    IF_VERBOSE errs() << "Add \"to trace\" " << FnId << ", ID: " << *FnIdNumeric
+                      << "\n";
+    Map[FnId] = *FnIdNumeric;
+    Pos = 0;
   }
 
-  return Result;
+  if (!NumericModId) {
+    return NONE;
+  }
+
+  return std::make_pair(*NumericModId, Map);
 }
 
 Maybe<IdxMappingInfo> getIdxMappingInfo(Module &M) {
@@ -506,8 +578,12 @@ struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
 
     if (instrumentArgs()) {
       IF_VERBOSE errs() << "Instrumenting args...\n";
-      Set<Str> TracedFns = collectTracedFunctionsForModule(M);
-      ArgumentInstrumentation Work(M, TracedFns, MappingInfo);
+      auto TracedFns = collectTracedFunctionsForModule(M);
+      if (!TracedFns) {
+        errs() << "Failed to parse instrumentation targets\n";
+        return PreservedAnalyses::none();
+      }
+      ArgumentInstrumentation Work(M, *TracedFns, MappingInfo);
       Work.run();
 
       if (!Work.finish()) {
