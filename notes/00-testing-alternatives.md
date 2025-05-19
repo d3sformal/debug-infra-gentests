@@ -805,18 +805,30 @@ Consumer processes the buffer. Meanwhile producer moves onto another buffer by w
 
 ### Module ID Shrinking
 
-* 64 -> 4 + checks that no collision has been made
+* 64B SHA 256 was collapsed (XORed) to a 4B ID
+* these (in hex form) are used as filenames -> check for collisions via exclusive creation of such files
 
 ### Final form of the protocol
 
-* new termination sequence
+* new termination sequence 
+    * N buffers => after at least 2N - 1 zero-length payloads, all buffers are cycled
+    * termination sequence sends 2N zero-length buffers (signals 2N times on the "full buffer" semaphore)
 
 ## Receiving function arguments
 
 ### Encoding
 
-* alternatives, how to approach
-* how to implement in library
+* see [TODOs](./000-TODOs.md#capturing-function-arguments)
+    * `Preamble`(Module ID, Function ID), Arg1, Arg2, ....
+    * argument sizes exported in the first phase of `llvm-pass`
+* implementation in hooklib
+    * pointer alignment may be disrupted => before sending Preamble.ModuleID, we enforce alignment
+    * otherwise we just push data
+* consumers on `llcap-server` only capture binary data of certain size
+    * for dynamically sized payloads, we will rely on length-payload encoding
+    * so far support for fixed-size arguments of size up to 16B + null-terminated strings of bytes
+* the idea is that the data will be duplicated "as received" to the tested application later
+    * as we inject argument *capturing functions*, we will inject argument *requests* that expect the same format as serialized by the capturing functions 
 
 ### Storage
 
@@ -825,22 +837,28 @@ Consumer processes the buffer. Meanwhile producer moves onto another buffer by w
 
 ## Hijacking arguments in the testing phase
 
-* constness - see `TODO`
-* validate approach that modifies the IR
+* constness - [TODOs](./000-TODOs.md#topic-modification-of-incoming-arguments)
 
 ### Possible improvements
 
 * just thoughts, **most of those are pretty extreme**
+* multithreaded capture processing
+* utilizing automated C header -> Rust code conversion tools (for comms metadata/parameter region)
+* using debug information inspection to generate argument index conversions
+    * seems like `sret` detection will require looking at attributes instead of debug metadata
+    * `this` pointer differentiated by "artificial flag" in debug info
+    * would probably eliminate the need for the [LLVM modification that allows to manipulate function metadata](../sandbox/01-llvm-ir/custom-metadata-pass/custom-metadata.diff)
 
-### Performance thoughts
+#### Performance thoughts
 
-* nontemporal x86 mem store instructions
+* nontemporal x86 mem store instructions (bypassing the CPU cache)
 
 * multithreaded `llcap-server` possible for capture processing
     * queueing only has to ensure that `free` semaphore signalling follows the buffer index order
 * avoiding
 
-### Overhead thoughts
+#### Overhead thoughts
 
 * reducing multiple-compilation overhead by adjusting instrumentation to instrumenting for "tracing and caputre at the same time"
+    * merge the functionality an add a runtime branch (`if (s_capture_mode == CAPTURE_CALL) { ..capture calls.. } else { ..capture args/run test.. } `)
     * maybe branch predictors will help us? (can we help the branch predictors ourselves?)

@@ -10,10 +10,11 @@
 * add links to commits/READMEs/other files for every "DONE" item in this file
 * ~~unify SOLVED vs DONE items~~
 * ~~public repo?~~
-* remove ZMQ references entirely (too expensive to maintain)
+* ~~remove ZMQ references entirely (too expensive to maintain)~~
     * ensure ALL links to ZMQ functionality actually link to a revision where ZMQ is available
         * ensure the revision is the same, where possible
     * also ensure legacy examples work (test-pass-working)
+* more diagrams
 
 # TOPIC: Data Capture Library
 
@@ -135,7 +136,7 @@
 * `const`ness vs `IR`-level modifications
     * does `-O3`, etc. impact the number of arguments in IR? (e.g. via more agressive const propagation?)
     * if prohibitive for argument "hijacking", can we at least "remove" `const`
-
+* validate approach that modifies the IR
 
 # TOPIC: Extras
 * **[CLOSED]** report mangling bug (after rebuild of latest llvm project)
