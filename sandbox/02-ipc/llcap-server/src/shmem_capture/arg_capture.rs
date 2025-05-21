@@ -4,8 +4,8 @@ use crate::{
   log::Log,
   modmap::{ExtModuleMap, IntegralModId, MOD_ID_SIZE_B},
   sizetype_handlers::{
-    ArgSizeTypeRef, CStringTypeReader, FixedSizeTyData, FixedSizeTyReader, ReadProgress,
-    SizeTypeReader,
+    ArgSizeTypeRef, CStringTypeReader, CustomTypeReader, FixedSizeTyData, FixedSizeTyReader,
+    ReadProgress, SizeTypeReader,
   },
 };
 
@@ -20,30 +20,33 @@ struct SizeTypeReaders {
   custom: Box<dyn SizeTypeReader>,
 }
 
-// TODO refactor
+fn boxed_ty_reader(size: usize) -> Box<FixedSizeTyReader> {
+  Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(size)))
+}
+
 fn create_sizetype_cache() -> SizeTypeReaders {
   SizeTypeReaders {
     fixed: [
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(0))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(1))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(2))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(3))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(4))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(5))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(6))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(7))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(8))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(9))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(10))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(11))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(12))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(13))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(14))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(15))),
-      Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(16))),
+      boxed_ty_reader(0),
+      boxed_ty_reader(1),
+      boxed_ty_reader(2),
+      boxed_ty_reader(3),
+      boxed_ty_reader(4),
+      boxed_ty_reader(5),
+      boxed_ty_reader(6),
+      boxed_ty_reader(7),
+      boxed_ty_reader(8),
+      boxed_ty_reader(9),
+      boxed_ty_reader(10),
+      boxed_ty_reader(11),
+      boxed_ty_reader(12),
+      boxed_ty_reader(13),
+      boxed_ty_reader(14),
+      boxed_ty_reader(15),
+      boxed_ty_reader(16),
     ],
     c_str: Box::new(CStringTypeReader::new()),
-    custom: Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(0))),
+    custom: Box::new(CustomTypeReader::new()),
   }
 }
 
@@ -203,7 +206,10 @@ impl PartialCaptureState {
               mut payload,
               consumed_bytes,
             } => {
-              lg.trace(format!("Reader {} done with payload:", i));
+              lg.trace(format!(
+                "Reader {} done with {consumed_bytes}-byte payload:",
+                i
+              ));
               for p in &payload {
                 print!("{:02X}", p);
               }
