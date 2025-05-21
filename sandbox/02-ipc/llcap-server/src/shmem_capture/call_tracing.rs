@@ -7,7 +7,8 @@ use crate::{
 };
 
 use super::{
-  Either, TracingInfra, buff_bounds_or_end, get_buffer_start, mem_utils::read_w_alignment_chk,
+  Either, TracingInfra, buff_bounds_or_end, get_buffer_start,
+  mem_utils::{overread_check, read_w_alignment_chk},
   post_free_buffer, wait_for_free_buffer,
 };
 
@@ -79,12 +80,8 @@ fn update_from_buffer(
       lg.trace("Partial message");
       state.modidx_wip = Some(module_idx);
       return Ok(state);
-    } else if raw_buff.wrapping_byte_add(FUNN_ID_SIZE) > buff_end {
-      return Err(format!(
-        "Would overread function ID... ptr: {:?} to read: {} end: {:?}",
-        raw_buff, FUNN_ID_SIZE, buff_end
-      ));
     }
+    overread_check(raw_buff, buff_end, FUNN_ID_SIZE, "function ID")?;
 
     // SAFETY: read_w_alignment_chk + similar to buff_bounds_or_end's requirements, raw_buff within bounds as checked above
     let fn_id: FnId = unsafe { read_w_alignment_chk(raw_buff) }?;
@@ -110,12 +107,7 @@ fn determine_module_idx(
     state.modidx_wip = None;
     idx
   } else {
-    if raw_buff.wrapping_byte_add(MOD_ID_SIZE_B) > buff_end {
-      return Err(format!(
-        "Would over-read a module ID... ptr: {:?} offset: {} end: {:?}",
-        raw_buff, MOD_ID_SIZE_B, buff_end
-      ));
-    }
+    overread_check(*raw_buff, buff_end, MOD_ID_SIZE_B, "module ID")?;
 
     // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
     // poitner validity ensured by protocol, target type is copied, no allocation over the same memory region

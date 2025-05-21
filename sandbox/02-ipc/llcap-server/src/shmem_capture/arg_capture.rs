@@ -3,6 +3,7 @@ use std::ptr::slice_from_raw_parts;
 use crate::{
   log::Log,
   modmap::{ExtModuleMap, IntegralModId, MOD_ID_SIZE_B},
+  shmem_capture::mem_utils::overread_check,
   sizetype_handlers::{
     ArgSizeTypeRef, CStringTypeReader, CustomTypeReader, FixedSizeTyData, FixedSizeTyReader,
     ReadProgress, SizeTypeReader,
@@ -84,22 +85,6 @@ enum PartialCaptureState {
 }
 
 impl PartialCaptureState {
-  fn overread_check(
-    raw_buff: &mut *const u8,
-    buff_end: *const u8,
-    sz: usize,
-    msg: &str,
-  ) -> Result<(), String> {
-    if raw_buff.wrapping_byte_add(MOD_ID_SIZE_B) > buff_end {
-      Err(format!(
-        "Would over-read {msg}... ptr: {:?} offset: {} end: {:?}",
-        raw_buff, sz, buff_end
-      ))
-    } else {
-      Ok(())
-    }
-  }
-
   // TODO split up
   pub fn progress(
     self,
@@ -107,17 +92,18 @@ impl PartialCaptureState {
     mods: &ExtModuleMap,
     buff_end: *const u8,
     readers: &mut SizeTypeReaders,
-  ) -> Result<PartialCaptureState, String> {
+  ) -> Result<Self, String> {
     match self {
-      PartialCaptureState::Empty => {
+      Self::Empty => {
         let lg = Log::get("progress::Empty");
-        lg.trace("Starting!");
+        lg.trace("Starting");
         if !(*raw_buff as *const u32).is_aligned() {
-          lg.trace("Adjusting alignment!");
+          lg.trace("Adjusting alignment");
           *raw_buff = raw_buff.wrapping_add(raw_buff.align_offset(std::mem::size_of::<u32>()));
           return Ok(Self::Empty);
         }
-        Self::overread_check(raw_buff, buff_end, MOD_ID_SIZE_B, "module ID")?;
+
+        overread_check(*raw_buff, buff_end, MOD_ID_SIZE_B, "module ID")?;
         let rcvd_id = IntegralModId(unsafe { read_w_alignment_chk(*raw_buff)? });
         if let Some(idx) = mods.get_module_idx(&rcvd_id) {
           *raw_buff = raw_buff.wrapping_byte_add(MOD_ID_SIZE_B);
@@ -127,12 +113,12 @@ impl PartialCaptureState {
           Err(format!("Module id not found {:X}", rcvd_id.0))
         }
       }
-      PartialCaptureState::GotModuleIdx { module_idx } => {
+      Self::GotModuleIdx { module_idx } => {
         let lg = Log::get("progress::GotModuleIdx");
         lg.trace("Awaiting fnid!");
         type FnId = u32;
         const FUN_ID_SIZE: usize = std::mem::size_of::<FnId>();
-        Self::overread_check(raw_buff, buff_end, FUN_ID_SIZE, "function ID")?;
+        overread_check(*raw_buff, buff_end, FUN_ID_SIZE, "function ID")?;
 
         let rcvd_id = unsafe { read_w_alignment_chk(*raw_buff)? };
         match mods.get_function_name(module_idx, rcvd_id) {
@@ -152,7 +138,7 @@ impl PartialCaptureState {
           )),
         }
       }
-      PartialCaptureState::CapturingArgs {
+      Self::CapturingArgs {
         module_idx,
         fn_id,
         arg_idx,
@@ -190,7 +176,7 @@ impl PartialCaptureState {
             ));
           }
           if buff_end == *raw_buff {
-            return Ok(PartialCaptureState::CapturingArgs {
+            return Ok(Self::CapturingArgs {
               module_idx,
               fn_id,
               arg_idx: i,
@@ -219,7 +205,7 @@ impl PartialCaptureState {
             }
             ReadProgress::NotYet => {
               *raw_buff = buff_end;
-              return Ok(PartialCaptureState::CapturingArgs {
+              return Ok(Self::CapturingArgs {
                 module_idx,
                 fn_id,
                 arg_idx: i,
@@ -228,7 +214,7 @@ impl PartialCaptureState {
             }
             ReadProgress::Nop => {
               *raw_buff = buff_end;
-              return Ok(PartialCaptureState::CapturingArgs {
+              return Ok(Self::CapturingArgs {
                 module_idx,
                 fn_id,
                 arg_idx: i,
@@ -243,20 +229,20 @@ impl PartialCaptureState {
           lg.trace(format!("Resetting reader {}", i));
           reader.read_reset();
         }
-        Ok(PartialCaptureState::Done {
+        Ok(Self::Done {
           module_idx,
           fn_id,
           buff,
         })
       }
-      PartialCaptureState::Done {
+      Self::Done {
         module_idx,
         fn_id,
         buff,
       } => {
         let lg = Log::get("progress::Done");
         lg.warn("Noop in arg capture progress");
-        Ok(PartialCaptureState::Done {
+        Ok(Self::Done {
           module_idx,
           fn_id,
           buff,

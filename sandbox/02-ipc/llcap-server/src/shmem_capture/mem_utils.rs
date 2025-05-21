@@ -20,3 +20,19 @@ pub fn aligned_to<T>(ptr: *const u8) -> Result<(), String> {
     Ok(())
   }
 }
+
+pub fn overread_check(
+  raw_buff: *const u8,
+  buff_end: *const u8,
+  sz: usize,
+  msg: &str,
+) -> Result<(), String> {
+  if raw_buff.wrapping_byte_add(sz) > buff_end {
+    Err(format!(
+      "Would over-read {msg}... ptr: {:?} offset: {} end: {:?}",
+      raw_buff, sz, buff_end
+    ))
+  } else {
+    Ok(())
+  }
+}
