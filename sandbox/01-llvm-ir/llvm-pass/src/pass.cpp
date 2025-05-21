@@ -294,8 +294,7 @@ ClangMetadataToLLVMArgumentMapping
 getFullyRegisteredArgMapping(Function &Fn, IdxMappingInfo &IdxInfo) {
   ClangMetadataToLLVMArgumentMapping Mapping(Fn, IdxInfo);
   Mapping.registerCustomTypeIndicies(VSTR_LLVM_CXX_DUMP_STDSTRING,
-                                     LlcapSizeType::LLSZ_CSTR); // TODO: change later (to reconstruct the capacity?) to CUSTOM
-                                     // CSTR is here only for demo now
+                                     LlcapSizeType::LLSZ_CUSTOM);
   Mapping.registerCustomTypeIndicies(
       VSTR_LLVM_UNSIGNED_IDCS,
       LlcapSizeType::LLSZ_INVALID); // invalid size -> indeterminate size means

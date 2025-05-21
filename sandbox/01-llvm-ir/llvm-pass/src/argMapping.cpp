@@ -176,14 +176,14 @@ ClangMetadataToLLVMArgumentMapping::getArgumentSizeTypes() const {
   Vec<Pair<size_t, LlcapSizeType>> Res;
   Res.reserve(m_fn.arg_size());
 
-  for (size_t I = 0; I < m_fn.arg_size(); ++I) {
+  for (unsigned int I = 0; I < m_fn.arg_size(); ++I) {
     Res.emplace_back(I, llvmArgNoSizeType(I));
   }
   return Res;
 }
 
 LlcapSizeType
-ClangMetadataToLLVMArgumentMapping::llvmArgNoSizeType(size_t LlvmArgNo) const {
+ClangMetadataToLLVMArgumentMapping::llvmArgNoSizeType(unsigned int LlvmArgNo) const {
   LlcapSizeType Res = LlcapSizeType::LLSZ_INVALID;
   for (auto &&[CustTName, Desc] : m_typeIndicies) {
     auto &&[SizeType, _] = Desc;

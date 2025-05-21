@@ -49,7 +49,7 @@ class ClangMetadataToLLVMArgumentMapping {
   llvm::Function &m_fn;
   IdxMappingInfo m_seps;
 
-  [[nodiscard]] LlcapSizeType llvmArgNoSizeType(size_t LlvmArgNo) const;
+  [[nodiscard]] LlcapSizeType llvmArgNoSizeType(unsigned int LlvmArgNo) const;
 
 public:
   ClangMetadataToLLVMArgumentMapping(llvm::Function &Fn, IdxMappingInfo Seps);
