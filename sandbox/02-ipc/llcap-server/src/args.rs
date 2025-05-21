@@ -6,7 +6,6 @@ use crate::constants::Constants;
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
-  // TODO (do not) move to Stage::TraceCalls
   /// Sets path to module map directory as produced by the instrumentation
   #[arg(short, long)]
   pub modmap: PathBuf,
@@ -18,6 +17,14 @@ pub struct Cli {
   /// File descriptor prefixes for resources
   #[arg(short = 'p', long, default_value = Constants::default_fd_prefix())]
   pub fd_prefix: String,
+
+  /// Buffer count
+  #[arg(short = 'c', long, default_value = Constants::default_buff_count_str())]
+  pub buff_count: u32,
+
+  /// Buffer size in bytes
+  #[arg(short = 's', long, default_value = Constants::default_buff_size_bytes_str())]
+  pub buff_size: u32,
 
   /// Perform a cleanup of all possibly leftover resources related to the given stage and exit
   #[arg(long)]
@@ -41,14 +48,6 @@ pub struct Cli {
 pub enum Stage {
   /// Set up a function tracing server
   TraceCalls {
-    /// Buffer count
-    #[arg(short = 'c', long, default_value = Constants::default_buff_count_str())]
-    buff_count: u32,
-
-    /// Buffer size in bytes
-    #[arg(short = 's', long, default_value = Constants::default_buff_size_bytes_str())]
-    buff_size: u32,
-
     /// produce an export file
     #[arg(short, long, default_value = Constants::default_trace_out_path())]
     out_file: Option<PathBuf>,
@@ -59,15 +58,6 @@ pub enum Stage {
   },
 
   CaptureArgs {
-    // TODO merge later
-    /// Buffer count
-    #[arg(short = 'c', long, default_value = Constants::default_buff_count_str())]
-    buff_count: u32,
-
-    /// Buffer size in bytes
-    #[arg(short = 's', long, default_value = Constants::default_buff_size_bytes_str())]
-    buff_size: u32,
-
     /// input file from the call-tracing stage
     #[arg(short, long, default_value = Constants::default_selected_functions_path())]
     in_file: Option<PathBuf>,
