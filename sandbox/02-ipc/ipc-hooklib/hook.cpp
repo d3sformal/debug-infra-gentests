@@ -1,5 +1,7 @@
 #include "hook.h"
 #include "./shm.h"
+#include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <stdint.h>
 #include <string>
@@ -10,24 +12,27 @@ static_assert(sizeof(long long) == 8, "Expecting long long to be 8 bytes");
 #define GENFN(name, argt, argvar, msg)                                         \
   GENFNDECL(name, argt, argvar) { printf("[HOOK] " msg, argvar); }
 
-#define GENFN_PUSH(name, argt, argvar, msg) \
-  GENFNDECL(name, argt, argvar) { printf("[HOOK] " msg, argvar); push_data(&argvar, sizeof(argt)); }
-  
-  void hook_start(uint32_t module_id, uint32_t fn_id) {
-    push_data(&module_id, sizeof(module_id));
-    push_data(&fn_id, sizeof(fn_id));
+#define GENFN_PUSH(name, argt, argvar, msg)                                    \
+  GENFNDECL(name, argt, argvar) {                                              \
+    printf("[HOOK] " msg, argvar);                                             \
+    push_data(&argvar, sizeof(argt));                                          \
   }
 
-  void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id) {
-    ensure_align(4);
-    push_data(&module_id, sizeof(module_id));
-    push_data(&fn_id, sizeof(fn_id));
-  }
+void hook_start(uint32_t module_id, uint32_t fn_id) {
+  push_data(&module_id, sizeof(module_id));
+  push_data(&fn_id, sizeof(fn_id));
+}
 
-  void hook_cstring(const char * str) {
-    printf("[HOOK] cstring: %s\n", str); 
-    push_data(str, (uint32_t)strlen(str) + 1); 
-  }
+void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id) {
+  ensure_align(4);
+  push_data(&module_id, sizeof(module_id));
+  push_data(&fn_id, sizeof(fn_id));
+}
+
+void hook_cstring(const char *str) {
+  printf("[HOOK] cstring: %s\n", str);
+  push_data(str, (uint32_t)strlen(str) + 1);
+}
 
 GENFN_PUSH(hook_int32, int, i, "int: %d\n")
 
@@ -48,5 +53,17 @@ GENFN_PUSH(hook_uint64, ULLONG, d, "unsigned long long: %llu\n")
 
 GENFN(hook_stdstring8, const char *, str, "std::string: %s\n")
 
-void vstr_extra_cxx__string(std::string *str) { hook_cstring(str->c_str()); }
+void vstr_extra_cxx__string(std::string *str) {
+  uint32_t cstring_size = (uint32_t)strlen(str->c_str());
+  uint32_t capacity = (uint32_t)str->capacity();
+  uint64_t size = cstring_size + sizeof(capacity);
+  if (str->size() > UINT32_MAX) {
+    printf("Error: std::string too large");
+    return;
+  }
+  printf("[HOOK] std::string %s", str->c_str());
+  push_data(&size, sizeof(size));
+  push_data(&capacity, sizeof(capacity));
+  push_data(str->c_str(), cstring_size);
+}
 #endif
