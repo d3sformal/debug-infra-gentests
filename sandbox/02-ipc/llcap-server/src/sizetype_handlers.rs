@@ -1,5 +1,3 @@
-use crate::log::Log;
-
 pub enum ReadProgress {
   Done {
     // reading of a value is done
@@ -325,10 +323,8 @@ impl SizeTypeReader for CustomTypeReader {
   }
 
   fn read(&mut self, data: &[u8]) -> Result<ReadProgress, String> {
-    let lg = Log::get("CustomTypeReader");
     let (newself, result) = match self {
       CustomTypeReader::Start => {
-        lg.trace("Start");
         let mut tgt_sz_buff = [0u8; 8];
         let idx = take_num_into_slice(8, 0, &mut tgt_sz_buff, data);
         if idx == tgt_sz_buff.len() && tgt_sz_buff.len() == data.len() {
@@ -353,7 +349,6 @@ impl SizeTypeReader for CustomTypeReader {
         }
       }
       CustomTypeReader::ReadingTgtSize { idx, bytes } => {
-        lg.trace("R TS");
         let offs = take_num_into_slice(8, 0, bytes, data);
         if offs == bytes.len() {
           (
@@ -377,7 +372,6 @@ impl SizeTypeReader for CustomTypeReader {
     if let Some(newself) = newself {
       *self = newself;
     }
-    lg.trace("End call");
     Ok(result)
   }
 
