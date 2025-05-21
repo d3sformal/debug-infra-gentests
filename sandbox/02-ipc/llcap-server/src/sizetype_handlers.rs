@@ -1,3 +1,5 @@
+use crate::log::Log;
+
 pub enum ReadProgress {
   Done {
     // reading of a value is done
@@ -227,19 +229,19 @@ impl SizeTypeReader for CStringTypeReader {
     if !self.done() {
       return false;
     }
-    *self = CStringTypeReader::Start;
+    *self = Self::Start;
     true
   }
 
   fn read(&mut self, data: &[u8]) -> Result<ReadProgress, String> {
     // this "pair" thing is necessary to make borrow checker happy
-    let (target, retval) = match self {
+    let (newstate, retval) = match self {
       CStringTypeReader::Start => {
         let mut output: Vec<u8> = vec![];
         if consume_until_zero_or_end(&mut output, data) {
           let len = output.len();
           (
-            CStringTypeReader::ReachedZero,
+            Some(CStringTypeReader::ReachedZero),
             Ok(ReadProgress::Done {
               payload: output,
               consumed_bytes: len,
@@ -247,7 +249,7 @@ impl SizeTypeReader for CStringTypeReader {
           )
         } else {
           (
-            CStringTypeReader::Reading { payload: output },
+            Some(CStringTypeReader::Reading { payload: output }),
             Ok(ReadProgress::NotYet),
           )
         }
@@ -258,7 +260,7 @@ impl SizeTypeReader for CStringTypeReader {
           std::mem::swap(&mut new_vec, payload);
           let len = payload.len();
           (
-            CStringTypeReader::ReachedZero,
+            Some(CStringTypeReader::ReachedZero),
             Ok(ReadProgress::Done {
               payload: new_vec,
               consumed_bytes: len,
@@ -266,20 +268,154 @@ impl SizeTypeReader for CStringTypeReader {
           )
         } else {
           std::mem::swap(&mut new_vec, payload);
-          (
-            CStringTypeReader::Reading { payload: new_vec },
-            Ok(ReadProgress::NotYet),
-          )
+          (None, Ok(ReadProgress::NotYet))
         }
       }
-      CStringTypeReader::ReachedZero => (CStringTypeReader::ReachedZero, Ok(ReadProgress::Nop)),
+      CStringTypeReader::ReachedZero => (None, Ok(ReadProgress::Nop)),
     };
     // I think this is not the best design (changing of self), but whatever
-    *self = target;
+    if let Some(newstate) = newstate {
+      *self = newstate;
+    }
     retval
   }
 
   fn done(&self) -> bool {
     matches!(self, Self::ReachedZero)
+  }
+}
+
+// true if exactly done (taken n bytes)
+fn take_num_into_slice(n: usize, start: usize, out: &mut [u8; 8], inp: &[u8]) -> usize {
+  let mut offs = start;
+  for i in inp.iter().take(n) {
+    out[offs] = *i;
+    offs += 1;
+  }
+
+  offs
+}
+
+const CUSTOM_TYPE_SIZE_SPEC_SIZE: usize = 8;
+pub enum CustomTypeReader {
+  Start,
+  ReadingTgtSize {
+    idx: u8,
+    bytes: [u8; CUSTOM_TYPE_SIZE_SPEC_SIZE],
+  },
+  Reading {
+    target_size: u64,
+    payload: Vec<u8>,
+  },
+  Finished,
+}
+impl CustomTypeReader {
+  pub fn new() -> Self {
+    Self::Start
+  }
+}
+
+impl SizeTypeReader for CustomTypeReader {
+  fn read_reset(&mut self) -> bool {
+    if !self.done() {
+      return false;
+    }
+    *self = Self::Start;
+    true
+  }
+
+  fn read(&mut self, data: &[u8]) -> Result<ReadProgress, String> {
+    let lg = Log::get("CustomTypeReader");
+    let (newself, result) = match self {
+      CustomTypeReader::Start => {
+        lg.trace("Start");
+        let mut tgt_sz_buff = [0u8; 8];
+        let idx = take_num_into_slice(8, 0, &mut tgt_sz_buff, data);
+        if idx == tgt_sz_buff.len() && tgt_sz_buff.len() == data.len() {
+          (
+            Some(CustomTypeReader::Reading {
+              target_size: u64::from_le_bytes(tgt_sz_buff),
+              payload: vec![],
+            }),
+            ReadProgress::NotYet,
+          )
+        } else if idx == tgt_sz_buff.len() && tgt_sz_buff.len() < data.len() {
+          let mut payload = vec![];
+          perform_reading_stage(data, idx, u64::from_le_bytes(tgt_sz_buff), &mut payload)
+        } else {
+          (
+            Some(CustomTypeReader::ReadingTgtSize {
+              idx: idx as u8,
+              bytes: tgt_sz_buff,
+            }),
+            ReadProgress::NotYet,
+          )
+        }
+      }
+      CustomTypeReader::ReadingTgtSize { idx, bytes } => {
+        lg.trace("R TS");
+        let offs = take_num_into_slice(8, 0, bytes, data);
+        if offs == bytes.len() {
+          (
+            Some(CustomTypeReader::Reading {
+              target_size: u64::from_le_bytes(*bytes),
+              payload: vec![],
+            }),
+            ReadProgress::NotYet,
+          )
+        } else {
+          *idx = offs as u8;
+          (None, ReadProgress::NotYet)
+        }
+      }
+      CustomTypeReader::Reading {
+        target_size,
+        payload,
+      } => perform_reading_stage(data, 0, *target_size, payload),
+      CustomTypeReader::Finished => (None, ReadProgress::Nop),
+    };
+    if let Some(newself) = newself {
+      *self = newself;
+    }
+    lg.trace("End call");
+    Ok(result)
+  }
+
+  fn done(&self) -> bool {
+    matches!(self, CustomTypeReader::Finished)
+  }
+}
+
+fn perform_reading_stage(
+  data: &[u8],
+  offset: usize,
+  target_size: u64,
+  payload: &mut Vec<u8>,
+) -> (Option<CustomTypeReader>, ReadProgress) {
+  let to_read = target_size as usize - payload.len();
+  for b in data.iter().skip(offset).take(to_read) {
+    payload.push(*b);
+  }
+
+  if to_read == 0 || to_read <= data.len() - offset {
+    let mut exhg = vec![];
+    std::mem::swap(&mut exhg, payload);
+    (
+      Some(CustomTypeReader::Finished),
+      ReadProgress::Done {
+        payload: exhg,
+        consumed_bytes: to_read + CUSTOM_TYPE_SIZE_SPEC_SIZE,
+      },
+    )
+  } else {
+    let mut swp = vec![];
+    std::mem::swap(&mut swp, payload);
+    (
+      Some(CustomTypeReader::Reading {
+        target_size,
+        payload: swp,
+      }),
+      ReadProgress::NotYet,
+    )
   }
 }
