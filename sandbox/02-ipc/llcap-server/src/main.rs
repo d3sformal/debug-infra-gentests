@@ -55,10 +55,10 @@ fn main() -> Result<(), String> {
 
   let modules = obtain_module_map(&cli.modmap)?;
 
+  let (buff_count, buff_size) = (cli.buff_count, cli.buff_size);
+
   match cli.stage {
     args::Stage::TraceCalls {
-      buff_count,
-      buff_size,
       mut out_file,
       import_path,
     } => {
@@ -114,8 +114,6 @@ fn main() -> Result<(), String> {
       lg.info("Exiting...");
     }
     args::Stage::CaptureArgs {
-      buff_count,
-      buff_size,
       in_file: _,
       out_dir: _,
       mem_limit: _,
