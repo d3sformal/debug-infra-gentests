@@ -2,12 +2,13 @@ use std::ptr::slice_from_raw_parts;
 
 use crate::{
   log::Log,
-  modmap::{ExtModuleMap, IntegralModId, MOD_ID_SIZE_B},
+  modmap::{ExtModuleMap, IntegralFnId, IntegralModId, ModIdxT},
   shmem_capture::mem_utils::overread_check,
   sizetype_handlers::{
     ArgSizeTypeRef, CStringTypeReader, CustomTypeReader, FixedSizeTyData, FixedSizeTyReader,
     ReadProgress, SizeTypeReader,
   },
+  stages::arg_capture::ArgPacketDumper,
 };
 
 use super::{
@@ -65,21 +66,22 @@ impl SizeTypeReaders {
   }
 }
 
+// TODO replace module idx with module id?
 #[derive(Debug, Eq, PartialEq)]
 enum PartialCaptureState {
   Empty,
   GotModuleIdx {
-    module_idx: usize,
+    module_idx: ModIdxT,
   },
   CapturingArgs {
-    module_idx: usize,
-    fn_id: u32,
+    module_idx: ModIdxT,
+    fn_id: IntegralFnId,
     arg_idx: usize,
     buff: Vec<u8>,
   },
   Done {
-    module_idx: usize,
-    fn_id: u32,
+    module_idx: ModIdxT,
+    fn_id: IntegralFnId,
     buff: Vec<u8>,
   },
 }
@@ -102,11 +104,11 @@ impl PartialCaptureState {
           *raw_buff = raw_buff.wrapping_add(raw_buff.align_offset(std::mem::size_of::<u32>()));
           return Ok(Self::Empty);
         }
-
-        overread_check(*raw_buff, buff_end, MOD_ID_SIZE_B, "module ID")?;
+        const MODID_SIZE: usize = IntegralModId::byte_size();
+        overread_check(*raw_buff, buff_end, MODID_SIZE, "module ID")?;
         let rcvd_id = IntegralModId(unsafe { read_w_alignment_chk(*raw_buff)? });
         if let Some(idx) = mods.get_module_idx(&rcvd_id) {
-          *raw_buff = raw_buff.wrapping_byte_add(MOD_ID_SIZE_B);
+          *raw_buff = raw_buff.wrapping_byte_add(MODID_SIZE);
           lg.trace(format!("mod Id: {:X}", rcvd_id.0));
           Ok(Self::GotModuleIdx { module_idx: idx })
         } else {
@@ -116,25 +118,24 @@ impl PartialCaptureState {
       Self::GotModuleIdx { module_idx } => {
         let lg = Log::get("progress::GotModuleIdx");
         lg.trace("Awaiting fnid!");
-        type FnId = u32;
-        const FUN_ID_SIZE: usize = std::mem::size_of::<FnId>();
+        const FUN_ID_SIZE: usize = IntegralFnId::size();
         overread_check(*raw_buff, buff_end, FUN_ID_SIZE, "function ID")?;
 
-        let rcvd_id = unsafe { read_w_alignment_chk(*raw_buff)? };
-        match mods.get_function_name(module_idx, rcvd_id) {
+        let fn_id = unsafe { read_w_alignment_chk(*raw_buff)? };
+        match mods.get_function_name(module_idx, fn_id) {
           Some(_) => {
             *raw_buff = raw_buff.wrapping_byte_add(FUN_ID_SIZE);
-            lg.trace(format!("fn Id: {}", rcvd_id));
+            lg.trace(format!("fn Id: {}", *fn_id));
             Ok(Self::CapturingArgs {
-              module_idx: module_idx,
-              fn_id: rcvd_id,
+              module_idx,
+              fn_id,
               arg_idx: 0,
               buff: Vec::new(),
             })
           }
           None => Err(format!(
             "Function id not found @ module {}: {}",
-            module_idx, rcvd_id
+            module_idx, *fn_id
           )),
         }
       }
@@ -150,14 +151,14 @@ impl PartialCaptureState {
         if size_refs.is_none() {
           return Err(format!(
             "Unknown function with module idx {} fn id {}",
-            module_idx, fn_id
+            module_idx, *fn_id
           ));
         }
         let size_refs = size_refs.unwrap();
         if arg_idx > size_refs.len() {
           return Err(format!(
             "Argument index overflow {} for args {:?} in ID m/f {}/{}",
-            arg_idx, size_refs, module_idx, fn_id
+            arg_idx, size_refs, module_idx, *fn_id
           ));
         }
 
@@ -172,7 +173,8 @@ impl PartialCaptureState {
           }
           if buff_end < *raw_buff {
             return Err(format!(
-              "Buffer overflow at idx {i}, m/f id {module_idx} {fn_id}"
+              "Buffer overflow at idx {i}, m/f id {module_idx} {}",
+              *fn_id
             ));
           }
           if buff_end == *raw_buff {
@@ -255,7 +257,7 @@ impl PartialCaptureState {
 #[derive(Debug)]
 struct ArgCaptureState {
   partial_state: PartialCaptureState,
-  payload: Vec<(usize, u32, Vec<u8>)>,
+  payload: Vec<(ModIdxT, IntegralFnId, Vec<u8>)>,
   endmessage_counter: usize,
 }
 
@@ -270,7 +272,7 @@ impl Default for ArgCaptureState {
 }
 
 impl ArgCaptureState {
-  fn extract_massages(mut self) -> (Vec<(usize, u32, Vec<u8>)>, Self) {
+  fn extract_massages(mut self) -> (Vec<(ModIdxT, IntegralFnId, Vec<u8>)>, Self) {
     let mut res = vec![];
     std::mem::swap(&mut res, &mut self.payload);
     (res, self)
@@ -283,6 +285,7 @@ fn update_from_buffer(
   mods: &ExtModuleMap,
   mut state: ArgCaptureState,
   readers: &mut SizeTypeReaders,
+  capture_target: &mut ArgPacketDumper,
 ) -> Result<ArgCaptureState, String> {
   let (buff_start, buff_end) = match buff_bounds_or_end(raw_buff)? {
     Either::Left(()) => {
@@ -312,8 +315,33 @@ fn update_from_buffer(
       PartialCaptureState::Done {
         module_idx,
         fn_id,
-        buff,
+        mut buff,
       } => {
+        let mod_id = mods.get_module_hash_by_idx(module_idx);
+        if let Some(mod_id) = mod_id {
+          if let Some(dumper) = capture_target.get_packet_dumper(mod_id, fn_id) {
+            dumper
+              .write(&mut (buff.len() as u32).to_le_bytes())
+              .map_err(|e| {
+                format!(
+                  "Packet len dumping failed for {} mod {}: {e}",
+                  fn_id.hex_string(),
+                  mod_id.hex_string()
+                )
+              })?;
+            dumper.write(&mut buff).map_err(|e| {
+              format!(
+                "Packet content dumping failed for {} mod {}: {e}",
+                fn_id.hex_string(),
+                mod_id.hex_string()
+              )
+            })?;
+          }
+        } else {
+          Log::get("args update_from_buffer")
+            .warn(format!("Module id of idx {} not found!", module_idx));
+        }
+        println!("{:?}", buff);
         state.payload.push((module_idx, fn_id, buff));
         PartialCaptureState::Empty
       }
@@ -329,7 +357,8 @@ pub fn wip_capture_args(
   buff_size: usize,
   buff_num: usize,
   modules: &ExtModuleMap,
-) -> Result<Vec<(usize, u32, Vec<u8>)>, String> {
+  capture_target: &mut ArgPacketDumper,
+) -> Result<Vec<(usize, IntegralFnId, Vec<u8>)>, String> {
   let lg = Log::get("arg_capture");
   let mut cache = create_sizetype_cache();
 
@@ -342,8 +371,14 @@ pub fn wip_capture_args(
     lg.trace(format!("Received buffer {}", buff_idx));
     let buff_offset = buff_idx * buff_size;
     let buff_ptr = get_buffer_start(infra, buff_offset)?;
-    let st: ArgCaptureState =
-      update_from_buffer(buff_ptr as *const u8, buff_size, modules, state, &mut cache)?;
+    let st: ArgCaptureState = update_from_buffer(
+      buff_ptr as *const u8,
+      buff_size,
+      modules,
+      state,
+      &mut cache,
+      capture_target,
+    )?;
 
     // Protocol: Set buffer's length to zero
     unsafe {

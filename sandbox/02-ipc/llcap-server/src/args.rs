@@ -26,15 +26,11 @@ pub struct Cli {
   #[arg(short = 's', long, default_value = Constants::default_buff_size_bytes_str())]
   pub buff_size: u32,
 
-  /// Perform a cleanup of all possibly leftover resources related to the given stage and exit
-  #[arg(long)]
-  pub cleanup: bool,
-
   /// Enable verbose output, write up to 3x
   #[arg(short, long, action = clap::ArgAction::Count)]
   pub verbose: u8,
 
-  /// Perform the full tool iteration from the specified stage
+  /// Perform the full tool iteration starting from the selected stage
   #[arg(short, long)]
   pub full: bool,
 
@@ -42,6 +38,10 @@ pub struct Cli {
   /// This option overrides ALL paths specified as out_file, or in_file for ANY stage  
   #[arg(short, long)]
   pub all_artifacts: bool,
+
+  /// Perform a cleanup of all possibly leftover resources related to the given stage and exit
+  #[arg(long)]
+  pub cleanup: bool,
 }
 
 #[derive(Subcommand)]
@@ -58,14 +58,19 @@ pub enum Stage {
   },
 
   CaptureArgs {
+    // path to the function selection file (generated in the call-tracing phase)
+    #[arg(short, long, default_value = Constants::default_selected_functions_path())]
+    selection_file: PathBuf,
+
     /// input file from the call-tracing stage
     #[arg(short, long, default_value = Constants::default_selected_functions_path())]
     in_file: Option<PathBuf>,
 
-    /// the directory where function traces are saved (or offloaded)
+    /// the directory where function argument traces are saved (or offloaded)
     #[arg(short, long, default_value = Constants::default_capture_out_path())]
-    out_dir: Option<PathBuf>,
+    out_dir: PathBuf,
 
+    // TODO: think about this (enforcement, where, what)
     /// capture memory limit in MEBIBYTES - offloading will be performed to the output directory
     #[arg(short = 'l', long, default_value = "0")]
     mem_limit: u32,

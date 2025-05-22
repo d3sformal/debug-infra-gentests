@@ -15,9 +15,12 @@ use shmem_capture::{
   arg_capture::wip_capture_args, call_tracing::msg_handler, cleanup_shmem, deinit_tracing,
   init_tracing,
 };
-use stages::call_tracing::{
-  FunctionCallInfo, export_data, export_tracing_selection, import_data,
-  obtain_function_id_selection, print_summary,
+use stages::{
+  arg_capture::ArgPacketDumper,
+  call_tracing::{
+    FunctionCallInfo, export_data, export_tracing_selection, import_data, import_tracing_selection,
+    obtain_function_id_selection, print_summary,
+  },
 };
 
 fn obtain_module_map(path: &std::path::PathBuf) -> Result<ExtModuleMap, String> {
@@ -53,7 +56,7 @@ fn main() -> Result<(), String> {
     return cleanup_shmem(&cli.fd_prefix);
   }
 
-  let modules = obtain_module_map(&cli.modmap)?;
+  let mut modules = obtain_module_map(&cli.modmap)?;
 
   let (buff_count, buff_size) = (cli.buff_count, cli.buff_size);
 
@@ -114,10 +117,21 @@ fn main() -> Result<(), String> {
       lg.info("Exiting...");
     }
     args::Stage::CaptureArgs {
+      selection_file,
       in_file: _,
-      out_dir: _,
-      mem_limit: _,
+      out_dir,
+      mem_limit,
     } => {
+      lg.info("Reading function selection");
+      let selection = import_tracing_selection(&selection_file)?;
+
+      lg.info("Masking");
+      modules.mask_include(&selection)?;
+
+      lg.info("Setting up function packet dumping");
+      let mut dumper =
+        ArgPacketDumper::new(&out_dir, &modules, mem_limit as usize).map_err(|x| x.to_string())?;
+
       lg.info("Initializing tracing infrastructure");
       let mut tracing_infra = init_tracing(&cli.fd_prefix, buff_count, buff_size)?;
 
@@ -128,6 +142,7 @@ fn main() -> Result<(), String> {
         buff_size as usize,
         buff_count as usize,
         &modules,
+        &mut dumper,
       )?;
 
       lg.info("Shutting down tracing infrastructure...");

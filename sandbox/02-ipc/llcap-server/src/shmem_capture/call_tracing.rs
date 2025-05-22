@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use crate::{
   log::Log,
-  modmap::{ExtModuleMap, IntegralModId, MOD_ID_SIZE_B},
-  stages::call_tracing::{FunctionCallInfo, Message, ModIdT},
+  modmap::{ExtModuleMap, IntegralFnId, IntegralModId, ModIdxT},
+  stages::call_tracing::{FunctionCallInfo, Message},
 };
 
 use super::{
@@ -13,7 +13,7 @@ use super::{
 };
 
 pub struct CallTraceMessageState {
-  modidx_wip: Option<ModIdT>,
+  modidx_wip: Option<ModIdxT>,
   messages: Vec<Message>,
 }
 
@@ -28,7 +28,7 @@ impl CallTraceMessageState {
     self.messages.push(msg);
   }
 
-  pub fn new(module_idx: Option<ModIdT>, messages: Vec<Message>) -> Self {
+  pub fn new(module_idx: Option<ModIdxT>, messages: Vec<Message>) -> Self {
     Self {
       modidx_wip: module_idx,
       messages,
@@ -87,7 +87,7 @@ fn update_from_buffer(
     let fn_id: FnId = unsafe { read_w_alignment_chk(raw_buff) }?;
 
     state.add_message(Message::Normal(FunctionCallInfo::new(
-      fn_id,
+      IntegralFnId(fn_id),
       module_idx as usize,
     )));
     raw_buff = raw_buff.wrapping_byte_add(FUNN_ID_SIZE);
@@ -107,13 +107,14 @@ fn determine_module_idx(
     state.modidx_wip = None;
     idx
   } else {
-    overread_check(*raw_buff, buff_end, MOD_ID_SIZE_B, "module ID")?;
+    const MODID_SIZE: usize = IntegralModId::byte_size();
+    overread_check(*raw_buff, buff_end, MODID_SIZE, "module ID")?;
 
     // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
     // poitner validity ensured by protocol, target type is copied, no allocation over the same memory region
     let rcvd_id = IntegralModId(unsafe { read_w_alignment_chk(*raw_buff)? });
     if let Some(idx) = mods.get_module_idx(&rcvd_id) {
-      *raw_buff = raw_buff.wrapping_byte_add(MOD_ID_SIZE_B);
+      *raw_buff = raw_buff.wrapping_byte_add(MODID_SIZE);
       idx
     } else {
       return Err(format!("Module id not found {:X}", rcvd_id.0));
