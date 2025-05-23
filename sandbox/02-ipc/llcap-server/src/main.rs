@@ -12,7 +12,7 @@ mod shmem_capture;
 mod sizetype_handlers;
 mod stages;
 use shmem_capture::{
-  arg_capture::wip_capture_args, call_tracing::msg_handler, cleanup_shmem, deinit_tracing,
+  arg_capture::perform_arg_capture, call_tracing::msg_handler, cleanup_shmem, deinit_tracing,
   init_tracing,
 };
 use stages::{
@@ -137,7 +137,7 @@ fn main() -> Result<(), String> {
 
       lg.info("Listening!");
 
-      wip_capture_args(
+      perform_arg_capture(
         &mut tracing_infra,
         buff_size as usize,
         buff_count as usize,

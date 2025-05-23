@@ -70,7 +70,7 @@ impl SizeTypeReaders {
 #[derive(Debug, Eq, PartialEq)]
 enum PartialCaptureState {
   Empty,
-  GotModuleIdx {
+  GotModuleId {
     module_id: IntegralModId,
   },
   CapturingArgs {
@@ -111,10 +111,10 @@ impl PartialCaptureState {
         if mods.get_module_string_id(rcvd_id).is_none() {
           Err(format!("Module ID {} is unknown", *rcvd_id))
         } else {
-          Ok(Self::GotModuleIdx { module_id: rcvd_id })
+          Ok(Self::GotModuleId { module_id: rcvd_id })
         }
       }
-      Self::GotModuleIdx { module_id } => {
+      Self::GotModuleId { module_id } => {
         let lg = Log::get("progress::GotModuleIdx");
         lg.trace("Awaiting fnid!");
         const FUN_ID_SIZE: usize = IntegralFnId::byte_size();
@@ -336,8 +336,7 @@ fn update_from_buffer(
   Ok(state)
 }
 
-// TODO rename
-pub fn wip_capture_args(
+pub fn perform_arg_capture(
   infra: &mut TracingInfra,
   buff_size: usize,
   buff_num: usize,

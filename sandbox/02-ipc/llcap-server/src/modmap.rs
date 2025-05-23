@@ -282,7 +282,7 @@ impl TryFrom<&str> for IntegralFnId {
   }
 }
 
-// URGENT TODO: get rid of modidx, document!
+// URGENT TODO: document!
 #[derive(Debug)]
 pub struct ExtModuleMap {
   function_ids: HashMap<IntegralModId, FunctionMap>,

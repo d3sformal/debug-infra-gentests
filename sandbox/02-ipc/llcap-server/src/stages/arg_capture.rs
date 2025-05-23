@@ -13,8 +13,6 @@ pub struct FunctionPacketDumper {
 }
 
 impl FunctionPacketDumper {
-  // TODO: make single source of truth along with conversion in the other direciton
-
   pub fn new(function_id: IntegralFnId, root: &Path, capacity: usize) -> Result<Self, io::Error> {
     let name = function_id.hex_string();
 
