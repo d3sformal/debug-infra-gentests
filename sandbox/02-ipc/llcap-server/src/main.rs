@@ -104,8 +104,8 @@ fn main() -> Result<(), String> {
       if let Some(out_path) = out_file {
         lg.trace("Exporting");
 
-        let _ = export_data(&pairs, &modules, out_path)
-          .inspect_err(|e| lg.crit(format!("Export failed: {e}")));
+        let _ =
+          export_data(&pairs, out_path).inspect_err(|e| lg.crit(format!("Export failed: {e}")));
 
         lg.info("Export done");
       }

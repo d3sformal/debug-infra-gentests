@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
   log::Log,
-  modmap::{ExtModuleMap, IntegralFnId, IntegralModId, ModIdxT},
+  modmap::{ExtModuleMap, IntegralFnId, IntegralModId},
   stages::call_tracing::{FunctionCallInfo, Message},
 };
 
@@ -13,7 +13,7 @@ use super::{
 };
 
 pub struct CallTraceMessageState {
-  modidx_wip: Option<ModIdxT>,
+  mod_id_wip: Option<IntegralModId>,
   messages: Vec<Message>,
 }
 
@@ -28,9 +28,9 @@ impl CallTraceMessageState {
     self.messages.push(msg);
   }
 
-  pub fn new(module_idx: Option<ModIdxT>, messages: Vec<Message>) -> Self {
+  pub fn new(module_id: Option<IntegralModId>, messages: Vec<Message>) -> Self {
     Self {
-      modidx_wip: module_idx,
+      mod_id_wip: module_id,
       messages,
     }
   }
@@ -40,16 +40,16 @@ impl CallTraceMessageState {
 fn update_from_buffer(
   mut raw_buff: *const u8,
   _max_size: usize,
-  mods: &ExtModuleMap,
+  modules: &ExtModuleMap,
   mut state: CallTraceMessageState,
 ) -> Result<CallTraceMessageState, String> {
   let lg = Log::get("update_from_buffer");
   let (buff_start, buff_end) = match buff_bounds_or_end(raw_buff)? {
     Either::Left(()) => {
-      if let Some(m_id) = state.modidx_wip {
+      if let Some(m_id) = state.mod_id_wip {
         return Err(format!(
           "Comms corruption - partial state with empty message following it! Module id {}",
-          m_id
+          *m_id
         ));
       }
 
@@ -65,30 +65,34 @@ fn update_from_buffer(
       return Err("Null pointer when iterating buffer...".to_string());
     }
 
-    let module_idx: usize = determine_module_idx(&mut raw_buff, mods, &mut state, buff_end)?;
+    let mod_id = receive_module_id(raw_buff, &mut state, buff_end)?;
+    raw_buff = raw_buff.wrapping_byte_add(mod_id.size());
+    if modules.get_module_string_id(mod_id).is_none() {
+      return Err(format!("Unknown module ID: {}", *mod_id));
+    }
 
-    type FnId = u32;
-    const FUNN_ID_SIZE: usize = std::mem::size_of::<FnId>();
-
+    const FUNN_ID_SIZE: usize = IntegralFnId::byte_size();
     if raw_buff >= buff_end {
       if raw_buff > buff_end {
         lg.warn(format!(
-          "Buffer weirdly overdlown buff: {:?} end: {:?}",
+          "Buffer weirdly overflown buff: {:?} end: {:?}",
           raw_buff, buff_end
         ));
       }
       lg.trace("Partial message");
-      state.modidx_wip = Some(module_idx);
+      state.mod_id_wip = Some(mod_id);
       return Ok(state);
     }
     overread_check(raw_buff, buff_end, FUNN_ID_SIZE, "function ID")?;
 
     // SAFETY: read_w_alignment_chk + similar to buff_bounds_or_end's requirements, raw_buff within bounds as checked above
-    let fn_id: FnId = unsafe { read_w_alignment_chk(raw_buff) }?;
+    let fn_id: u32 = unsafe { read_w_alignment_chk(raw_buff) }?;
+    lg.trace(format!("M {:02X}", *mod_id));
+    lg.trace(format!("F {:02X}", fn_id));
 
     state.add_message(Message::Normal(FunctionCallInfo::new(
       IntegralFnId(fn_id),
-      module_idx as usize,
+      mod_id,
     )));
     raw_buff = raw_buff.wrapping_byte_add(FUNN_ID_SIZE);
   }
@@ -96,29 +100,22 @@ fn update_from_buffer(
 }
 
 // obtains the "next" module id to process
-fn determine_module_idx(
-  raw_buff: &mut *const u8,
-  mods: &ExtModuleMap,
+fn receive_module_id(
+  raw_buff: *const u8,
   state: &mut CallTraceMessageState,
   buff_end: *const u8,
-) -> Result<usize, String> {
-  Ok(if let Some(idx) = state.modidx_wip {
+) -> Result<IntegralModId, String> {
+  Ok(if let Some(idx) = state.mod_id_wip {
     // module id from a previous buffer -> skip readnig for module id and instead read function id corresponding to the module id from a previous bufer
-    state.modidx_wip = None;
+    state.mod_id_wip = None;
     idx
   } else {
     const MODID_SIZE: usize = IntegralModId::byte_size();
-    overread_check(*raw_buff, buff_end, MODID_SIZE, "module ID")?;
+    overread_check(raw_buff, buff_end, MODID_SIZE, "module ID")?;
 
     // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
     // poitner validity ensured by protocol, target type is copied, no allocation over the same memory region
-    let rcvd_id = IntegralModId(unsafe { read_w_alignment_chk(*raw_buff)? });
-    if let Some(idx) = mods.get_module_idx(&rcvd_id) {
-      *raw_buff = raw_buff.wrapping_byte_add(MODID_SIZE);
-      idx
-    } else {
-      return Err(format!("Module id not found {:X}", rcvd_id.0));
-    }
+    IntegralModId(unsafe { read_w_alignment_chk(raw_buff)? })
   })
 }
 
@@ -173,8 +170,8 @@ pub fn msg_handler(
     let messages = st.extract_messages();
     state = st; // copy st into state (discards st and makes state ready for another iteration)
 
-    if let Some(mid) = state.modidx_wip {
-      lg.trace(format!("State module id WIP: {mid}"));
+    if let Some(mid) = state.mod_id_wip {
+      lg.trace(format!("State module id WIP: {}", *mid));
     }
 
     if let Some(Message::ControlEnd) = messages.first() {

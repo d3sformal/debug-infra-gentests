@@ -179,7 +179,6 @@ fn u32_to_hex_string(num: u32) -> String {
   format!("{:02X}{:02X}{:02X}{:02X}", b1, b2, b3, b4)
 }
 
-pub type ModIdxT = usize;
 #[derive(Hash, Debug, PartialEq, Eq, Clone, Copy)]
 pub struct IntegralFnId(pub u32);
 
@@ -193,8 +192,12 @@ impl IntegralFnId {
     x.0
   }
 
-  pub const fn size() -> usize {
+  pub const fn byte_size() -> usize {
     std::mem::size_of::<u32>()
+  }
+
+  pub const fn size(&self) -> usize {
+    Self::byte_size()
   }
 }
 
@@ -213,6 +216,10 @@ impl IntegralModId {
 
   pub const fn byte_size() -> usize {
     std::mem::size_of::<u32>()
+  }
+
+  pub const fn size(&self) -> usize {
+    Self::byte_size()
   }
 }
 
@@ -278,10 +285,8 @@ impl TryFrom<&str> for IntegralFnId {
 // URGENT TODO: get rid of modidx, document!
 #[derive(Debug)]
 pub struct ExtModuleMap {
-  modhash_to_modidx: HashMap<IntegralModId, usize>,
-  modidx_to_modhash: Vec<Option<IntegralModId>>,
-  function_ids: Vec<Option<FunctionMap>>,
-  module_paths: Vec<Option<String>>,
+  function_ids: HashMap<IntegralModId, FunctionMap>,
+  module_paths: HashMap<IntegralModId, String>,
 }
 
 impl Default for ExtModuleMap {
@@ -293,33 +298,20 @@ impl Default for ExtModuleMap {
 impl ExtModuleMap {
   pub fn new() -> Self {
     Self {
-      function_ids: vec![],
-      modhash_to_modidx: HashMap::new(),
-      modidx_to_modhash: vec![],
-      module_paths: vec![],
+      function_ids: HashMap::new(),
+      module_paths: HashMap::new(),
     }
   }
 
-  pub fn modules(&self) -> std::collections::hash_map::Keys<'_, IntegralModId, usize> {
-    self.modhash_to_modidx.keys()
-  }
-
-  fn flat<T>(v: Option<&Option<T>>) -> Option<&T> {
-    if let Some(x) = v {
-      return x.as_ref();
-    }
-    None
+  pub fn modules(&self) -> std::collections::hash_map::Keys<'_, IntegralModId, FunctionMap> {
+    self.function_ids.keys()
   }
 
   pub fn functions(
     &self,
     mod_id: IntegralModId,
   ) -> Option<std::collections::hash_map::Keys<'_, IntegralFnId, std::string::String>> {
-    self
-      .modhash_to_modidx
-      .get(&mod_id)
-      .and_then(|x| Self::flat(self.function_ids.get(*x)))
-      .map(|x| x.functions())
+    self.function_ids.get(&mod_id).map(|f| f.functions())
   }
 
   pub fn mask_include(&mut self, targets: &[LLVMFunId]) -> Result<(), String> {
@@ -337,15 +329,7 @@ impl ExtModuleMap {
         }
       };
 
-      let mod_idx = match self.get_module_idx(&mod_id) {
-        Some(x) => x,
-        None => {
-          lg.warn(format!("Module index for ID {} not found", mod_id.0));
-          continue;
-        }
-      };
-
-      if let Some(fn_id) = self.get_function_id(mod_idx, f).cloned() {
+      if let Some(fn_id) = self.get_function_id(mod_id, f).cloned() {
         allowlist_fn
           .entry(mod_id)
           .and_modify(|set| {
@@ -357,43 +341,32 @@ impl ExtModuleMap {
       }
     }
 
-    for (modid, mod_idx) in self
-      .modhash_to_modidx
-      .iter()
-      .filter(|(m, _)| allowlist_fn.contains_key(*m))
+    for modid in self
+      .module_paths
+      .keys()
+      .filter(|m| allowlist_fn.contains_key(*m))
     {
-      if let Some(functions) = &mut self.function_ids[*mod_idx] {
-        functions.mask_include(allowlist_fn.get(modid).unwrap())?;
-        lg.info(format!(
-          "Functions {:?} remain in module {}",
-          allowlist_fn
-            .get(modid)
-            .unwrap()
-            .iter()
-            .map(|x| (
-              x.hex_string(),
-              self.get_function_name(*mod_idx, *x).unwrap()
-            ))
-            .collect::<Vec<_>>(),
-          modid.hex_string()
-        ));
-      }
+      let functions = self.function_ids.get_mut(modid).unwrap();
+      functions.mask_include(allowlist_fn.get(modid).unwrap())?;
+      lg.info(format!(
+        "Functions {:?} remain in module {}",
+        allowlist_fn
+          .get(modid)
+          .unwrap()
+          .iter()
+          .map(|x| (x.hex_string(), self.get_function_name(*modid, *x).unwrap()))
+          .collect::<Vec<_>>(),
+        modid.hex_string()
+      ));
     }
 
-    let mods = self
-      .modhash_to_modidx
-      .iter()
-      .map(|(a, b)| (*a, *b))
-      .collect::<Vec<_>>();
-    for (md, idx) in mods {
-      if let Some(fun) = &self.function_ids[idx] {
-        if fun.is_empty() || !allowlist_fn.contains_key(&md) {
-          self.function_ids[idx] = None;
-          self.module_paths[idx] = None;
-          self.modidx_to_modhash[idx] = None;
-          self.modhash_to_modidx.remove(&md);
-          lg.info(format!("Removed module {}", md.hex_string()));
-        }
+    let mods = self.function_ids.keys().cloned().collect::<Vec<_>>();
+    for md in mods {
+      let fun = &self.function_ids[&md];
+      if fun.is_empty() || !allowlist_fn.contains_key(&md) {
+        self.function_ids.remove(&md);
+        self.module_paths.remove(&md);
+        lg.info(format!("Removed module {}", md.hex_string()));
       }
     }
 
@@ -401,7 +374,6 @@ impl ExtModuleMap {
   }
 
   pub fn add_module(&mut self, path_to_modfile: &PathBuf) -> Result<(), String> {
-    let index = self.function_ids.len();
     let modhash = if let Some(hash_res) = path_to_modfile
       .file_name()
       .and_then(|v| v.to_str())
@@ -412,7 +384,7 @@ impl ExtModuleMap {
       Err(format!("Invalid path {:?}", path_to_modfile))
     }?;
 
-    if self.modhash_to_modidx.contains_key(&modhash) {
+    if self.function_ids.contains_key(&modhash) {
       return Err("Duplicate module hash!".to_owned());
     }
 
@@ -439,77 +411,48 @@ impl ExtModuleMap {
     }?;
 
     let fn_map = FunctionMap::try_from(fn_map)?;
-
-    self.modhash_to_modidx.insert(modhash, index);
-    self.modidx_to_modhash.push(Some(modhash));
-    self.function_ids.push(Some(fn_map));
-    self.module_paths.push(Some(module_str_id));
+    self.function_ids.insert(modhash, fn_map);
+    self.module_paths.insert(modhash, module_str_id);
     Ok(())
-  }
-
-  pub fn get_module_idx(&self, hash: &IntegralModId) -> Option<usize> {
-    self.modhash_to_modidx.get(hash).copied()
-  }
-
-  pub fn get_module_hash_by_idx(&self, idx: usize) -> Option<IntegralModId> {
-    Self::flat(self.modidx_to_modhash.get(idx)).copied()
   }
 
   pub fn find_module_hash_by_name(&self, name: &String) -> Option<IntegralModId> {
     self
       .module_paths
       .iter()
-      .enumerate()
-      .find_map(|(i, v)| {
-        (if let Some(v) = v { v == name } else { false }).then(|| self.get_module_hash_by_idx(i))
-      })
-      .flatten()
+      .find(|(_, v)| *v == name)
+      .map(|v| *v.0)
   }
 
-  pub fn get_function_name(&self, mod_idx: usize, fn_id: IntegralFnId) -> Option<&String> {
-    if mod_idx >= self.function_ids.len() {
-      None
-    } else {
-      let v = &self.function_ids[mod_idx].as_ref();
-      (*v)?.get_name(fn_id)
-    }
+  pub fn get_function_name(&self, mod_id: IntegralModId, fn_id: IntegralFnId) -> Option<&String> {
+    self.function_ids.get(&mod_id)?.get_name(fn_id)
   }
 
-  pub fn get_function_id(&self, mod_idx: usize, fn_name: &String) -> Option<&IntegralFnId> {
-    if mod_idx >= self.function_ids.len() {
-      None
-    } else {
-      let v = &self.function_ids[mod_idx].as_ref();
-      (*v)?.get_id(fn_name)
-    }
+  pub fn get_function_id(&self, mod_id: IntegralModId, fn_name: &String) -> Option<&IntegralFnId> {
+    self.function_ids.get(&mod_id)?.get_id(fn_name)
   }
 
   pub fn get_function_arg_size_descriptors(
     &self,
-    mod_idx: usize,
+    mod_id: IntegralModId,
     fn_id: IntegralFnId,
   ) -> Option<&Vec<ArgSizeTypeRef>> {
-    if mod_idx >= self.function_ids.len() {
-      None
-    } else {
-      let x = &self.function_ids[mod_idx].as_ref();
-      (*x)?.get_arg_size_ref(fn_id)
-    }
+    self.function_ids.get(&mod_id)?.get_arg_size_ref(fn_id)
   }
 
-  pub fn get_module_string_id(&self, mod_idx: usize) -> Option<&String> {
-    Self::flat(self.module_paths.get(mod_idx))
+  pub fn get_module_string_id(&self, mod_id: IntegralModId) -> Option<&String> {
+    self.module_paths.get(&mod_id)
   }
 
   pub fn print_summary(&self) {
     println!("Module map summary:");
-    println!("Total Modules loaded: {}", self.modhash_to_modidx.len());
+    println!("Total Modules loaded: {}", self.function_ids.len());
     println!(
       "Total Functions loaded: {}",
       self
         .function_ids
-        .iter()
-        .map(|fnids| fnids.as_ref().map_or(0, |f| f.fnid_to_demangled_name.len()))
+        .values()
+        .map(|fnids| fnids.fnid_to_demangled_name.len())
         .sum::<usize>()
     );
   }

@@ -8,20 +8,20 @@ use std::{
 use crate::{
   constants::Constants,
   log::Log,
-  modmap::{ExtModuleMap, IntegralFnId, IntegralModId, ModIdxT},
+  modmap::{ExtModuleMap, IntegralFnId, IntegralModId},
 };
 
 #[derive(Hash, PartialEq, Eq, Debug, Copy, Clone)]
 pub struct FunctionCallInfo {
   pub function_id: IntegralFnId,
-  pub module_idx: ModIdxT,
+  pub module_id: IntegralModId,
 }
 
 impl FunctionCallInfo {
-  pub fn new(fn_id: IntegralFnId, mod_idx: ModIdxT) -> Self {
+  pub fn new(fn_id: IntegralFnId, mod_id: IntegralModId) -> Self {
     Self {
       function_id: fn_id,
-      module_idx: mod_idx,
+      module_id: mod_id,
     }
   }
 }
@@ -39,16 +39,16 @@ pub struct LLVMFunId {
 
 pub fn print_summary(sorted_pairs: &mut [(FunctionCallInfo, u64)], mods: &ExtModuleMap) {
   let lg = Log::get("summary");
-  let mut seen_modules: HashSet<ModIdxT> = HashSet::new();
+  let mut seen_modules: HashSet<IntegralModId> = HashSet::new();
 
   for (idx, (fninfo, freq)) in sorted_pairs.iter().enumerate() {
-    let modstr = mods.get_module_string_id(fninfo.module_idx);
-    let fn_name = mods.get_function_name(fninfo.module_idx, fninfo.function_id);
-    seen_modules.insert(fninfo.module_idx);
+    let modstr = mods.get_module_string_id(fninfo.module_id);
+    let fn_name = mods.get_function_name(fninfo.module_id, fninfo.function_id);
+    seen_modules.insert(fninfo.module_id);
     if modstr.and(fn_name).is_none() {
       lg.warn(format!(
         "Function ID or module ID confusion. Fun ID: {} {:?} Mod ID: {} {:?}",
-        *fninfo.function_id, fn_name, fninfo.module_idx, modstr
+        *fninfo.function_id, fn_name, *fninfo.module_id, modstr
       ));
       continue;
     }
@@ -89,10 +89,10 @@ pub fn obtain_function_id_selection(
         if i < ordered_traces.len() {
           let FunctionCallInfo {
             function_id,
-            module_idx,
+            module_id,
           } = ordered_traces[i];
-          let fn_str = mapping.get_function_name(module_idx, function_id);
-          let mod_str = mapping.get_module_string_id(module_idx);
+          let fn_str = mapping.get_function_name(module_id, function_id);
+          let mod_str = mapping.get_module_string_id(module_id);
 
           match (fn_str, mod_str) {
             (None, _) | (_, None) => {
@@ -152,10 +152,7 @@ pub fn export_tracing_selection(
         ));
       }
       let mod_hash = mod_hash.unwrap();
-      let fn_id = mapping.get_function_id(
-        mapping.get_module_idx(&mod_hash).unwrap(),
-        &selected.fn_name,
-      );
+      let fn_id = mapping.get_function_id(mod_hash, &selected.fn_name);
       if fn_id.is_none() {
         return Err(format!(
           "Could not resolve id of function {}, mod: {}, mapping: {:?}",
@@ -219,24 +216,16 @@ pub fn import_tracing_selection(path: &Path) -> Result<Vec<LLVMFunId>, String> {
 pub type ImportFormat = Vec<(FunctionCallInfo, u64)>;
 pub type ExportFormat = ImportFormat;
 
-pub fn export_data(
-  sorted_data: &ExportFormat,
-  modmap: &ExtModuleMap,
-  out_path: PathBuf,
-) -> Result<(), String> {
+pub fn export_data(sorted_data: &ExportFormat, out_path: PathBuf) -> Result<(), String> {
   let lg = Log::get("call_tracing::export_data");
 
   let mut f = File::create(&out_path).map_err(|e| format!("{}", e))?;
-  for datum in sorted_data {
-    let module_hash = modmap.get_module_hash_by_idx(datum.0.module_idx);
-    if module_hash.is_none() {
-      return Err("Invalid module mapping, internal structures incorrect".to_string());
-    }
-    let module_hash = module_hash.unwrap();
+  for (fninfo, freq) in sorted_data {
+    let module_hash = fninfo.module_id;
 
     f.write_fmt(format_args!(
       "{}-{}-{}\n",
-      datum.1, *datum.0.function_id, module_hash.0
+      freq, *fninfo.function_id, module_hash.0
     ))
     .map_err(|e| format!("Write failed: {}", e))?;
   }
@@ -275,14 +264,17 @@ pub fn import_data(in_path: PathBuf, modmap: &ExtModuleMap) -> Result<ImportForm
     line.clear();
 
     if let (Ok(fr), Ok(fnid), Ok(modhash)) = parse_res {
-      if let Some(module_idx) = modmap.get_module_idx(&IntegralModId(modhash)) {
-        result.push((FunctionCallInfo::new(IntegralFnId(fnid), module_idx), fr));
-      } else {
+      let (fnid, mod_id) = (IntegralFnId(fnid), IntegralModId(modhash));
+      if modmap
+        .get_function_arg_size_descriptors(mod_id, fnid)
+        .is_none()
+      {
         return Err(format!(
-          "Failed to map module hash (0x{:X}) to a module index",
-          modhash
+          "Function not found, module: {}, fn: {}",
+          *mod_id, *fnid
         ));
       }
+      result.push((FunctionCallInfo::new(fnid, mod_id), fr));
     } else {
       return Err(format!(
         "Failed to parse import, invalid format in one of the numbers {:?}",
