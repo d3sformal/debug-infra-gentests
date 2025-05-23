@@ -66,7 +66,6 @@ impl SizeTypeReaders {
   }
 }
 
-// TODO replace module idx with module id?
 #[derive(Debug, Eq, PartialEq)]
 enum PartialCaptureState {
   Empty,
