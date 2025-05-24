@@ -10,11 +10,7 @@ extern "C" {
 #define SHM_FAIL_RET 1
 #define SHM_FAIL_NORET 2
 
-typedef struct {
-  uint32_t buff_count;
-  uint32_t buff_len;
-  uint32_t total_len;
-} ShmMeta;
+#include "shm_commons.h"
 
 #ifdef MANUAL_INIT_DEINIT
 

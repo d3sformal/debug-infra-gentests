@@ -1,7 +1,9 @@
 pub mod arg_capture;
 pub mod call_tracing;
+mod hooklib_commons;
 pub mod mem_utils;
 
+use hooklib_commons::ShmMeta;
 use mem_utils::{aligned_to, read_w_alignment_chk};
 
 use crate::libc_wrappers::fd::try_shm_unlink_fd;
@@ -10,13 +12,6 @@ use crate::libc_wrappers::shared_memory::ShmemHandle;
 use crate::libc_wrappers::wrappers::to_cstr;
 use crate::log::Log;
 use libc::O_CREAT;
-
-#[repr(C)]
-struct MetaDescriptor {
-  pub buff_count: u32,
-  pub buff_size: u32,
-  pub total_len: u32,
-}
 
 /// a handle to all shared memory infrastructure necessary for function tracing
 pub struct TracingInfra<'a> {
@@ -105,19 +100,18 @@ pub fn init_shmem(
   let meta_tmp = format!("{prefix}shmmeta\x00");
   // SAFETY: line above
   let metacstr = unsafe { to_cstr(&meta_tmp) };
-  let meta_mem_handle =
-    ShmemHandle::try_mmap(metacstr, std::mem::size_of::<MetaDescriptor>() as u32)?;
+  let meta_mem_handle = ShmemHandle::try_mmap(metacstr, std::mem::size_of::<ShmMeta>() as u32)?;
 
   {
-    let target_descriptor = MetaDescriptor {
+    let target_descriptor = ShmMeta {
       buff_count,
-      buff_size: buff_len,
+      buff_len,
       total_len: buff_count * buff_len,
     };
-    aligned_to::<MetaDescriptor>(meta_mem_handle.mem as *const u8)?;
+    aligned_to::<ShmMeta>(meta_mem_handle.mem as *const u8)?;
     // SAFETY: line above, the memory at meta_mem_handle.mem does not need to be dropped
     unsafe {
-      (meta_mem_handle.mem as *mut MetaDescriptor).write(target_descriptor);
+      (meta_mem_handle.mem as *mut ShmMeta).write(target_descriptor);
     }
   }
 
