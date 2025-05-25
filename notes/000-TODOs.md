@@ -11,11 +11,11 @@
 * ~~unify SOLVED vs DONE items~~
 * ~~public repo?~~
 * ~~remove ZMQ references entirely (too expensive to maintain)~~
-    * ensure ALL links to ZMQ functionality actually link to a revision where ZMQ is available
-        * ensure the revision is the same, where possible
+    * ~~ensure ALL links to ZMQ functionality actually link to a revision where ZMQ is available~~
+        * ~~ensure the revision is the same, where possible~~
     * also ensure legacy examples work (test-pass-working)
 * more diagrams
-* split 00-testing-* to analysis and progress updates
+* ~~split 00-testing-* to analysis and progress updates~~
     * try link each other?
 * move `Capturing function arguments` somewhere else... and document the status quo
  
