@@ -20,7 +20,7 @@ The build depends on a "shared memory metadata struct" that can be found in the 
       -s, --buff-size <BUFF_SIZE>    Buffer size in bytes [default: 4194304]
       -v, --verbose...               Enable verbose output, write up to 3x
       -f, --full                     Perform the full tool iteration starting from the selected stage
-      -a, --all-artifacts            Produce all artifacts that can be exported (in default locations) This option overrides ALL paths specified as out_file, or in_file for ANY stage
+      -a, --all-artifacts            Produce all artifacts that can be exported (in default locations) This option overrides ALL paths specified as import or export paths for ANY stage
           --cleanup                  Perform a cleanup of all possibly leftover resources related to the given stage and exit
       -h, --help                     Print help
       -V, --version                  Print version
@@ -43,8 +43,6 @@ The build depends on a "shared memory metadata struct" that can be found in the 
     Options:
       -s, --selection-file <SELECTION_FILE>
               [default: ./selected-fns.bin]
-      -i, --in-file <IN_FILE>
-              input file from the call-tracing stage [default: ./selected-fns.bin]
       -o, --out-dir <OUT_DIR>
               the directory where function argument traces are saved (or offloaded) [default: ./capture-out/]
       -l, --mem-limit <MEM_LIMIT>

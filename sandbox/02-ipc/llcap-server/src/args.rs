@@ -35,7 +35,7 @@ pub struct Cli {
   pub full: bool,
 
   /// Produce all artifacts that can be exported (in default locations)
-  /// This option overrides ALL paths specified as out_file, or in_file for ANY stage  
+  /// This option overrides ALL paths specified as import or export paths for ANY stage  
   #[arg(short, long)]
   pub all_artifacts: bool,
 
@@ -61,10 +61,6 @@ pub enum Stage {
     // path to the function selection file (generated in the call-tracing phase)
     #[arg(short, long, default_value = Constants::default_selected_functions_path())]
     selection_file: PathBuf,
-
-    /// input file from the call-tracing stage
-    #[arg(short, long, default_value = Constants::default_selected_functions_path())]
-    in_file: Option<PathBuf>,
 
     /// the directory where function argument traces are saved (or offloaded)
     #[arg(short, long, default_value = Constants::default_capture_out_path())]

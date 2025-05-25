@@ -118,7 +118,6 @@ fn main() -> Result<(), String> {
     }
     args::Stage::CaptureArgs {
       selection_file,
-      in_file: _,
       out_dir,
       mem_limit,
     } => {
