@@ -1,5 +1,8 @@
 # LLVM demangler cannot demangle some generic lambdas with deduced return type
 
+> [!note]
+> This is a dead end, actually a [larger issue](https://discourse.llvm.org/t/rfc-clang-diagnostic-for-demangling-failures/82835) ([pull request for a diagnostic](https://github.com/llvm/llvm-project/pull/111391))
+
 Consider:
 
 ```c++
