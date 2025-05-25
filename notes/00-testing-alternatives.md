@@ -741,6 +741,9 @@ I chose `zeroMQ` as its documentation seemed more accessible (man-page style).
 
 #### ZeroMQ communication and the termination issue
 
+> [!note]
+> This approach was abandoned. The relevant revision for ZeroMQ functionality should be `452eee59431e8a3c7797dd9213c0e329fff208c6`. At that point the `llcap-server` should support the `zeromq` positional argument to use ZeroMQ for call tracing.
+
 ZeroMQ is an IPC middleware that supports a variety of programming languages and provides a lot of architecture modes. I chose a push/pull mode: instrumented application pushing identifiers, server pulling them. The hook library additionally has a `__attribute(constructor)` initialization and (`destructor`) deinitialization routines to prepare/close everything on start/exit. This feature is very useful, as we simply always require at least some form of initialization of our library. Especially the `constructor` attribute is used in all later versions of the hook library.
 
 The ZeroMQ implementation "works", as in, the correct function IDs are being received. **That is as long as the target program does not crash**. In my experiments, I've always played with, tested and *considered non-crashing programs*. When programs crash, they leave their environment abruptly; not all signals allow cleanup time even if an application handles signals. When a crash is introduced to the test program, there are times when the ZeroMQ push channel does not flush
@@ -758,8 +761,13 @@ Other approaches considered (only covering the detection of termination, not mes
 
 Relevant files implementing this approach:
 
-* [ipc.c - ZeroMQ integration to hook library](../sandbox/02-ipc/ipc-hooklib/ipc.c)   
-* [`llcap-server`'s `zmq_capture` module](../sandbox/02-ipc/llcap-server/src/zmq_capture.rs)
+> [!note]
+> The following paths are relevant in revision `452eee59431e8a3c7797dd9213c0e329fff208c6`
+
+* ZeroMQ integration to hook library
+    * at `/sandbox/02-ipc/ipc-hooklib/ipc.c`
+* `llcap-server`'s `zmq_capture` module
+    * at `sandbox/02-ipc/llcap-server/src/zmq_capture.rs`
 
 The target test project for the IPC approach is the [example-complex](../sandbox/02-ipc/example-complex/). This is the familiar test program compiled with another cpp file and managed by `CMake`. Inside the `CMakeList.txt` file, you can switch between the approaches. The [`build.sh`](../sandbox/02-ipc/example-complex/build.sh) script builds the binary with our custom compiler passes.
 
@@ -783,7 +791,7 @@ Further, `ninja install` in LLVM build directory is required.
 
 #### Shared memory approach
 
-After the failed ZeroMQ approach, I realized that even the filesystem-based approach would suffer from similar issues in the area of output buffering. We would need to rely on the kernel/library to properly flush a crashing program's buffers onto the disk.
+After the [ZeroMQ approach failed](#zeromq-communication-and-the-termination-issue) due to buffering issues when a program crashes (crucial property of our usecase), I realized that even the filesystem-based approach would suffer from similar issues in the area of output buffering. In this case, we would rely on the kernel/library to properly flush a crashing program's buffers onto the disk.
 
 Another option is using and managing shared memory ourselves. This can 
 - reduce the bottleneck potential by avoiding output flushing on a disk
