@@ -3,9 +3,71 @@
 This document contains initial analysis of the problem. Further progress is documented in the [updates document](./00-progress-updates.md). 
 
 **Rough outline:**
-
+* [Goals / vision](#goals--vision)
 * [C++ instrumentation ecosystem](#c-instrumentation-ecosystem)
 * [(initial) Thoughts on Architecture](#thoughts-on-architecture)
+
+# Goals / vision
+
+1. **Record** function execution, especially function **entry** and **arguments**
+2. Use recorded data (from `1.`) to create and execute targeted *tests*
+
+Breaking this down to the most basic blocks:
+
+1. **Obtain** function call data (entry, arguments)
+2. **Let user select** functions that are to be tested
+3. **Perform test by injecting recorded data**
+
+**Diagram of user-tool interaction**
+
+![Diagram of user-tool interaction](images/diags/interaction-seq-basic.png)
+
+<details>
+<summary>
+Click for plantuml source
+</summary>
+
+```plantuml
+@startuml
+actor User
+participant "Instrumented Binary\n" as instrB
+
+
+activate instrB
+Tool -> instrB: Execute tracing
+...
+instrB -> Tool: Entered foo(arg1, ..., argn)
+instrB -> Tool: foo, arg 1
+...
+instrB -> Tool: foo, arg n
+Tool -> Tool: Save call to foo\nand arguments
+instrB -> Tool: Entered bar(arg1, ..., argm)
+instrB -> Tool: bar, arg 1
+...
+instrB -> Tool: bar, arg m
+Tool -> Tool: Save call to bar\nand arguments
+...
+instrB -> Tool: Binary terminated
+deactivate instrB
+Tool -> User: Prompt: select function(s)\nfor testing
+User -> Tool: Selected function X, bar, Z
+Tool -> instrB: Execute tests
+activate instrB
+Tool -> instrB: Run binary
+instrB -> Tool: Entered bar
+Tool -> instrB: Supply arg1, ... argm\nof bar recorded previously
+instrB -> instrB: Replace arguments with received arguments
+instrB -> instrB: continue execution
+Tool -> instrB: monitor
+...
+instrB -> Tool: End
+deactivate instrB
+Tool -> User: Summarize
+...
+@enduml
+```
+</details>
+
 
 # C++ instrumentation ecosystem
 
