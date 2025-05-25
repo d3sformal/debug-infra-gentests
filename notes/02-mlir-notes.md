@@ -1,3 +1,6 @@
+> [!note]
+> This topic has not lead to much (if any) direct application in this project.
+
 # Intro, resources
 
 * [2023 LLVM Dev Mtg - MLIR Is Not an ML Compiler, and Other Common Misconceptions](https://www.youtube.com/watch?v=lXAp6ZAWyBY)

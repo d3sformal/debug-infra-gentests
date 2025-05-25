@@ -15,6 +15,20 @@
         * ensure the revision is the same, where possible
     * also ensure legacy examples work (test-pass-working)
 * more diagrams
+* split 00-testing-* to analysis and progress updates
+    * try link each other?
+* move `Capturing function arguments` somewhere else... and document the status quo
+ 
+**List of topics:**
+
+* [Data Capture Library](#topic-data-capture-library)
+* [C++ support](#topic-c-support)
+* [LLVM IR approach](#topic-llvm-ir-approach)
+* [Typed value capture](#topic-typed-value-capture)
+* [Testing / Isolation](#topic-testing--isolation)
+* [Papers](#topic-papers)
+* [Modification of incoming arguments](#topic-modification-of-incoming-arguments)
+* [Extras](#topic-extras)
 
 # TOPIC: Data Capture Library
 

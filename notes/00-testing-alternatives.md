@@ -1,12 +1,24 @@
-# Investigating the C++ dynamic instrumentation ecosystem
+**Rough contents:**
 
-## Demands on the application
+* [C++ instrumentation ecosystem](#c-instrumentation-ecosystem)
+* [Thoughts on Architecture](#thoughts-on-architecture)
 
-* code should not modify itself 
-* code should not use advanced security features (shadow stacks, stack cookies)
-* 
+**Progress updates (2025):**
 
-## STATIC
+* [end of March 2025](#update-end-of-march-2025)
+* [April 14](#update-april-14)
+* [April 28](#update-april-28)
+* [May 19](#update-may-19)
+* [June](#update-june)
+
+# C++ instrumentation ecosystem
+
+## Demands on the (instrumented) application
+
+* should not modify itself 
+* should not use advanced security features (shadow stacks, stack cookies)
+
+## Static instrumentation
 
 **Additional demands**: dynamically-loaded libraries disallowed
 
@@ -82,7 +94,7 @@ int main() {
 Expand **After**
 </summary>
 
-(after minor formatting)
+(after minor formatting + addition of `__framework`)
 ```c++
 #include <iostream>
 
@@ -124,17 +136,17 @@ int main() {
 </details>
 
 TODOs:
-* "reporting framework" injection
-    * solution: linked library, MAJOR ISSUE: `#include` of the library header needed for recompilation to succceed
+* "reporting `__framework`" injection
+    * solution: linked library, **major issue**: `#include` of the library header is needed for recompilation to succceed
 * optionaly don't perform syntax/compilation checks? (for large projects)
     * no idea what exactly was meant by this...
 * clang TOOL vs clang PLUGIN (use tool, recompile vs perfrom changes as a compiler pass)
     * semi-decided: LLVM IR pass seems better as the current AST modification would perform way too many risky operations
-        * (syntactic) errors when rewriting the AST 
+        * (syntactic) errors when rewriting the AST, preserving semantics of the language, ...
 
 <details>
 <summary>
-Possible improvement via *Replacements*
+Possible improvement via *Replacements* (**not used**)
 </summary>
 
 (see [link](https://github.com/jkelling/HIP/blob/100c8c83c1f54e4f78d50c64307b9e7083498da2/clang-hipify/src/Cuda2Hip.cpp#L906C1-L917C1))
@@ -162,13 +174,15 @@ Possible improvement via *Replacements*
     ./setup-tool.sh
     ./build.sh
 
-Important question of capturing program state using the instrumentation.
+Important question of [**capturing program state**](#capturing-program-state) using the instrumentation.
 
-## DYNAMIC
+## Dynamic instrumentation
 
 ### Pin
 
-Limitations/requirements:
+(quotes from Pin docs)
+
+#### Limitations/requirements:
 
 * x86-only
 * debug symbols
@@ -182,11 +196,14 @@ Pin issue that might be useful to know about later
     $ echo 0 > /proc/sys/kernel/yama/ptrace_scope
 </details>
 
+
+Major issue:
+
 > Tools must refrain from using any native system calls, and use PinCRT APIs for any needed functionality.
 
 > A C++ runtime. Please note that the current version **does not support C++11 and RTTI** (Run-Time Type Information).
 
-Pin Instrumentation Granularity:
+#### Pin Instrumentation Granularity:
 
 1. Trace - branchless instruction sequences (branching into a sequence means a new sequence is created)
 2. Instruction
@@ -197,22 +214,25 @@ Image & Routine - AoT
 
 >  the `IMG_AddInstrumentFunction` API call. Image instrumentation **depends on symbol information** to determine routine boundaries hence `PIN_InitSymbols` must be called before `PIN_Init`.
 
+#### Tail calls
+
 > Routine instrumentation utilizes the `RTN_AddInstrumentFunction` API call. Instrumentation of routine exits **does not work reliably** **in the presence of tail calls** or **when return instructions cannot reliably be detected**.
 
-**Tail calls**
+disabling tail calls:
 * GCC: `-fno-optimize-sibling-calls`
 * clang: `[[clang::disable_tail_calls]]`, `-mno-tail-call`, `-fno-escaping-block-tail-calls`
 
 
-**Function argument/return value access**
+#### Function argument/return value access
 
 Not supported by Pin directly - only symbol names.
 
 1. Have Debug Symbols as a requirement, parse debug symbols using a library (`libdwarf`) & generate instrumentation based on the function's arguments
 
-2. (C++-only) (UNRELIABLE) De-mangle function names to determine the function arguments & generate instrumentation based on it
+2. (C++-only) (**unreliable**) De-mangle function names to determine the function arguments & generate instrumentation based on it
 
-**Important for multithreaded programs**
+#### Multi-threading
+
 > Pin provides its own locking and thread management API's, which the Pintool should use. (and not regular system tools!) 
 
 > Pintools on Linux also need to take care when calling standard C or C++ library routines from analysis or replacement functions because the C and C++ libraries linked into Pintools are not thread-safe.
@@ -221,22 +241,21 @@ Not supported by Pin directly - only symbol names.
 
 (Pin also provides) Pin-specific thread-local storage.
 
-**Logging:**
+#### Logging
 
 > Pin provides a mechanism to write messages from a Pintool to a logfile. To use this capability, call the LOG() API with your message. The default filename is pintool.log, and it is created in the currently working directory. Use the -logfile switch after the tool name to change the path and file name of the log file.
 
-Problems:
+#### Problems
 
-Collecting a stack trace (can we correclty capture a thread's ID? Can we access the stack trace? Do we even need the stack trace?)
+* collecting a stack trace (can we correclty capture a thread's ID? Can we access the stack trace? Do we even need the stack trace?)
 
-**Capturing program state** for running test (what is the mechanism?)
+* **capturing program state** for running a test (what is the mechanism?)
     - `-pin_memory-range` to contain Pin in a certain address range - may help woth reproduction
     - JIT mode
 
 > On Linux IA-32 architectures, Pintools are built **non-PIC** (Position Independent Code), which allows the compiler to inline both local and global functions. Tools for Linux Intel(R) **64 architectures are built PIC**, but the compiler will not inline any globally visible function due to function pre-emption. Therefore, it is advisable to declare the subroutines called by the analysis function as 'static' on Linux Intel(R) 64 architectures.
 
-How do we deal with this (PIE/non-PIE)? (dynamic object tree dump - IMO requires full instrumentation of all memory accesses inside every function call)
-
+(*irrelevant?*) How do we deal with this (PIE/non-PIE)? (dynamic object tree dump - IMO requires full instrumentation of all memory accesses inside every function call)
 
 # Thoughts on Architecture
 
