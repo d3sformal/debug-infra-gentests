@@ -862,3 +862,7 @@ Consumer processes the buffer. Meanwhile producer moves onto another buffer by w
 * reducing multiple-compilation overhead by adjusting instrumentation to instrumenting for "tracing and caputre at the same time"
     * merge the functionality an add a runtime branch (`if (s_capture_mode == CAPTURE_CALL) { ..capture calls.. } else { ..capture args/run test.. } `)
     * maybe branch predictors will help us? (can we help the branch predictors ourselves?)
+
+# UPDATE June
+
+**Incredibly relevant** 2025 EuroLLVM talk: [Pass Plugins: Past, Present and Future](https://www.youtube.com/watch?v=pHfYFGVFczs)
