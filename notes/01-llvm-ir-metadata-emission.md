@@ -17,6 +17,13 @@ Map the possibilities of LLVM IR metadata, specifically:
 
 * ??? who knows what we'll find!
 
+## Main sections
+
+* [Entrypoint/Low-hanging fruit](#entrypointlow-hanging-fruit)
+* [Exploration](#exploration)
+* [Custom LLVM IR Metadata](#custom-llvm-ir-metadata)
+* [Limitation wrt. function arguments](#limitation-wrt-function-arguments)
+
 
 ## Entrypoint/Low-hanging fruit
 
