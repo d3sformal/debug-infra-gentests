@@ -545,3 +545,30 @@ Current version of argument encoding.
 # June
 
 **Incredibly relevant** 2025 EuroLLVM talk: [Pass Plugins: Past, Present and Future](https://www.youtube.com/watch?v=pHfYFGVFczs)
+
+## Hijacking function arguments
+
+Current prototype (`-S -emit-llvm` extra in `-DCMAKE_CXX_FLAGS`):
+
+```
+; Function Attrs: mustprogress noinline nounwind optnone uwtable
+define dso_local noundef float @_Z28float_called_with_double_intdi(double noundef %0, i32 noundef %1) #0 !VSTR-NOT-SYSTEM-HEADER !8 !LLCAP-CLANG-LLVM-MAP-DATA !9 {
+  call void @hook_arg_preabmle(i32 2030689271, i32 4)
+  call void @hook_double(double %0)
+  
+  %3 = alloca i32, align 4                ; allocate space for type of %1
+  call void @hook_int32ex(i32 %1, ptr %3) ; call hook function (passes pointer to newly allocated data) 
+  %4 = load i32, ptr %3, align 4          ; load from the pointer + replace %1 with %4 everywhere onwards
+
+  %5 = alloca double, align 8
+  %6 = alloca i32, align 4
+  store double %0, ptr %5, align 8
+  store i32 %4, ptr %6, align 4
+  %7 = load double, ptr %5, align 8
+  %8 = load i32, ptr %6, align 4
+  %9 = sitofp i32 %8 to double
+  %10 = fmul double %7, %9
+  %11 = fptrunc double %10 to float
+  ret float %11
+}
+```

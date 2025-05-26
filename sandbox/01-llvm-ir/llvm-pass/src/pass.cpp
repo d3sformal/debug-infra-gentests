@@ -25,6 +25,7 @@
 #include <llvm/Passes/OptimizationLevel.h>
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
+#include "llvm/Support/Alignment.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
@@ -215,21 +216,24 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
     return;
   }
 
-  auto CallByte = GetOrInsertHookFn("hook_char", Type::getInt8Ty(Ctx));
-  auto CallUnsByte = GetOrInsertHookFn("hook_uchar", Type::getInt8Ty(Ctx));
-  auto CallShort = GetOrInsertHookFn("hook_short", Type::getInt8Ty(Ctx));
-  auto CallUnsShort = GetOrInsertHookFn("hook_ushort", Type::getInt8Ty(Ctx));
-  auto CallInt32 = GetOrInsertHookFn("hook_int32", Type::getInt32Ty(Ctx));
-  auto CallUnsInt32 = GetOrInsertHookFn("hook_uint32", Type::getInt32Ty(Ctx));
-  auto CallInt64 = GetOrInsertHookFn("hook_int64", Type::getInt64Ty(Ctx));
-  auto CallUnsInt64 = GetOrInsertHookFn("hook_uint64", Type::getInt64Ty(Ctx));
+  auto CallByte = GetOrInsertHookFn("hook_charex", Type::getInt8Ty(Ctx));
+  auto CallUnsByte = GetOrInsertHookFn("hook_ucharex", Type::getInt8Ty(Ctx));
+  auto CallShort = GetOrInsertHookFn("hook_shortex", Type::getInt8Ty(Ctx));
+  auto CallUnsShort = GetOrInsertHookFn("hook_ushortex", Type::getInt8Ty(Ctx));
+  auto CallInt32 = GetOrInsertHookFn("hook_int32ex", Type::getInt32Ty(Ctx));
+  auto CallUnsInt32 = GetOrInsertHookFn("hook_uint32ex", Type::getInt32Ty(Ctx));
+  auto CallInt64 = GetOrInsertHookFn("hook_int64ex", Type::getInt64Ty(Ctx));
+  auto CallUnsInt64 = GetOrInsertHookFn("hook_uint64ex", Type::getInt64Ty(Ctx));
 
-  const Map<LlcapSizeType, Pair<FunctionCallee, FunctionCallee>>
-      IntTypeSizeMap = {
-          {LlcapSizeType::LLSZ_8, Pair{CallUnsByte, CallByte}},
-          {LlcapSizeType::LLSZ_16, Pair{CallUnsShort, CallShort}},
-          {LlcapSizeType::LLSZ_32, Pair{CallUnsInt32, CallInt32}},
-          {LlcapSizeType::LLSZ_64, Pair{CallUnsInt64, CallInt64}}};
+  const Map<LlcapSizeType, Tuple<FunctionCallee, FunctionCallee, Type *>>
+      IntTypeSizeMap = {{LlcapSizeType::LLSZ_8,
+                         Tuple{CallUnsByte, CallByte, Type::getInt8Ty(Ctx)}},
+                        {LlcapSizeType::LLSZ_16,
+                         Tuple{CallUnsShort, CallShort, Type::getInt16Ty(Ctx)}},
+                        {LlcapSizeType::LLSZ_32,
+                         Tuple{CallUnsInt32, CallInt32, Type::getInt32Ty(Ctx)}},
+                        {LlcapSizeType::LLSZ_64, Tuple{CallUnsInt64, CallInt64,
+                                                       Type::getInt64Ty(Ctx)}}};
   static_assert(
       std::underlying_type_t<LlcapSizeType>(LlcapSizeType::LLSZ_8) * 8 == 8,
       "Failed basic check");
@@ -252,10 +256,61 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
     const unsigned int Bits =
         std::underlying_type_t<LlcapSizeType>(ThisArgSize) * 8;
     if (ArgT->isIntegerTy(Bits)) {
-      auto &&[UnsFn, SignFn] = IntTypeSizeMap.at(ThisArgSize);
+      auto &&[UnsFn, SignFn, TPtr] = IntTypeSizeMap.at(ThisArgSize);
       IF_VERBOSE errs() << "Inserting call " << std::to_string(Bits)
                         << (IsAttrUnsgined ? "U\n" : "S\n");
-      Builder.CreateCall(IsAttrUnsgined ? UnsFn : SignFn, {Arg});
+      // inserts alloca, call, load instruction sequence where
+      // the alloca allocates "some" bytes, pointer to those bytes
+      // is passed to a hooklib call (along with original argument)
+      // and load subsequently loads from the alloca'd address
+      //
+      // it is expected hooklib somehow initializes the pointer to newly
+      // allocated data
+      // TODO: destructors (where to call, for what object)
+      // TODO: data passed in more than one register (Arg would only be half of
+      // the data e.g. for 128bit number)
+      auto *Alloca = Builder.CreateAlloca(TPtr, nullptr, "%man");
+
+      if (Alloca == nullptr) {
+        errs() << "Instrumentation failed: Alloca";
+        exit(1); // TODO?
+      }
+      Alloca->dump();
+      errs() << "OPERAND count " << Alloca->getNumOperands() << '\n';
+      errs() << "OPERAND " << Alloca->getNameOrAsOperand() << " DUMP\n";
+      auto *Op = Alloca->getOperand(0);
+      Op->dump();
+
+      auto *Call =
+          Builder.CreateCall(IsAttrUnsgined ? UnsFn : SignFn, {Arg, Alloca});
+
+      auto *Load = Builder.CreateAlignedLoad(
+          TPtr, Alloca, M.getDataLayout().getPrefTypeAlign(TPtr));
+      if (Alloca == nullptr) {
+        errs() << "Instrumentation failed: Load";
+        exit(1); // TODO?
+      }
+
+      // replaces all usages Arg (argument to be captured/hijacked)
+      // with the newly loaded value
+      Vec<llvm::Use *> ArgUsages;
+      for (auto Use = Arg->use_begin(); Use != Arg->use_end(); ++Use) {
+        // do not replace the usage inside our own call instruction
+        if (Use->getUser() == Call) {
+          continue;
+        }
+
+        ArgUsages.push_back(&*Use);
+      }
+
+      for (auto *ArgUse : ArgUsages) {
+        errs() << "For use in" << '\n';
+        ArgUse->getUser()->dump();
+        errs() << "Setting arg no " << ArgUse->getOperandNo()
+               << " to new load\n";
+        ArgUse->set(Load);
+      }
+
       return;
     }
   }
