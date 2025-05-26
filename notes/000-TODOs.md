@@ -17,7 +17,7 @@
 * more diagrams
 * ~~split 00-testing-* to analysis and progress updates~~
     * try link each other?
-* move `Capturing function arguments` somewhere else... and document the status quo
+* ~~move `Capturing function arguments` somewhere else... and document the status quo~~
  
 **List of topics:**
 
@@ -57,39 +57,6 @@
     * limits C heavily (`auto` not used widely)
     * intricacies of C++'s type system & reference semantics
         * ensuring that modified source code makes exactly the same side effects as the unmodified one
-
-## Capturing function arguments
-
-* think of how dynamic do we want it to be
-    * function sends `fnid, modid` + `t1` + `data1` + `t2` + `data2` (`t1,t2` predefined, encode the size of subsequent `data`)
-    * function sends `fnid, modid` + `len` + `packet` (`len` is lenght of the `packet`, no type information, relies on the encoding/decoding parity per a function)
-    * function sends `cap_id` + `packet` (`cap_id` encodes both function's id and `packet` length)
-    * 1st and 3rd approach require custom specifications (external)
-        * external `t1` -> length, `t2` -> length mapping (generated in early phases)
-        * external `cap_id` -> `fnid, modid, length` mapping (again, gen in early phases)
-    * 2nd approach seems the best in terms of external input information required? although not the best in terms of overhead...
-        * a tradeoff for the 2nd approach: `fnid, modid` -> `len` mapping
-    * 1st approach presents significant overhead and hurdles to extensibility
-    * comes down to 2nd vs 3rd - we're already creating a mapping (if tradeoff above implemented)
-        * if not mapping, we introduce at least 8B of overhead per call more than 3rd (which for functions with small arguments becomes significant)
-            * `fnid` + `modid` (8B so far) + `len` vs `cap_id` (probably less than 256)
-    * seems like the 3rd option is the best (spoiler: it is not)
-        * mapping ~~can~~ can't be created as part of the "modmap" generation (because of the separation of module compilation)
-    * `fnid, modid` -> `len` mapping provides the most flexibility (arugment packet begins with `fnid` and `modid`)
-        * in case the instrumentation gets *merged* to avoid recompilation (runtime check for which kind of instrumentation to execute), the `cap_id` approach would most likely force recompilation (generation of `cap_id` mapping)
-        * compared to function call tracing, where many calls are instrumented, there should be much less overhead for argument tracing on average which is why the overhead should be acceptable
-    * additionally, encoding special types (e.g. custom types or variable-length types) should be possible!
-        * imagine dumping a `std::string`: we certainly need `cstr` data, maybe `size` and `capacity` - although the `size` determines the `cstr` payload size, the current model does not identify the need to interpret received payloads as such (e.g. to read different amount of data than `len` specifies)
-        * therefore we need **capture map** like `fnid, modid` -> `typeid-list` where `typeid-list` lists IDs of types that are going to be received via argument capture 
-            * we use `typeid-list` to **read** properly from the argument capture stream
-        * all type IDs in `typeid-list` must have these components **in sync**:
-            * hooklib serialization (to send arguments to `llcap-server`)
-            * hooklib deserialization (to receive arguments to execute tests)
-            * LLVM-pass mapping generation
-            * `llcap-server` being able to parse the format
-                * can be partially hadnled in the **capture map** for basic types
-                    * e.g. "`typeid` 0 (representing e.g. `int`) has size `4`"
-                    * or   "`typeid` 23 is a custom type with custom key `501-CustomStruct`" in which case the `llcap-server` must support the "custom key"
 
 # TOPIC: C++ support
 
