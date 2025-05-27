@@ -65,8 +65,7 @@ fn update_from_buffer(
       return Err("Null pointer when iterating buffer...".to_string());
     }
 
-    let mod_id = receive_module_id(raw_buff, &mut state, buff_end)?;
-    raw_buff = raw_buff.wrapping_byte_add(mod_id.size());
+    let mod_id = receive_module_id(&mut raw_buff, &mut state, buff_end)?;
     if modules.get_module_string_id(mod_id).is_none() {
       return Err(format!("Unknown module ID: {}", *mod_id));
     }
@@ -101,21 +100,22 @@ fn update_from_buffer(
 
 // obtains the "next" module id to process
 fn receive_module_id(
-  raw_buff: *const u8,
+  raw_buff: &mut *const u8,
   state: &mut CallTraceMessageState,
   buff_end: *const u8,
 ) -> Result<IntegralModId, String> {
-  Ok(if let Some(idx) = state.mod_id_wip {
+  Ok(if let Some(mod_id) = state.mod_id_wip {
     // module id from a previous buffer -> skip readnig for module id and instead read function id corresponding to the module id from a previous bufer
     state.mod_id_wip = None;
-    idx
+    mod_id
   } else {
     const MODID_SIZE: usize = IntegralModId::byte_size();
-    overread_check(raw_buff, buff_end, MODID_SIZE, "module ID")?;
-
+    overread_check(*raw_buff, buff_end, MODID_SIZE, "module ID")?;
     // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
     // poitner validity ensured by protocol, target type is copied, no allocation over the same memory region
-    IntegralModId(unsafe { read_w_alignment_chk(raw_buff)? })
+    let mod_id = IntegralModId(unsafe { read_w_alignment_chk(*raw_buff)? });
+    *raw_buff = raw_buff.wrapping_byte_add(mod_id.size());
+    mod_id
   })
 }
 
