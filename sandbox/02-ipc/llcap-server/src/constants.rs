@@ -6,7 +6,7 @@ impl Constants {
   }
 
   pub const fn default_fd_prefix() -> &'static str {
-    "/llcap-"
+    "/llcap" // CHNL TEST "/llcap-"
   }
   pub const fn default_buff_count_str() -> &'static str {
     "10"

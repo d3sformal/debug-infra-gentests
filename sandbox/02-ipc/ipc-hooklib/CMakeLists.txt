@@ -7,9 +7,9 @@ project(my-hook)
 add_compile_options(-Wall -Wextra -Wconversion -Wpedantic)
 
 
-add_library(my-hook SHARED ./hook.cpp ./shm.c)
+add_library(my-hook SHARED ./hook.cpp ./shm.c ./shm_write_channel.c)
 
 if(CFG_MANUAL)
-add_library(my-hook-manual SHARED ./hook.cpp ./shm.c)
+add_library(my-hook-manual SHARED ./hook.cpp ./shm.c ./shm_write_channel.c)
 set_target_properties(my-hook-manual PROPERTIES COMPILE_DEFINITIONS "MANUAL_INIT_DEINIT=1")
 endif()

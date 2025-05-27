@@ -28,8 +28,8 @@ enum Either<T, S> {
 
 pub fn cleanup_shmem(prefix: &str) -> Result<(), String> {
   let lg = Log::get("cleanup");
-  let free_name = format!("{prefix}semfree");
-  let full_name = format!("{prefix}semfull");
+  let free_name = format!("{prefix}-capture-base-semfree");
+  let full_name = format!("{prefix}-capture-base-semfull");
 
   for name in &[free_name, full_name] {
     lg.info(format!("Cleanup {}", name));
@@ -42,8 +42,8 @@ pub fn cleanup_shmem(prefix: &str) -> Result<(), String> {
     }
   }
 
-  let meta_tmp = format!("{prefix}shmmeta\x00");
-  let buffs_tmp = format!("{prefix}shmbuffs\x00");
+  let meta_tmp = format!("{prefix}-shmmeta\x00");
+  let buffs_tmp = format!("{prefix}-capture-base-buffmem\x00");
   // SAFETY: line above
   for name in [unsafe { to_cstr(&meta_tmp) }, unsafe {
     to_cstr(&buffs_tmp)
@@ -58,8 +58,8 @@ pub fn cleanup_shmem(prefix: &str) -> Result<(), String> {
 }
 
 fn init_semaphores(prefix: &str, n_buffs: u32) -> Result<(Semaphore, Semaphore), String> {
-  let free_name = format!("{prefix}semfree");
-  let full_name = format!("{prefix}semfull");
+  let free_name = format!("{prefix}-capture-base-semfree");
+  let full_name = format!("{prefix}-capture-base-semfull");
 
   let free_sem = Semaphore::try_open_exclusive(&free_name, n_buffs)?;
   let full_sem = Semaphore::try_open_exclusive(&full_name, 0);
@@ -97,7 +97,7 @@ pub fn init_shmem(
   buff_count: u32,
   buff_len: u32,
 ) -> Result<(ShmemHandle, ShmemHandle), String> {
-  let meta_tmp = format!("{prefix}shmmeta\x00");
+  let meta_tmp = format!("{prefix}-shmmeta\x00");
   // SAFETY: line above
   let metacstr = unsafe { to_cstr(&meta_tmp) };
   let meta_mem_handle = ShmemHandle::try_mmap(metacstr, std::mem::size_of::<ShmMeta>() as u32)?;
@@ -115,7 +115,7 @@ pub fn init_shmem(
     }
   }
 
-  let buffs_tmp = format!("{prefix}shmbuffs\x00");
+  let buffs_tmp = format!("{prefix}-capture-base-buffmem\x00");
   // SAFETY: line above
   let buffscstr = unsafe { to_cstr(&buffs_tmp) };
 

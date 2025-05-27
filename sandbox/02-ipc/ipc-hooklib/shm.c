@@ -11,6 +11,10 @@
 #include <sys/mman.h>
 #include <sys/stat.h> /* For mode constants */
 #include <unistd.h>
+#include "shm_write_channel.h"
+
+// CHNL TEST
+static WriteChannel s_channel;
 
 /*
 Shared memory buffering & synchronization
@@ -41,14 +45,7 @@ Bytes 4+ : payload from the foreign process
 /*
 Special considerations w.r.t. program **crashing**.
   - semaphore & memory should be unregistered by the OS
-Termination protocol: (ensure consumer terminates as producer unexpectedly
-terminates)
-- separate process should connect to the "full" semaphore and:
-  - signal it once (to ensure all data is "flushed" to the consumer)
-  - wait on free buffer (for the next step, is valid unless consumer crashed)
-  - write zero as length to the new free buffer
-    - consumer should terminate and cleanup when it encounters zero-length
-buffer
+Termination protocol: see the after_crash_recovery function
 */
 
 // counts full buffers
@@ -197,7 +194,7 @@ static int init_free_buff(void) {
 #define SEMPERMS (S_IROTH | S_IWOTH | S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR)
 
 // returns the total number of bytes in all buffers
-size_t get_buff_total_sz(void) {
+static size_t get_buff_total_sz(void) {
   return s_buff_info.buff_count * s_buff_info.buff_len;
 }
 
@@ -208,8 +205,20 @@ static int setup_infra(void) {
   int rv = SHM_FAIL_NORET;
 
   if (get_buffer_info(s_shm_meta_name, &s_buff_info) != 0) {
+    printf("Could not obtain buffer info\n");
     return rv;
   }
+
+  // CHNL TEST
+  {
+    ChannelInfo info;
+    info.buff_count = s_buff_info.buff_count;
+    info.buff_len = s_buff_info.buff_len;
+    info.total_len = s_buff_info.total_len;
+    printf("Buffer info: cnt %u, len %u, tot %u\n", info.buff_count, info.buff_len, info.total_len);
+    return init_write_channel_with_info("capture", "base", &info, &s_channel);
+  }
+
   static_assert(sizeof(size_t) > sizeof(uint32_t),
                 "Next line kinda depends on this");
   printf("Buffers description: cnt: %u len: %u tot: %u\n",
@@ -263,7 +272,14 @@ int init(void) {
   printf("Initializing\n");
 
   if (setup_infra() != 0) {
+    printf("Failed to init infra\n");
+    exit(-1);
     return rv;
+  }
+  // CHNL TEST
+  {
+    channel_start(&s_channel);
+    return 0;
   }
 
   if (setup_buffers() != 0) {
@@ -430,6 +446,10 @@ void ensure_align(uint32_t align) {
 }
 
 int push_data(const void *source, uint32_t len) {
+  // CHNL TEST
+  {
+    return channel_write(&s_channel, source, len);
+  }
   if (s_shm_initialized != SHM_OK) {
     return -1;
   }
@@ -458,6 +478,11 @@ int termination_sequence(void) {
 
 void deinit(void) {
   printf("Deinit!\n");
+  // CHNL TEST
+  {
+    deinit_channel(&s_channel);
+    return;
+  }
   // does not have & ignores return values as the program is terminating at this
   // point
   if (move_to_next_buff() != 0) {
@@ -492,6 +517,10 @@ void deinit(void) {
 //  -> we signal 2 times on the semaphore, once for the outgoing data and once
 //  for the terminating message
 int after_crash_recovery(void) {
+  // CHNL TEST
+  {
+    return deinit_channel(&s_channel);
+  }
   // first, wait for the "free semaphore" to be N - 1 or N, N = number of
   // buffers (one is "used" or none are "used")
   int res = -1;
@@ -516,6 +545,11 @@ int init_finalize_after_crash(void) {
 
   if (setup_infra() != 0) {
     return rv;
+  }
+
+  // CHNL TEST
+  {
+    return after_crash_recovery();
   }
 
   if (setup_buffers() != 0) {
