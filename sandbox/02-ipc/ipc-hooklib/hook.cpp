@@ -32,7 +32,6 @@ void hook_start(uint32_t module_id, uint32_t fn_id) {
 }
 
 void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id) {
-  ensure_align(4);
   push_data(&module_id, sizeof(module_id));
   push_data(&fn_id, sizeof(fn_id));
 }
@@ -79,7 +78,7 @@ void vstr_extra_cxx__string(std::string *str) {
     printf("Error: std::string too large");
     return;
   }
-  printf("[HOOK] std::string %s\n", str->c_str());
+  printf("[HOOK] std::string %lu %u %s\n", size, capacity, str->c_str());
   push_data(&size, sizeof(size));
   push_data(&capacity, sizeof(capacity));
   push_data(str->c_str(), cstring_size);

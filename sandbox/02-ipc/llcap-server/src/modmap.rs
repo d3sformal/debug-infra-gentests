@@ -75,11 +75,7 @@ impl FunctionMap {
           counter_id.0, expected_name
         ));
       }
-      lg.trace(format!(
-        "Masked out function {} from module {}",
-        counter_id.hex_string(),
-        counter_id.hex_string()
-      ));
+      lg.trace(format!("Masked out function {}", counter_id.hex_string()));
     }
     Ok(())
   }
@@ -182,6 +178,12 @@ fn u32_to_hex_string(num: u32) -> String {
 #[derive(Hash, Debug, PartialEq, Eq, Clone, Copy)]
 pub struct IntegralFnId(pub u32);
 
+impl From<u32> for IntegralFnId {
+  fn from(value: u32) -> Self {
+    Self(value)
+  }
+}
+
 impl IntegralFnId {
   pub fn hex_string(&self) -> String {
     u32_to_hex_string(self.0)
@@ -203,6 +205,12 @@ impl IntegralFnId {
 
 #[derive(Hash, Debug, PartialEq, Eq, Clone, Copy)]
 pub struct IntegralModId(pub u32);
+
+impl From<u32> for IntegralModId {
+  fn from(value: u32) -> Self {
+    Self(value)
+  }
+}
 
 impl IntegralModId {
   pub fn hex_string(&self) -> String {
@@ -347,6 +355,7 @@ impl ExtModuleMap {
       .filter(|m| allowlist_fn.contains_key(*m))
     {
       let functions = self.function_ids.get_mut(modid).unwrap();
+      lg.info(format!("Module {}:", modid.hex_string()));
       functions.mask_include(allowlist_fn.get(modid).unwrap())?;
       lg.info(format!(
         "Functions {:?} remain in module {}",

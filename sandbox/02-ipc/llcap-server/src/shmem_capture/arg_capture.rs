@@ -1,4 +1,4 @@
-use std::ptr::slice_from_raw_parts;
+use std::{mem::MaybeUninit, ptr::slice_from_raw_parts};
 
 use crate::{
   log::Log,
@@ -85,6 +85,16 @@ enum PartialCaptureState {
   },
 }
 
+// safety: raw_buff points to 4 bytes of valid data
+unsafe fn read_integral_id_from_unaligned<T: From<u32>>(raw_buff: *const u8) -> Result<T, String> {
+  let mut uninit_id = MaybeUninit::<u32>::uninit();
+  uninit_id.write(u32::from_le_bytes(unsafe {
+    read_w_alignment_chk(raw_buff)?
+  }));
+  let rcvd_id = T::from(unsafe { uninit_id.assume_init() });
+  Ok(rcvd_id)
+}
+
 impl PartialCaptureState {
   // TODO split up
   pub fn progress(
@@ -98,14 +108,9 @@ impl PartialCaptureState {
       Self::Empty => {
         let lg = Log::get("progress::Empty");
         lg.trace("Starting");
-        if !(*raw_buff as *const u32).is_aligned() {
-          lg.trace("Adjusting alignment");
-          *raw_buff = raw_buff.wrapping_add(raw_buff.align_offset(std::mem::size_of::<u32>()));
-          return Ok(Self::Empty);
-        }
         const MODID_SIZE: usize = IntegralModId::byte_size();
         overread_check(*raw_buff, buff_end, MODID_SIZE, "module ID")?;
-        let rcvd_id = IntegralModId(unsafe { read_w_alignment_chk(*raw_buff)? });
+        let rcvd_id: IntegralModId = unsafe { read_integral_id_from_unaligned(*raw_buff) }?;
         *raw_buff = raw_buff.wrapping_byte_add(MODID_SIZE);
         if mods.get_module_string_id(rcvd_id).is_none() {
           Err(format!("Module ID {} is unknown", *rcvd_id))
@@ -119,10 +124,11 @@ impl PartialCaptureState {
         const FUN_ID_SIZE: usize = IntegralFnId::byte_size();
         overread_check(*raw_buff, buff_end, FUN_ID_SIZE, "function ID")?;
 
-        let fn_id = unsafe { read_w_alignment_chk(*raw_buff)? };
+        let fn_id: IntegralFnId = unsafe { read_integral_id_from_unaligned(*raw_buff) }?;
+        *raw_buff = raw_buff.wrapping_byte_add(FUN_ID_SIZE);
+
         match mods.get_function_name(module_id, fn_id) {
           Some(_) => {
-            *raw_buff = raw_buff.wrapping_byte_add(FUN_ID_SIZE);
             lg.trace(format!("fn Id: {}", *fn_id));
             Ok(Self::CapturingArgs {
               module_id,

@@ -24,8 +24,6 @@ void deinit(void) __attribute__((destructor));
 #endif
 
 int push_data(const void* data, uint32_t len);
-void ensure_align(uint32_t align);
-
 
 #ifdef __cplusplus
 }

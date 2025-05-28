@@ -410,41 +410,6 @@ static int unchecked_push_data(const void *source, uint32_t len) {
   return 0;
 }
 
-void ensure_align(uint32_t align) {
-  void *destination = get_buffer_end();
-  uint64_t dest_n = (uint64_t)destination;
-  uint64_t rem = dest_n % (uint64_t)align;
-  if (rem == 0) {
-    return;
-  }
-
-  uint64_t to_align = align - rem;
-  bool allocated = false;
-  // we need to either:
-  // A) request a new buffer (which is aligned based on the size... TODO -
-  // ensure alginment to at least 8) B) force bump s_bumber to skip unaligned
-  // bytes (maybe sanitize the skipped bytes with zeroes)
-
-  // note that we cannot "just" push data without checking for the allocation
-  // first if we were to allocate AND push data, we would have misaligned
-  // buffers again for push + allocation throughout the push, we would also NOT
-  // have alignment guaranteed
-  if (can_push_data_of_size((size_t)to_align, &allocated) == 0) {
-    if (!allocated) {
-      // if request above allocated new buffer, we are safe, if not, we have to
-      // push to_align bytes
-      unsigned char data = 0x00;
-      while (to_align > 0) {
-        push_data(&data, 1);
-        --to_align;
-      }
-    }
-  } else {
-    printf("Failed to align to: %lu\n", to_align);
-    return;
-  }
-}
-
 int push_data(const void *source, uint32_t len) {
   // CHNL TEST
   {
