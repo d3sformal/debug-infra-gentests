@@ -12,9 +12,9 @@ typedef struct {
 } ChannelInfo;
 
 typedef struct {
-  char* name_sem_free;
-  char* name_sem_full;
-  char* name_buff_mem;
+  char *name_sem_free;
+  char *name_sem_full;
+  char *name_buff_mem;
 } ChannelNames;
 
 typedef struct {
@@ -24,16 +24,17 @@ typedef struct {
   sem_t *sem_free;
   sem_t *sem_full;
   int file_descriptor;
-  void* buffer_base;
+  void *buffer_base;
   size_t current_buffer_idx;
 } WriteChannel;
 
 // name, type, info do not have to be kept alive for the lifetime of target
-int init_write_channel_with_info(const char* name, const char* type, ChannelInfo* info,  WriteChannel* target);
+int init_write_channel_with_info(const char *name, const char *type,
+                                 ChannelInfo *info, WriteChannel *target);
 
-int channel_start(WriteChannel* self);
+int channel_start(WriteChannel *self);
 
-int channel_write(WriteChannel* self, const void* source, uint32_t len);
+int channel_write(WriteChannel *self, const void *source, uint32_t len);
 
-int deinit_channel(WriteChannel* self);
+int deinit_channel(WriteChannel *self);
 #endif // LLCAP_SHM_WR_CHNL

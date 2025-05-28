@@ -1,4 +1,5 @@
 #include "shm_write_channel.h"
+#include "shm_util.h"
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h> /* For O_* constants */
@@ -92,44 +93,6 @@ static bool semaphore_close(sem_t *sem, const char *name) {
   return true;
 }
 
-static bool close_fd(int fd, const char *fd_name, const char *fail_msg) {
-  if (fd != -1) {
-    if (close(fd) == -1) {
-      printf("%s name: %s, fd: %d: %s\n", fail_msg, fd_name, fd,
-             strerror(errno));
-      return false;
-    }
-  }
-  return true;
-}
-
-// maps memory info target along with a file descriptor fd
-// returns true if both target and fd are valid resources
-// returns false if any step failed, target and fd invalid
-static bool mmap_shmem(const char *name, void **target, int *fd, size_t len,
-                       bool write) {
-  int rv = false;
-  *fd = -1;
-
-  *fd = shm_open(name, write ? O_RDWR : O_RDONLY, 0);
-  if (*fd == -1) {
-    printf("Failed to create shm FD for %s: %s\n", name, strerror(errno));
-    return rv;
-  }
-
-  void *mem_ptr = mmap(NULL, len, write ? (PROT_READ | PROT_WRITE) : PROT_READ,
-                       MAP_SHARED, *fd, 0);
-  if (mem_ptr == MAP_FAILED) {
-    printf("Failed to map from FD %s: %s\n", name, strerror(errno));
-    close_fd(*fd, name, "Cleanup map_shmem failed to close FD");
-  } else {
-    rv = true;
-    *target = mem_ptr;
-  }
-
-  return rv;
-}
-
 // returns the total number of bytes in all buffers
 static size_t get_buff_total_sz(ChannelInfo *info) {
   return info->buff_count * info->buff_len;
@@ -172,8 +135,9 @@ int init_write_channel_with_info(const char *channel_name, const char *type,
   printf("Semaphore value: %d\n", sem_value);
 
   size_t buff_total_size = get_buff_total_sz(info);
-  if (!mmap_shmem(target->names.name_buff_mem, &target->buffer_base,
-                  &target->file_descriptor, buff_total_size, 1)) {
+  if (mmap_shmem(target->names.name_buff_mem, &target->buffer_base,
+                 &target->file_descriptor, buff_total_size, true) != 0) {
+    printf("Channel shmem mapping failed!");
     goto fail_close_free_sem;
   }
 
@@ -231,38 +195,6 @@ static bool termination_sequence(WriteChannel *self) {
     }
   }
   return true;
-}
-
-#define UNMAP_SHMEM_FLAG_TRY_ALL 1
-
-// unmaps memory of length "len" mapped to "mem" backed by descriptor "fd" that
-// was created with "name"
-//
-// flags = 0 or UNMAP_SHMEM_FLAG_TRY_ALL
-//
-// if UNMAP_SHMEM_FLAG_TRY_ALL is set, function attempts to unmap all resources
-// even if some fail returns 0 on success, -1 if failure has occured
-// (UNMAP_SHMEM_FLAG_TRY_ALL returns -2 if munmap failed only, -3 if every
-// resource failed to be freed)
-static int unmap_shmem(void *mem, int fd, const char *name, size_t len,
-                       unsigned flags) {
-  int rv = -1;
-  if (munmap(mem, len) != 0) {
-    printf("Failed to UNmap memory %s: %s\n", name, strerror(errno));
-    if ((flags & UNMAP_SHMEM_FLAG_TRY_ALL) == 0) {
-      return -1;
-    } else {
-      rv = -2;
-    }
-  }
-  if (!close_fd(fd, name, "Failed to close FD")) {
-    printf("Failed to UNlink FD %s: %s\n", name, strerror(errno));
-    if (rv == -2) {
-      return -3;
-    }
-    return -1;
-  }
-  return 0;
 }
 
 static void *get_buffer(WriteChannel *self, size_t idx) {

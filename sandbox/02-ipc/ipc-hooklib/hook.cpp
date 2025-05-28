@@ -18,11 +18,11 @@ static_assert(sizeof(long long) == 8, "Expecting long long to be 8 bytes");
     push_data(&argvar, sizeof(argt));                                          \
   }
 
-#define GENFN_PUSHEX(name, argt, argvar, msg, dflt)                                    \
-  GENFNDECLEX(name, argt, argvar) {                                              \
-    printf("[HOOK] " msg, argvar);\
-    printf("[TGTA] %p\n", (void*)target);                                             \
-    *target = (dflt); \
+#define GENFN_PUSHEX(name, argt, argvar, msg, dflt)                            \
+  GENFNDECLEX(name, argt, argvar) {                                            \
+    printf("[HOOK] " msg, argvar);                                             \
+    printf("[TGTA] %p\n", (void *)target);                                     \
+    *target = (dflt);                                                          \
     push_data(&argvar, sizeof(argt));                                          \
   }
 
@@ -57,7 +57,6 @@ GENFN_PUSH(hook_uchar, UCHAR, str, "unsigned byte: %u\n")
 GENFN_PUSH(hook_ushort, USHORT, str, "unsigned short: %d\n")
 GENFN_PUSH(hook_uint32, UINT, i, "unsigned int: %u\n")
 GENFN_PUSH(hook_uint64, ULLONG, d, "unsigned long long: %llu\n")
-
 
 GENFN_PUSHEX(hook_shortex, short, str, "ex short: %d\n", 444)
 GENFN_PUSHEX(hook_charex, char, str, "ex byte: %d\n", 111)
