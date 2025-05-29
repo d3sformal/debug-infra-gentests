@@ -15,8 +15,6 @@
 const unsigned long MAX_NAME_LEN = 251; // inc null terminator
 const char *CHANNEL_NAME_BASE = "/llcap";
 
-#define SEMPERMS (S_IROTH | S_IWOTH | S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR)
-
 static bool alloc_name(const char *name_base, const char *name,
                        const char *type_id, const char *postfix, char **out) {
   // must ensure out is written only if allocation is successful!

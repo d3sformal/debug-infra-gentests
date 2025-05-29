@@ -2,22 +2,26 @@ pub mod arg_capture;
 pub mod call_tracing;
 mod hooklib_commons;
 pub mod mem_utils;
+mod zmq_channels;
 
 use hooklib_commons::ShmMeta;
 use mem_utils::{aligned_to, read_w_alignment_chk};
 
 use crate::libc_wrappers::fd::try_shm_unlink_fd;
-use crate::libc_wrappers::sem::Semaphore;
+use crate::libc_wrappers::sem::{FreeFullSemNames, Semaphore};
 use crate::libc_wrappers::shared_memory::ShmemHandle;
 use crate::libc_wrappers::wrappers::to_cstr;
 use crate::log::Log;
+use crate::modmap::{IntegralFnId, IntegralModId};
+use crate::stages::arg_capture::PacketReader;
+use crate::stages::call_tracing::LLVMFunId;
 use libc::O_CREAT;
+use zmq_channels::{MainChannelNames, ZmqMetadataServer};
 
 /// a handle to all shared memory infrastructure necessary for function tracing
 pub struct TracingInfra<'a> {
   pub sem_free: Semaphore,
   pub sem_full: Semaphore,
-  pub meta_buffer: ShmemHandle<'a>,
   pub backing_buffer: ShmemHandle<'a>,
 }
 
@@ -28,10 +32,10 @@ enum Either<T, S> {
 
 pub fn cleanup_shmem(prefix: &str) -> Result<(), String> {
   let lg = Log::get("cleanup");
-  let free_name = format!("{prefix}-capture-base-semfree");
-  let full_name = format!("{prefix}-capture-base-semfull");
-
-  for name in &[free_name, full_name] {
+  let FreeFullSemNames { free, full } = FreeFullSemNames::get(prefix, "capture", "base");
+  let meta = MainChannelNames::get_metadata(prefix);
+  // TODO - ZMQ paths
+  for name in &[free, full, meta] {
     lg.info(format!("Cleanup {}", name));
     let res = Semaphore::try_open(name, 0, O_CREAT.into(), None);
     if let Ok(sem) = res {
@@ -58,8 +62,10 @@ pub fn cleanup_shmem(prefix: &str) -> Result<(), String> {
 }
 
 fn init_semaphores(prefix: &str, n_buffs: u32) -> Result<(Semaphore, Semaphore), String> {
-  let free_name = format!("{prefix}-capture-base-semfree");
-  let full_name = format!("{prefix}-capture-base-semfull");
+  let FreeFullSemNames {
+    free: free_name,
+    full: full_name,
+  } = FreeFullSemNames::get(prefix, "capture", "base");
 
   let free_sem = Semaphore::try_open_exclusive(&free_name, n_buffs)?;
   let full_sem = Semaphore::try_open_exclusive(&full_name, 0);
@@ -92,112 +98,140 @@ pub fn deinit_semaphores(free_handle: Semaphore, full_handle: Semaphore) -> Resu
     .map_err(|e| format!("When closing full semaphore: {e}"))
 }
 
-pub fn init_shmem(
-  prefix: &str,
-  buff_count: u32,
-  buff_len: u32,
-) -> Result<(ShmemHandle, ShmemHandle), String> {
-  let meta_tmp = format!("{prefix}-shmmeta\x00");
-  // SAFETY: line above
-  let metacstr = unsafe { to_cstr(&meta_tmp) };
-  let meta_mem_handle = ShmemHandle::try_mmap(metacstr, std::mem::size_of::<ShmMeta>() as u32)?;
-
-  {
-    let target_descriptor = ShmMeta {
-      buff_count,
-      buff_len,
-      total_len: buff_count * buff_len,
-    };
-    aligned_to::<ShmMeta>(meta_mem_handle.mem as *const u8)?;
-    // SAFETY: line above, the memory at meta_mem_handle.mem does not need to be dropped
-    unsafe {
-      (meta_mem_handle.mem as *mut ShmMeta).write(target_descriptor);
-    }
-  }
-
+fn init_shmem(prefix: &str, buff_count: u32, buff_len: u32) -> Result<ShmemHandle, String> {
   let buffs_tmp = format!("{prefix}-capture-base-buffmem\x00");
   // SAFETY: line above
   let buffscstr = unsafe { to_cstr(&buffs_tmp) };
 
-  let result = ShmemHandle::try_mmap(buffscstr, buff_count * buff_len);
-
-  if let Ok(res) = result {
-    Ok((meta_mem_handle, res))
-  } else {
-    match meta_mem_handle.try_unmap() {
-      Err(e) => Err(format!(
-        "Failed to map shared memory, initialization failed: {e}"
-      )),
-      Ok(()) => Err(format!(
-        "Initialization failed and was successfully undone, original error: {}",
-        result.err().unwrap()
-      )),
-    }
-  }
+  ShmemHandle::try_mmap(buffscstr, buff_count * buff_len)
 }
 
-fn deinit_shmem(meta_mem: ShmemHandle, buffers_mem: ShmemHandle) -> Result<(), String> {
-  let resmeta = meta_mem
+fn deinit_shmem(buffers_mem: ShmemHandle) -> Result<(), String> {
+  buffers_mem
     .try_unmap()
-    .map_err(|e| format!("When unmapping meta mem: {e}"));
-  let resbuffs = buffers_mem
-    .try_unmap()
-    .map_err(|e| format!("When unmapping buffers mem: {e}"));
-
-  if resmeta.is_err() || resbuffs.is_err() {
-    let err_str = |res: Result<(), String>| {
-      if let Err(e) = res { e } else { "".to_owned() }
-    };
-    let meta_err = err_str(resmeta);
-    let buffs_err = err_str(resbuffs);
-
-    Err("Shmem deinit errors: ".to_string() + &meta_err + " " + &buffs_err)
-  } else {
-    Ok(())
-  }
+    .map_err(|e| format!("When unmapping buffers mem: {e}"))
 }
 
-pub fn init_tracing(
+pub async fn init_tracing(
   resource_prefix: &str,
-  buffer_count: u32,
-  buffer_size: u32,
+  buff_count: u32,
+  buff_len: u32,
 ) -> Result<TracingInfra, String> {
   let lg = Log::get("init_tracing");
-  let (sem_free, sem_full) = init_semaphores(resource_prefix, buffer_count)?;
+  let (sem_free, sem_full) = init_semaphores(resource_prefix, buff_count)?;
   lg.info("Initializing shmem");
-  let (meta_buffer, backing_buffer) = match init_shmem(resource_prefix, buffer_count, buffer_size) {
-    Err(e) => {
-      match deinit_semaphores(sem_free, sem_full) {
-        // both arms MUST return Err! or the unreachable! macro below panics!
-        Ok(()) => Err(e),
-        Err(e2) => Err(format!(
-          "Failed to clean up semaphores when mmap failed: {e2}, map failure: {e}"
-        )),
-      }?; // <-- unreachable does not panic if both arms return an Err
 
-      unreachable!(
-        "The above uses ? operator on an ensured Err variant (returned in both match arms)"
-      );
-    }
-    Ok(a) => Ok::<(ShmemHandle, ShmemHandle), String>(a),
-  }?;
+  let backing_buffer = init_shmem(resource_prefix, buff_count, buff_len)?;
 
   Ok(TracingInfra {
     sem_free,
     sem_full,
-    meta_buffer,
     backing_buffer,
   })
 }
 
+pub async fn send_call_tracing_metadata(
+  resource_prefix: &str,
+  buff_count: u32,
+  buff_len: u32,
+) -> Result<(), String> {
+  return send_metadata(
+    resource_prefix,
+    ShmMeta {
+      buff_count,
+      buff_len,
+      total_len: buff_count * buff_len,
+      mode: 0,
+      target_fnid: 0,
+      target_modid: 0,
+      forked: 0,
+      arg_count: 0,
+      test_count: 0,
+    },
+  )
+  .await;
+}
+
+pub async fn send_arg_capture_metadata(
+  resource_prefix: &str,
+  buff_count: u32,
+  buff_len: u32,
+) -> Result<(), String> {
+  return send_metadata(
+    resource_prefix,
+    ShmMeta {
+      buff_count,
+      buff_len,
+      total_len: buff_count * buff_len,
+      mode: 1,
+      target_fnid: 0,
+      target_modid: 0,
+      forked: 0,
+      arg_count: 0,
+      test_count: 0,
+    },
+  )
+  .await;
+}
+
+pub async fn send_test_metadata(
+  resource_prefix: &str,
+  buff_count: u32,
+  buff_len: u32,
+  module: IntegralModId,
+  fn_id: IntegralFnId,
+  reader: &PacketReader,
+) -> Result<bool, String> {
+  let test_count = reader.get_test_count(module, fn_id).ok_or(format!(
+    "Not found tests: {} {}",
+    module.hex_string(),
+    fn_id.hex_string()
+  ))?;
+  let arg_count = reader.get_test_count(module, fn_id).ok_or(format!(
+    "Not found args: {} {}",
+    module.hex_string(),
+    fn_id.hex_string()
+  ))?;
+
+  if test_count == 0 || arg_count == 0 {
+    Log::get("send_test_metadata").warn(format!(
+      "Skipping M: {} F: {} due to zero arg/test count a: {}, t:{}",
+      module.hex_string(),
+      fn_id.hex_string(),
+      arg_count,
+      test_count
+    ));
+    Ok(false)
+  } else {
+    send_metadata(
+      resource_prefix,
+      ShmMeta {
+        buff_count,
+        buff_len,
+        total_len: buff_count * buff_len,
+        mode: 2,
+        target_fnid: *fn_id,
+        target_modid: *module,
+        forked: 0,
+        arg_count,
+        test_count,
+      },
+    )
+    .await
+    .map(|()| true)
+  }
+}
+
+async fn send_metadata(resource_prefix: &str, target_descriptor: ShmMeta) -> Result<(), String> {
+  let sock_name = MainChannelNames::get_metadata(resource_prefix);
+  let mut chnl = ZmqMetadataServer::new(&sock_name).await?;
+  Log::get("init_tracing").info("Waiting for a cooperating program");
+  chnl.send_metadata(target_descriptor).await
+}
+
 pub fn deinit_tracing(infra: TracingInfra) -> Result<(), String> {
-  let (semfree, semfull, meta_shm, buffers_shm) = (
-    infra.sem_free,
-    infra.sem_full,
-    infra.meta_buffer,
-    infra.backing_buffer,
-  );
-  let shm_uninit = deinit_shmem(meta_shm, buffers_shm);
+  let (semfree, semfull, buffers_shm) = (infra.sem_free, infra.sem_full, infra.backing_buffer);
+  let shm_uninit = deinit_shmem(buffers_shm);
   let sem_uninit = deinit_semaphores(semfree, semfull);
 
   let goodbye_errors = [shm_uninit, sem_uninit]

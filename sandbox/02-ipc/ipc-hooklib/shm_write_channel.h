@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#define SEMPERMS (S_IROTH | S_IWOTH | S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR)
+
 typedef struct {
   uint32_t buff_count;
   uint32_t buff_len;

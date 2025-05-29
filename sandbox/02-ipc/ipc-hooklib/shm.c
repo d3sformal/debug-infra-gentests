@@ -1,12 +1,20 @@
 #include "shm.h"
-#include "shm_util.h"
 #include "shm_write_channel.h"
 #include <assert.h>
+#include <czmq.h>
+#include <czmq_library.h>
+#include <fcntl.h>
+#include <semaphore.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
+#include <zframe.h>
+#include <zmq.h>
+#include <zmsg.h>
+#include <zsock.h>
 
 /*
 Shared memory buffering & synchronization
@@ -40,29 +48,63 @@ Special considerations w.r.t. program **crashing**.
 Termination protocol: see the after_crash_recovery function
 */
 
-// shared memory data
-static const char *s_shm_meta_name = "/llcap-shmmeta";
 static ShmMeta s_buff_info;
 
 static WriteChannel s_channel;
 
-static int get_buffer_info(const char *name, ShmMeta *target) {
+static int send_req(zsock_t *ack) {
+  int dummy = 1;
+  zframe_t *frame = zframe_new(&dummy, sizeof(dummy));
+  zmsg_t *msg = zmsg_new();
+  if (zmsg_append(msg, &frame) != 0) {
+    printf("Cannot append a frame to a message\n");
+    return -1;
+  }
+
+  if (zmsg_send(&msg, ack) != 0) {
+    printf("Failed to send req message\n");
+    return -1;
+  }
+
+  return 0;
+}
+
+static const char *s_main_chnl_name_data = "ipc:///tmp/llcap-zmqmain-meta";
+
+static int get_buffer_info(ShmMeta *target) {
   int rv = -1;
 
-  int shared_meminfo_fd = -1;
-  ShmMeta *mapped_ptr;
-  rv = mmap_shmem(name, (void **)&mapped_ptr, &shared_meminfo_fd,
-                  sizeof(*mapped_ptr), false);
-  if (rv != 0) {
+  zsock_t *data = NULL;
+  data = zsock_new_req(s_main_chnl_name_data);
+
+  if (send_req(data) == -1) {
+    printf("Fail request\n");
     return rv;
   }
 
-  *target = *(ShmMeta *)mapped_ptr;
-  rv = 0;
+  zmsg_t *msg = zmsg_recv(data);
+  if (msg == NULL) {
+    printf("Fail msg rcv\n");
+    return rv;
+  }
+  zframe_t *frame = zmsg_pop(msg);
+  if (frame == NULL) {
+    printf("Fail frame pop\n");
+    return rv;
+  }
 
-  // cleanup failures not considered errors
-  unmap_shmem(mapped_ptr, shared_meminfo_fd, name, sizeof(*mapped_ptr),
-              UNMAP_SHMEM_FLAG_TRY_ALL);
+  if (zframe_size(frame) != sizeof(ShmMeta)) {
+    printf("Frame data size mismatch, expecterd %lu, got %lu\n",
+           sizeof(ShmMeta), zframe_size(frame));
+    return rv;
+  }
+
+  *target = *(ShmMeta *)zframe_data(frame);
+  zmsg_destroy(&msg);
+  printf("Metadata recevied\n");
+
+  rv = 0;
+  zsock_destroy(&data);
   return rv;
 }
 
@@ -73,7 +115,7 @@ static int get_buffer_info(const char *name, ShmMeta *target) {
 static int setup_infra(void) {
   int rv = SHM_FAIL_NORET;
 
-  if (get_buffer_info(s_shm_meta_name, &s_buff_info) != 0) {
+  if (get_buffer_info(&s_buff_info) != 0) {
     printf("Could not obtain buffer info\n");
     return rv;
   }
@@ -84,6 +126,10 @@ static int setup_infra(void) {
   info.total_len = s_buff_info.total_len;
   printf("Buffer info: cnt %u, len %u, tot %u\n", info.buff_count,
          info.buff_len, info.total_len);
+  if (info.buff_count * info.buff_len != info.total_len) {
+    printf("sanity check failed - buffer sizes\n");
+    return -1;
+  }
   return init_write_channel_with_info("capture", "base", &info, &s_channel);
 }
 

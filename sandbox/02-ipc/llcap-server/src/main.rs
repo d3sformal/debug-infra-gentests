@@ -13,10 +13,10 @@ mod sizetype_handlers;
 mod stages;
 use shmem_capture::{
   arg_capture::perform_arg_capture, call_tracing::msg_handler, cleanup_shmem, deinit_tracing,
-  init_tracing,
+  init_tracing, send_arg_capture_metadata, send_call_tracing_metadata, send_test_metadata,
 };
 use stages::{
-  arg_capture::ArgPacketDumper,
+  arg_capture::{ArgPacketDumper, PacketReader},
   call_tracing::{
     FunctionCallInfo, export_data, export_tracing_selection, import_data, import_tracing_selection,
     obtain_function_id_selection, print_summary,
@@ -39,7 +39,8 @@ fn obtain_module_map(path: &std::path::PathBuf) -> Result<ExtModuleMap, String> 
   }
 }
 
-fn main() -> Result<(), String> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), String> {
   Log::set_verbosity(255);
   let lg = Log::get("main");
   let cli = Cli::try_parse();
@@ -76,7 +77,9 @@ fn main() -> Result<(), String> {
         result
       } else {
         lg.info("Initializing tracing infrastructure");
-        let mut tracing_infra = init_tracing(&cli.fd_prefix, buff_count, buff_size)?;
+        let mut tracing_infra = init_tracing(&cli.fd_prefix, buff_count, buff_size).await?;
+
+        send_call_tracing_metadata(&cli.fd_prefix, buff_count, buff_size).await?;
 
         lg.info("Listening!");
 
@@ -132,7 +135,9 @@ fn main() -> Result<(), String> {
         ArgPacketDumper::new(&out_dir, &modules, mem_limit as usize).map_err(|x| x.to_string())?;
 
       lg.info("Initializing tracing infrastructure");
-      let mut tracing_infra = init_tracing(&cli.fd_prefix, buff_count, buff_size)?;
+      let mut tracing_infra = init_tracing(&cli.fd_prefix, buff_count, buff_size).await?;
+
+      send_arg_capture_metadata(&cli.fd_prefix, buff_count, buff_size).await?;
 
       lg.info("Listening!");
 
@@ -146,6 +151,37 @@ fn main() -> Result<(), String> {
 
       lg.info("Shutting down tracing infrastructure...");
       deinit_tracing(tracing_infra)?;
+    }
+    args::Stage::Test {
+      selection_file,
+      capture_dir,
+      mem_limit,
+    } => {
+      lg.info("Reading function selection");
+      let selection = import_tracing_selection(&selection_file)?;
+      lg.info("Masking");
+      modules.mask_include(&selection)?;
+      lg.info("Setting up function packet reader");
+      let mut packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
+        .map_err(|e| format!("Packet reader setup failed {e}"))?;
+
+      for module in modules.modules() {
+        for function in modules.functions(*module).unwrap() {
+          // if !send_test_metadata(&cli.fd_prefix, buff_count, buff_size, *module, *function, &packet_reader).await? {
+          //   continue;
+          // }
+
+          lg.info(format!(
+            "Run program for fn {} {}",
+            module.hex_string(),
+            function.hex_string()
+          ));
+
+          while let Some(data) = packet_reader.read_next_packet(*module, *function)? {
+            lg.info(format!("Would send\n{} {:?}", data.len(), data));
+          }
+        }
+      }
     }
   }
 

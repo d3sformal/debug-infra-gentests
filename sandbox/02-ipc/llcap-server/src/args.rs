@@ -66,8 +66,21 @@ pub enum Stage {
     #[arg(short, long, default_value = Constants::default_capture_out_path())]
     out_dir: PathBuf,
 
-    // TODO: think about this (enforcement, where, what)
     /// capture memory limit in MEBIBYTES - offloading will be performed to the output directory
+    #[arg(short = 'l', long, default_value = "0")]
+    mem_limit: u32,
+  },
+
+  Test {
+    // path to the function selection file (generated in the call-tracing phase)
+    #[arg(short, long, default_value = Constants::default_selected_functions_path())]
+    selection_file: PathBuf,
+
+    /// the directory where function argument traces have been saved (generated in the arg-capturing phase)
+    #[arg(short, long, default_value = Constants::default_capture_out_path())]
+    capture_dir: PathBuf,
+
+    /// capture read memory limit in MEBIBYTES
     #[arg(short = 'l', long, default_value = "0")]
     mem_limit: u32,
   },

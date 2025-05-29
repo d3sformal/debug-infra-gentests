@@ -154,3 +154,17 @@ impl Semaphore {
     Self::try_open(name, value, (O_CREAT | O_EXCL).into(), None)
   }
 }
+
+pub struct FreeFullSemNames {
+  pub free: String,
+  pub full: String,
+}
+
+impl FreeFullSemNames {
+  pub fn get(prefix: &str, category: &str, id: &str) -> Self {
+    Self {
+      free: format!("{prefix}-{category}-{id}-semfree"),
+      full: format!("{prefix}-{category}-{id}-semfull"),
+    }
+  }
+}
