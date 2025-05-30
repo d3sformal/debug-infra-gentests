@@ -10,7 +10,7 @@
 static int close_fd(int fd, const char *fd_name, const char *fail_msg) {
   if (fd != -1) {
     if (close(fd) == -1) {
-      printf("%s name: %s, fd: %d: %s\n", fail_msg, fd_name, fd,
+      printf("close failed: %s name: %s, fd: %d: %s\n", fail_msg, fd_name, fd,
              strerror(errno));
       return -1;
     }

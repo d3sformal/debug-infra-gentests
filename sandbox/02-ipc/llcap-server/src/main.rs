@@ -1,3 +1,5 @@
+use std::{process::Command, thread::sleep, time::Duration};
+
 use args::Cli;
 use clap::Parser;
 use log::Log;
@@ -12,8 +14,11 @@ mod shmem_capture;
 mod sizetype_handlers;
 mod stages;
 use shmem_capture::{
-  arg_capture::perform_arg_capture, call_tracing::msg_handler, cleanup_shmem, deinit_tracing,
-  init_tracing, send_arg_capture_metadata, send_call_tracing_metadata, send_test_metadata,
+  arg_capture::perform_arg_capture,
+  call_tracing::msg_handler,
+  cleanup, deinit_tracing, init_tracing, send_arg_capture_metadata, send_call_tracing_metadata,
+  send_test_metadata,
+  zmq_channels::{ZmqArgumentPacketServer, zmq_packet_chnl_name},
 };
 use stages::{
   arg_capture::{ArgPacketDumper, PacketReader},
@@ -39,6 +44,16 @@ fn obtain_module_map(path: &std::path::PathBuf) -> Result<ExtModuleMap, String> 
   }
 }
 
+fn cmd_from_args(args: &[String]) -> Result<Command, String> {
+  if args.is_empty() {
+    Err("Command must be specified".to_string())
+  } else {
+    let mut cmd = std::process::Command::new(args.first().unwrap());
+    cmd.args(args.iter().skip(1));
+    Ok(cmd)
+  }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), String> {
   Log::set_verbosity(255);
@@ -54,7 +69,7 @@ async fn main() -> Result<(), String> {
 
   if cli.cleanup {
     lg.info("Cleanup");
-    return cleanup_shmem(&cli.fd_prefix);
+    return cleanup(&cli.fd_prefix);
   }
 
   let mut modules = obtain_module_map(&cli.modmap)?;
@@ -116,13 +131,12 @@ async fn main() -> Result<(), String> {
       let traces = pairs.iter().map(|x| x.0).collect::<Vec<FunctionCallInfo>>();
       let selected_fns = obtain_function_id_selection(&traces, &modules);
       export_tracing_selection(&selected_fns, &modules)?;
-
-      lg.info("Exiting...");
     }
     args::Stage::CaptureArgs {
       selection_file,
       out_dir,
       mem_limit,
+      command
     } => {
       lg.info("Reading function selection");
       let selection = import_tracing_selection(&selection_file)?;
@@ -137,7 +151,14 @@ async fn main() -> Result<(), String> {
       lg.info("Initializing tracing infrastructure");
       let mut tracing_infra = init_tracing(&cli.fd_prefix, buff_count, buff_size).await?;
 
-      send_arg_capture_metadata(&cli.fd_prefix, buff_count, buff_size).await?;
+      let mut cmd = cmd_from_args(&command)?;
+      
+      let meta_fut = send_arg_capture_metadata(&cli.fd_prefix, buff_count, buff_size);
+
+      let mut test = cmd
+      .spawn()
+      .map_err(|e| format!("Failed to spawn from command: {e}"))?;
+      meta_fut.await?;
 
       lg.info("Listening!");
 
@@ -149,6 +170,11 @@ async fn main() -> Result<(), String> {
         &mut dumper,
       )?;
 
+      if test.try_wait().is_err() {
+        lg.warn("child did not exit, waiting 5s");
+        sleep(Duration::from_secs(5));
+      }
+
       lg.info("Shutting down tracing infrastructure...");
       deinit_tracing(tracing_infra)?;
     }
@@ -156,34 +182,85 @@ async fn main() -> Result<(), String> {
       selection_file,
       capture_dir,
       mem_limit,
+      command,
     } => {
       lg.info("Reading function selection");
       let selection = import_tracing_selection(&selection_file)?;
       lg.info("Masking");
       modules.mask_include(&selection)?;
       lg.info("Setting up function packet reader");
+
       let mut packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
         .map_err(|e| format!("Packet reader setup failed {e}"))?;
 
+      lg.info("Setting up function packet server");
+      let mut svr = ZmqArgumentPacketServer::new(&zmq_packet_chnl_name(&cli.fd_prefix)).await?;
+
+      let mut cmd = cmd_from_args(&command)?;
+
       for module in modules.modules() {
         for function in modules.functions(*module).unwrap() {
-          // if !send_test_metadata(&cli.fd_prefix, buff_count, buff_size, *module, *function, &packet_reader).await? {
-          //   continue;
-          // }
+          let test_count = packet_reader
+            .get_test_count(*module, *function)
+            .ok_or(format!(
+              "Not found tests: {} {}",
+              module.hex_string(),
+              function.hex_string()
+            ))?;
+          let arg_count = packet_reader
+            .get_arg_count(*module, *function)
+            .ok_or(format!(
+              "Not found args: {} {}",
+              module.hex_string(),
+              function.hex_string()
+            ))?;
+
+          if test_count == 0 || arg_count == 0 {
+            Log::get("send_test_metadata").warn(format!(
+              "Skipping M: {} F: {} due to zero arg/test count a: {}, t:{}",
+              module.hex_string(),
+              function.hex_string(),
+              arg_count,
+              test_count
+            ));
+            continue;
+          }
 
           lg.info(format!(
-            "Run program for fn {} {}",
+            "Run program for fn m: {} f: {}",
             module.hex_string(),
             function.hex_string()
           ));
 
+          let meta_fut = send_test_metadata(
+            &cli.fd_prefix,
+            buff_count,
+            buff_size,
+            *module,
+            *function,
+            arg_count,
+            test_count,
+          );
+
+          let mut test = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn from command: {e}"))?;
+          meta_fut.await?;
+
           while let Some(data) = packet_reader.read_next_packet(*module, *function)? {
-            lg.info(format!("Would send\n{} {:?}", data.len(), data));
+            lg.info(format!("Sending\n{} {:?}", &data.len(), data));
+            svr.process_msg(Some(data)).await?;
+          }
+
+          if test.try_wait().is_err() {
+            lg.warn("child did not exit, waiting 5s");
+            sleep(Duration::from_secs(5));
           }
         }
       }
     }
   }
-
+  
+  lg.info("Exiting...");
   Ok(())
 }

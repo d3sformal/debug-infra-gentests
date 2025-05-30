@@ -11,7 +11,7 @@ use crate::{
 };
 
 pub struct FunctionPacketDumper {
-  fnid: IntegralFnId,
+  _fnid: IntegralFnId,
   underlying_file: BufWriter<File>,
 }
 
@@ -23,13 +23,9 @@ impl FunctionPacketDumper {
     let b = BufWriter::with_capacity(capacity, f);
 
     Ok(Self {
-      fnid: function_id,
+      _fnid: function_id,
       underlying_file: b,
     })
-  }
-
-  pub fn flush(&mut self) -> Result<(), io::Error> {
-    self.underlying_file.flush()
   }
 
   // Ok result returns the number of bytes written
@@ -39,10 +35,10 @@ impl FunctionPacketDumper {
 }
 
 pub struct ModulePacketDumper {
-  mod_id: IntegralModId,
+  _mod_id: IntegralModId,
   func_dumpers: HashMap<IntegralFnId, FunctionPacketDumper>,
-  module_root: PathBuf,
-  capacity_hint: usize,
+  _module_root: PathBuf,
+  _capacity_hint: usize,
 }
 
 impl ModulePacketDumper {
@@ -70,10 +66,10 @@ impl ModulePacketDumper {
     }
 
     Ok(Self {
-      mod_id: module_id,
+      _mod_id: module_id,
       func_dumpers,
-      module_root,
-      capacity_hint,
+      _module_root: module_root,
+      _capacity_hint: capacity_hint,
     })
   }
 
@@ -83,18 +79,11 @@ impl ModulePacketDumper {
   ) -> Option<&mut FunctionPacketDumper> {
     self.func_dumpers.get_mut(&function)
   }
-
-  pub fn flush(&mut self) -> Result<(), io::Error> {
-    for kv in self.func_dumpers.values_mut() {
-      kv.flush()?;
-    }
-    Ok(())
-  }
 }
 
 pub struct ArgPacketDumper {
   dumpers: HashMap<IntegralModId, ModulePacketDumper>,
-  root: PathBuf,
+  _root: PathBuf,
 }
 
 impl ArgPacketDumper {
@@ -126,7 +115,7 @@ impl ArgPacketDumper {
 
     Ok(Self {
       dumpers: result_map,
-      root: root_out_dir.to_owned(),
+      _root: root_out_dir.to_owned(),
     })
   }
 
@@ -147,7 +136,6 @@ struct CaptureRecord {
   file: BufReader<File>,
   tests: usize,
   args: usize,
-  current: usize,
 }
 
 pub struct PacketReader {
@@ -203,7 +191,6 @@ impl PacketReader {
               file: BufReader::with_capacity(capacity, File::open(path.clone())?),
               tests: 0,
               args: 0,
-              current: 0,
             };
 
             while record
@@ -233,7 +220,6 @@ impl PacketReader {
               file: BufReader::with_capacity(capacity, File::open(path)?),
               tests,
               args,
-              current: 0,
             }),
           );
         }

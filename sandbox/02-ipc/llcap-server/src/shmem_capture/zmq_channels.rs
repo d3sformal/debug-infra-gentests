@@ -1,22 +1,23 @@
-use zeromq::{PullSocket, PushSocket, RepSocket, Socket, SocketRecv, SocketSend, ZmqMessage};
+use bytes::Bytes;
+use zeromq::{RepSocket, Socket, SocketRecv, SocketSend, ZmqMessage};
 
 use crate::{
   log::Log,
   modmap::{IntegralFnId, IntegralModId},
-  stages::arg_capture::PacketReader,
 };
 
 use super::hooklib_commons::ShmMeta;
 
-pub struct MainChannelNames {
-  pub meta: String,
-  pub ack: String,
+pub fn zmq_metadata_chnl_name(prefix: &str) -> String {
+  format!("{prefix}-zmqmain-meta")
 }
 
-impl MainChannelNames {
-  pub fn get_metadata(prefix: &str) -> String {
-    format!("{prefix}-zmqmain-meta")
-  }
+pub fn zmq_packet_chnl_name(prefix: &str) -> String {
+  format!("{}-zmqpackets", prefix)
+}
+
+pub fn to_zmq_absolute_path(channel_name: &str) -> String {
+  format!("/tmp{channel_name}")
 }
 
 pub struct ZmqMetadataServer {
@@ -28,7 +29,7 @@ impl ZmqMetadataServer {
     let mut rep_sock = RepSocket::new();
 
     let _ = rep_sock
-      .bind(&format!("ipc:///tmp{data_chnl_name}"))
+      .bind(&format!("ipc://{}", to_zmq_absolute_path(data_chnl_name)))
       .await
       .map_err(|e| format!("rep_sock failed to bind {data_chnl_name}: {e}"))?;
 
@@ -59,30 +60,42 @@ impl ZmqMetadataServer {
   }
 }
 
+fn consume_to_u32(bytes: &Bytes, start: usize) -> Result<u32, String> {
+  if bytes.len() < start + 4 {
+    return Err("Not enough bytes".to_string());
+  }
+  let le_bytes = [
+    *bytes.get(start).unwrap(),
+    *bytes.get(start + 1).unwrap(),
+    *bytes.get(start + 2).unwrap(),
+    *bytes.get(start + 3).unwrap(),
+  ];
+  let num = u32::from_le_bytes(le_bytes);
+  Ok(num)
+}
+
 pub struct ZmqArgumentPacketServer {
   rep_sock: RepSocket,
-  reader: PacketReader,
 }
 
 impl ZmqArgumentPacketServer {
-  pub async fn new(socket_name: &str, reader: PacketReader) -> Result<Self, String> {
+  pub async fn new(socket_name: &str) -> Result<Self, String> {
     let mut rep_sock = RepSocket::new();
 
     let _ = rep_sock
-      .bind(&format!("ipc:///tmp{socket_name}"))
+      .bind(&format!("ipc://{}", to_zmq_absolute_path(socket_name)))
       .await
       .map_err(|e| format!("rep_sock failed to bind {socket_name}: {e}"))?;
 
-    Ok(Self { rep_sock, reader })
+    Ok(Self { rep_sock })
   }
 
-  pub async fn process_message(&mut self) -> Result<bool, String> {
+  pub async fn process_msg(&mut self, data: Option<Vec<u8>>) -> Result<bool, String> {
     let req = self
       .rep_sock
       .recv()
       .await
       .map_err(|e| format!("Failed to recv request: {e}"))?;
-
     let req_payload = req.get(0);
     if req_payload.is_none() || req_payload.unwrap().len() < 2 {
       return Err("Invalid length of request ID".to_string());
@@ -93,37 +106,21 @@ impl ZmqArgumentPacketServer {
     let id = u16::from_le_bytes(le_bytes);
 
     const PACKET: u16 = 1;
-    const END: u16 = 2;
-    if id == PACKET || req_payload.len() != 10 {
-      let le_bytes = [
-        *req_payload.get(2).unwrap(),
-        *req_payload.get(3).unwrap(),
-        *req_payload.get(4).unwrap(),
-        *req_payload.get(5).unwrap(),
-      ];
-      let mod_id = IntegralModId(u32::from_le_bytes(le_bytes));
-      let le_bytes = [
-        *req_payload.get(6).unwrap(),
-        *req_payload.get(7).unwrap(),
-        *req_payload.get(8).unwrap(),
-        *req_payload.get(9).unwrap(),
-      ];
-      let fn_id = IntegralFnId(u32::from_le_bytes(le_bytes));
-
-      let res = self.reader.read_next_packet(mod_id, fn_id)?;
-      if let Some(res) = res {
-        let msg = ZmqMessage::from(res);
-        self
-          .rep_sock
-          .send(msg)
-          .await
-          .map_err(|e| format!("Failed to push packet: {e}"))?;
-        Ok(true)
-      } else {
-        Err("Invalid state, client expects more packets than available".to_string())
-      }
-    } else if id == END && req_payload.len() == 2 {
-      Ok(false)
+    if id == PACKET {
+      let mod_id = IntegralModId(consume_to_u32(req_payload, 2)?);
+      let fn_id = IntegralFnId(consume_to_u32(req_payload, 6)?);
+      Log::get("expect_send_packet").info(format!(
+        "Got {} {}",
+        mod_id.hex_string(),
+        fn_id.hex_string()
+      ));
+      let msg = ZmqMessage::from(data.unwrap());
+      self
+        .rep_sock
+        .send(msg)
+        .await
+        .map_err(|e| format!("Failed to push packet: {e}"))?;
+      Ok(true)
     } else {
       Err(format!("Unknown request ID: {} {:?}", id, req_payload))
     }

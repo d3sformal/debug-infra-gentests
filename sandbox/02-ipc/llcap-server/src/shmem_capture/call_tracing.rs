@@ -114,7 +114,7 @@ fn receive_module_id(
     // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
     // poitner validity ensured by protocol, target type is copied, no allocation over the same memory region
     let mod_id = IntegralModId(unsafe { read_w_alignment_chk(*raw_buff)? });
-    *raw_buff = raw_buff.wrapping_byte_add(mod_id.size());
+    *raw_buff = raw_buff.wrapping_byte_add(MODID_SIZE);
     mod_id
   })
 }

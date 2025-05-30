@@ -197,10 +197,6 @@ impl IntegralFnId {
   pub const fn byte_size() -> usize {
     std::mem::size_of::<u32>()
   }
-
-  pub const fn size(&self) -> usize {
-    Self::byte_size()
-  }
 }
 
 #[derive(Hash, Debug, PartialEq, Eq, Clone, Copy)]
@@ -224,10 +220,6 @@ impl IntegralModId {
 
   pub const fn byte_size() -> usize {
     std::mem::size_of::<u32>()
-  }
-
-  pub const fn size(&self) -> usize {
-    Self::byte_size()
   }
 }
 

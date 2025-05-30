@@ -17,7 +17,6 @@ int unmap_shmem(void *mem, int fd, const char *name, size_t len,
                 unsigned flags);
 
 // maps memory info target along with a file descriptor fd
-// for write permissions, pass nonzero write arg - TODO refactor
 // returns 0 if both target and fd are valid resources
 // returns -1 if any step failed, target and fd invalid
 int mmap_shmem(const char *name, void **target, int *fd, size_t len,

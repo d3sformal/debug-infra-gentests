@@ -69,6 +69,10 @@ pub enum Stage {
     /// capture memory limit in MEBIBYTES - offloading will be performed to the output directory
     #[arg(short = 'l', long, default_value = "0")]
     mem_limit: u32,
+
+    /// Command to execute tested binary
+    #[arg(trailing_var_arg(true))]
+    command: Vec<String>,
   },
 
   Test {
@@ -83,5 +87,9 @@ pub enum Stage {
     /// capture read memory limit in MEBIBYTES
     #[arg(short = 'l', long, default_value = "0")]
     mem_limit: u32,
+
+    /// Command to execute tested binary
+    #[arg(trailing_var_arg(true))]
+    command: Vec<String>,
   },
 }

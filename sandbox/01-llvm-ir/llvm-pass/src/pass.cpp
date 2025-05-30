@@ -181,6 +181,65 @@ void insertFnEntryHook(IRBuilder<> &Builder, Module &M,
                         false));
   Builder.CreateCall(Callee, {ModIdConstant, FnIdConstant});
 }
+
+static void instrumentArgHijack(IRBuilder<> &Builder, Module &M, Argument *Arg,
+                                Type *Ty, const FunctionCallee &Callee,
+                                ConstantInt *ModId, ConstantInt *FnId) {
+  // inserts alloca, call, load instruction sequence where
+  // the alloca allocates "some" bytes, pointer to those bytes
+  // is passed to a hooklib call (along with original argument)
+  // and load subsequently loads from the alloca'd address
+  //
+  // it is expected hooklib somehow initializes the pointer to newly
+  // allocated data
+  // TODO: destructors (where to call, for what object)
+  // TODO: data passed in more than one register (Arg would only be half of
+  // the data e.g. for 128bit number)
+  auto *Alloca = Builder.CreateAlloca(Ty);
+
+  if (Alloca == nullptr) {
+    errs() << "Instrumentation failed: Alloca";
+    exit(1); // TODO?
+  }
+  IF_DEBUG {
+    Alloca->dump();
+    errs() << "OPERAND count " << Alloca->getNumOperands() << '\n';
+    errs() << "OPERAND " << Alloca->getNameOrAsOperand() << " DUMP\n";
+  }
+  auto *Op = Alloca->getOperand(0);
+  IF_DEBUG Op->dump();
+
+  auto *Call = Builder.CreateCall(Callee, {Arg, Alloca, ModId, FnId});
+
+  auto *Load = Builder.CreateAlignedLoad(
+      Ty, Alloca, M.getDataLayout().getPrefTypeAlign(Ty));
+  if (Alloca == nullptr) {
+    errs() << "Instrumentation failed: Load";
+    exit(1); // TODO?
+  }
+
+  // replaces all usages Arg (argument to be captured/hijacked)
+  // with the newly loaded value
+  Vec<llvm::Use *> ArgUsages;
+  for (auto Use = Arg->use_begin(); Use != Arg->use_end(); ++Use) {
+    // do not replace the usage inside our own call instruction
+    if (Use->getUser() == Call) {
+      continue;
+    }
+
+    ArgUsages.push_back(&*Use);
+  }
+
+  for (auto *ArgUse : ArgUsages) {
+    IF_DEBUG {
+      errs() << "For use in" << '\n';
+      ArgUse->getUser()->dump();
+      errs() << "Setting arg no " << ArgUse->getOperandNo() << " to new load\n";
+    }
+    ArgUse->set(Load);
+  }
+}
+
 // terminology:
 // LLVM Argument Index = 0-based index of an argument as seen directly in the
 // LLVM IR
@@ -192,11 +251,23 @@ void insertFnEntryHook(IRBuilder<> &Builder, Module &M,
 
 void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
                           const ClangMetadataToLLVMArgumentMapping &Mapping,
-                          const Vec<Pair<size_t, LlcapSizeType>> &Sizes) {
+                          const Vec<Pair<size_t, LlcapSizeType>> &Sizes,
+                          llcap::ModuleId ModuleIntId,
+                          llcap::FunctionId FunctionIntId) {
   auto &Ctx = M.getContext();
+
+  auto *FnIdConstant = ConstantInt::get(
+      M.getContext(), APInt(sizeof(llcap::FunctionId) * 8, FunctionIntId));
+  static_assert(sizeof(llcap::ModuleId) == 4);
+  auto *ModIdConstant = ConstantInt::get(
+      M.getContext(), APInt(sizeof(llcap::ModuleId) * 8, ModuleIntId));
   auto GetOrInsertHookFn = [&](const char *HookName, auto *TypePtr) {
     return M.getOrInsertFunction(
-        HookName, FunctionType::get(Type::getVoidTy(Ctx), {TypePtr}, false));
+        HookName,
+        FunctionType::get(Type::getVoidTy(Ctx),
+                          {TypePtr, PointerType::getUnqual(Ctx),
+                           Type::getInt32Ty(Ctx), Type::getInt32Ty(Ctx)},
+                          false));
   };
 
   auto ArgNum = Arg->getArgNo();
@@ -204,26 +275,30 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
 
   if (ArgT->isFloatTy()) {
     IF_VERBOSE errs() << "Inserting call f32\n";
-    auto CallFloat = GetOrInsertHookFn("hook_float", Type::getFloatTy(Ctx));
-    Builder.CreateCall(CallFloat, {Arg});
+    auto *TPtr = Type::getFloatTy(Ctx);
+    auto CallFloat = GetOrInsertHookFn("hook_float", TPtr);
+    instrumentArgHijack(Builder, M, Arg, TPtr, CallFloat, ModIdConstant,
+                        FnIdConstant);
     return;
   }
 
   if (ArgT->isDoubleTy()) {
     IF_VERBOSE errs() << "Inserting call f64\n";
-    auto CallDouble = GetOrInsertHookFn("hook_double", Type::getDoubleTy(Ctx));
-    Builder.CreateCall(CallDouble, {Arg});
+    auto *TPtr = Type::getDoubleTy(Ctx);
+    auto CallDouble = GetOrInsertHookFn("hook_double", TPtr);
+    instrumentArgHijack(Builder, M, Arg, TPtr, CallDouble, ModIdConstant,
+                        FnIdConstant);
     return;
   }
 
-  auto CallByte = GetOrInsertHookFn("hook_charex", Type::getInt8Ty(Ctx));
-  auto CallUnsByte = GetOrInsertHookFn("hook_ucharex", Type::getInt8Ty(Ctx));
-  auto CallShort = GetOrInsertHookFn("hook_shortex", Type::getInt8Ty(Ctx));
-  auto CallUnsShort = GetOrInsertHookFn("hook_ushortex", Type::getInt8Ty(Ctx));
-  auto CallInt32 = GetOrInsertHookFn("hook_int32ex", Type::getInt32Ty(Ctx));
-  auto CallUnsInt32 = GetOrInsertHookFn("hook_uint32ex", Type::getInt32Ty(Ctx));
-  auto CallInt64 = GetOrInsertHookFn("hook_int64ex", Type::getInt64Ty(Ctx));
-  auto CallUnsInt64 = GetOrInsertHookFn("hook_uint64ex", Type::getInt64Ty(Ctx));
+  auto CallByte = GetOrInsertHookFn("hook_char", Type::getInt8Ty(Ctx));
+  auto CallUnsByte = GetOrInsertHookFn("hook_uchar", Type::getInt8Ty(Ctx));
+  auto CallShort = GetOrInsertHookFn("hook_short", Type::getInt8Ty(Ctx));
+  auto CallUnsShort = GetOrInsertHookFn("hook_ushort", Type::getInt8Ty(Ctx));
+  auto CallInt32 = GetOrInsertHookFn("hook_int32", Type::getInt32Ty(Ctx));
+  auto CallUnsInt32 = GetOrInsertHookFn("hook_uint32", Type::getInt32Ty(Ctx));
+  auto CallInt64 = GetOrInsertHookFn("hook_int64", Type::getInt64Ty(Ctx));
+  auto CallUnsInt64 = GetOrInsertHookFn("hook_uint64", Type::getInt64Ty(Ctx));
 
   const Map<LlcapSizeType, Tuple<FunctionCallee, FunctionCallee, Type *>>
       IntTypeSizeMap = {{LlcapSizeType::LLSZ_8,
@@ -259,58 +334,9 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
       auto &&[UnsFn, SignFn, TPtr] = IntTypeSizeMap.at(ThisArgSize);
       IF_VERBOSE errs() << "Inserting call " << std::to_string(Bits)
                         << (IsAttrUnsgined ? "U\n" : "S\n");
-      // inserts alloca, call, load instruction sequence where
-      // the alloca allocates "some" bytes, pointer to those bytes
-      // is passed to a hooklib call (along with original argument)
-      // and load subsequently loads from the alloca'd address
-      //
-      // it is expected hooklib somehow initializes the pointer to newly
-      // allocated data
-      // TODO: destructors (where to call, for what object)
-      // TODO: data passed in more than one register (Arg would only be half of
-      // the data e.g. for 128bit number)
-      auto *Alloca = Builder.CreateAlloca(TPtr, nullptr, "%man");
-
-      if (Alloca == nullptr) {
-        errs() << "Instrumentation failed: Alloca";
-        exit(1); // TODO?
-      }
-      Alloca->dump();
-      errs() << "OPERAND count " << Alloca->getNumOperands() << '\n';
-      errs() << "OPERAND " << Alloca->getNameOrAsOperand() << " DUMP\n";
-      auto *Op = Alloca->getOperand(0);
-      Op->dump();
-
-      auto *Call =
-          Builder.CreateCall(IsAttrUnsgined ? UnsFn : SignFn, {Arg, Alloca});
-
-      auto *Load = Builder.CreateAlignedLoad(
-          TPtr, Alloca, M.getDataLayout().getPrefTypeAlign(TPtr));
-      if (Alloca == nullptr) {
-        errs() << "Instrumentation failed: Load";
-        exit(1); // TODO?
-      }
-
-      // replaces all usages Arg (argument to be captured/hijacked)
-      // with the newly loaded value
-      Vec<llvm::Use *> ArgUsages;
-      for (auto Use = Arg->use_begin(); Use != Arg->use_end(); ++Use) {
-        // do not replace the usage inside our own call instruction
-        if (Use->getUser() == Call) {
-          continue;
-        }
-
-        ArgUsages.push_back(&*Use);
-      }
-
-      for (auto *ArgUse : ArgUsages) {
-        errs() << "For use in" << '\n';
-        ArgUse->getUser()->dump();
-        errs() << "Setting arg no " << ArgUse->getOperandNo()
-               << " to new load\n";
-        ArgUse->set(Load);
-      }
-
+      instrumentArgHijack(Builder, M, Arg, TPtr,
+                          IsAttrUnsgined ? UnsFn : SignFn, ModIdConstant,
+                          FnIdConstant);
       return;
     }
   }
@@ -324,7 +350,8 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
 
     IF_VERBOSE errs() << "Inserting call std::string\n";
     auto CallCxxString = GetOrInsertHookFn("vstr_extra_cxx__string", ArgT);
-    Builder.CreateCall(CallCxxString, {Arg});
+    instrumentArgHijack(Builder, M, Arg, ArgT, CallCxxString, ModIdConstant,
+                        FnIdConstant);
     return;
   }
 
@@ -478,7 +505,8 @@ public:
 
       for (auto *Arg = Fn.arg_begin(); Arg != Fn.arg_end(); ++Arg) {
         insertArgCaptureHook(Builder, m_module, Arg, Mapping,
-                             Mapping.getArgumentSizeTypes());
+                             Mapping.getArgumentSizeTypes(), m_moduleId,
+                             FnId->second);
       }
     }
   }

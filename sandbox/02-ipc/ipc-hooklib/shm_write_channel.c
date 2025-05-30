@@ -31,7 +31,7 @@ static bool alloc_name(const char *name_base, const char *name,
 
   char *buffer = (char *)malloc(to_alloc);
   if (buffer == NULL) {
-    printf("buff null\n");
+    printf("error buff null\n");
     return false;
   }
 

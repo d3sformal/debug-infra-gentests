@@ -2,10 +2,10 @@ pub mod arg_capture;
 pub mod call_tracing;
 mod hooklib_commons;
 pub mod mem_utils;
-mod zmq_channels;
+pub mod zmq_channels;
 
 use hooklib_commons::ShmMeta;
-use mem_utils::{aligned_to, read_w_alignment_chk};
+use mem_utils::read_w_alignment_chk;
 
 use crate::libc_wrappers::fd::try_shm_unlink_fd;
 use crate::libc_wrappers::sem::{FreeFullSemNames, Semaphore};
@@ -13,10 +13,10 @@ use crate::libc_wrappers::shared_memory::ShmemHandle;
 use crate::libc_wrappers::wrappers::to_cstr;
 use crate::log::Log;
 use crate::modmap::{IntegralFnId, IntegralModId};
-use crate::stages::arg_capture::PacketReader;
-use crate::stages::call_tracing::LLVMFunId;
 use libc::O_CREAT;
-use zmq_channels::{MainChannelNames, ZmqMetadataServer};
+use zmq_channels::{
+  ZmqMetadataServer, to_zmq_absolute_path, zmq_metadata_chnl_name, zmq_packet_chnl_name,
+};
 
 /// a handle to all shared memory infrastructure necessary for function tracing
 pub struct TracingInfra<'a> {
@@ -30,12 +30,10 @@ enum Either<T, S> {
   Right(S),
 }
 
-pub fn cleanup_shmem(prefix: &str) -> Result<(), String> {
+pub fn cleanup(prefix: &str) -> Result<(), String> {
   let lg = Log::get("cleanup");
   let FreeFullSemNames { free, full } = FreeFullSemNames::get(prefix, "capture", "base");
-  let meta = MainChannelNames::get_metadata(prefix);
-  // TODO - ZMQ paths
-  for name in &[free, full, meta] {
+  for name in &[free, full] {
     lg.info(format!("Cleanup {}", name));
     let res = Semaphore::try_open(name, 0, O_CREAT.into(), None);
     if let Ok(sem) = res {
@@ -55,6 +53,14 @@ pub fn cleanup_shmem(prefix: &str) -> Result<(), String> {
     lg.info(format!("Cleanup {:?}", name));
     if let Err(e) = try_shm_unlink_fd(name) {
       lg.info(format!("Cleanup error: {:?}: {e}", name));
+    }
+  }
+
+  let meta = to_zmq_absolute_path(&zmq_metadata_chnl_name(prefix));
+  let packets = to_zmq_absolute_path(&zmq_packet_chnl_name(prefix));
+  for name in [meta, packets] {
+    if let Err(e) = std::fs::remove_file(name.clone()) {
+      lg.info(format!("Cleanup error: {}: {e}", name));
     }
   }
 
@@ -180,50 +186,28 @@ pub async fn send_test_metadata(
   buff_len: u32,
   module: IntegralModId,
   fn_id: IntegralFnId,
-  reader: &PacketReader,
-) -> Result<bool, String> {
-  let test_count = reader.get_test_count(module, fn_id).ok_or(format!(
-    "Not found tests: {} {}",
-    module.hex_string(),
-    fn_id.hex_string()
-  ))?;
-  let arg_count = reader.get_test_count(module, fn_id).ok_or(format!(
-    "Not found args: {} {}",
-    module.hex_string(),
-    fn_id.hex_string()
-  ))?;
-
-  if test_count == 0 || arg_count == 0 {
-    Log::get("send_test_metadata").warn(format!(
-      "Skipping M: {} F: {} due to zero arg/test count a: {}, t:{}",
-      module.hex_string(),
-      fn_id.hex_string(),
+  arg_count: u32,
+  test_count: u32,
+) -> Result<(), String> {
+  send_metadata(
+    resource_prefix,
+    ShmMeta {
+      buff_count,
+      buff_len,
+      total_len: buff_count * buff_len,
+      mode: 2,
+      target_fnid: *fn_id,
+      target_modid: *module,
+      forked: 0,
       arg_count,
-      test_count
-    ));
-    Ok(false)
-  } else {
-    send_metadata(
-      resource_prefix,
-      ShmMeta {
-        buff_count,
-        buff_len,
-        total_len: buff_count * buff_len,
-        mode: 2,
-        target_fnid: *fn_id,
-        target_modid: *module,
-        forked: 0,
-        arg_count,
-        test_count,
-      },
-    )
-    .await
-    .map(|()| true)
-  }
+      test_count,
+    },
+  )
+  .await
 }
 
 async fn send_metadata(resource_prefix: &str, target_descriptor: ShmMeta) -> Result<(), String> {
-  let sock_name = MainChannelNames::get_metadata(resource_prefix);
+  let sock_name = zmq_metadata_chnl_name(resource_prefix);
   let mut chnl = ZmqMetadataServer::new(&sock_name).await?;
   Log::get("init_tracing").info("Waiting for a cooperating program");
   chnl.send_metadata(target_descriptor).await
