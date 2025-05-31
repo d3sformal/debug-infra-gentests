@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use zeromq::{RepSocket, Socket, SocketRecv, SocketSend, ZmqMessage};
 
 use crate::{
@@ -60,7 +59,7 @@ impl ZmqMetadataServer {
   }
 }
 
-fn consume_to_u32(bytes: &Bytes, start: usize) -> Result<u32, String> {
+pub fn consume_to_u32(bytes: &[u8], start: usize) -> Result<u32, String> {
   if bytes.len() < start + 4 {
     return Err("Not enough bytes".to_string());
   }

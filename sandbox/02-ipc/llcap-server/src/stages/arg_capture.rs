@@ -3,6 +3,7 @@ use std::{
   fs::File,
   io::{self, BufReader, BufWriter, ErrorKind, Read, Write},
   path::{Path, PathBuf},
+  sync::{Arc, Mutex},
 };
 
 use crate::{
@@ -133,13 +134,15 @@ impl ArgPacketDumper {
 }
 
 struct CaptureRecord {
+  path: PathBuf,
   file: BufReader<File>,
   tests: usize,
   args: usize,
+  idx: usize,
 }
 
 pub struct PacketReader {
-  captures: HashMap<(IntegralModId, IntegralFnId), Box<dyn PacketIterator>>,
+  captures: HashMap<(IntegralModId, IntegralFnId), Arc<Mutex<dyn PacketIterator + Send>>>,
 }
 
 impl PacketReader {
@@ -150,8 +153,10 @@ impl PacketReader {
   ) -> Result<Self, std::io::Error> {
     let lg = Log::get("PacketReader");
     let capacity = (buff_limit / module_maps.modules().count()).max(4096 * 2);
-    let mut captures: HashMap<(IntegralModId, IntegralFnId), Box<dyn PacketIterator>> =
-      HashMap::new();
+    let mut captures: HashMap<
+      (IntegralModId, IntegralFnId),
+      Arc<Mutex<dyn PacketIterator + Send>>,
+    > = HashMap::new();
     for module in module_maps.modules() {
       let functions = module_maps.functions(*module).map_or_else(
         || {
@@ -178,7 +183,7 @@ impl PacketReader {
             "\tModule name: {:?}",
             module_maps.get_module_string_id(*module)
           ));
-          captures.insert(key, Box::new(EmptyPacketIter {}));
+          captures.insert(key, Arc::new(Mutex::new(EmptyPacketIter {})));
         } else {
           let mut tests = 0;
           lg.info(format!(
@@ -188,9 +193,11 @@ impl PacketReader {
           ));
           {
             let mut record = CaptureRecord {
+              path: path.clone(),
               file: BufReader::with_capacity(capacity, File::open(path.clone())?),
               tests: 0,
               args: 0,
+              idx: 0,
             };
 
             while record
@@ -216,11 +223,13 @@ impl PacketReader {
           lg.info(format!("\targs {} ", args));
           captures.insert(
             (*module, *function),
-            Box::new(CaptureRecord {
+            Arc::new(Mutex::new(CaptureRecord {
+              path: path.clone(),
               file: BufReader::with_capacity(capacity, File::open(path)?),
               tests,
               args,
-            }),
+              idx: 0,
+            })),
           );
         }
       }
@@ -235,7 +244,17 @@ impl PacketReader {
     fun: IntegralFnId,
   ) -> Result<Option<Vec<u8>>, String> {
     if let Some(v) = self.captures.get_mut(&(module, fun)) {
-      v.read_next_packet()
+      let mut guard = v.lock().unwrap();
+      guard.read_next_packet()
+    } else {
+      Err("Not found".to_string())
+    }
+  }
+
+  pub fn try_reset(&mut self, module: IntegralModId, fun: IntegralFnId) -> Result<(), String> {
+    if let Some(v) = self.captures.get_mut(&(module, fun)) {
+      let mut guard = v.lock().unwrap();
+      guard.try_reset()
     } else {
       Err("Not found".to_string())
     }
@@ -245,11 +264,21 @@ impl PacketReader {
     self
       .captures
       .get(&(module, fun))
-      .map(|v: &Box<dyn PacketIterator>| v.test_count())
+      .map(|v| v.lock().unwrap().test_count())
   }
 
   pub fn get_arg_count(&self, module: IntegralModId, fun: IntegralFnId) -> Option<u32> {
-    self.captures.get(&(module, fun)).map(|v| v.arg_count())
+    self
+      .captures
+      .get(&(module, fun))
+      .map(|v| v.lock().unwrap().arg_count())
+  }
+
+  pub fn get_upcoming_pkt_idx(&self, module: IntegralModId, fun: IntegralFnId) -> Option<usize> {
+    self
+      .captures
+      .get(&(module, fun))
+      .map(|v| v.lock().unwrap().upcoming_packet_idx())
   }
 }
 
@@ -257,6 +286,8 @@ trait PacketIterator {
   fn read_next_packet(&mut self) -> Result<Option<Vec<u8>>, String>;
   fn test_count(&self) -> u32;
   fn arg_count(&self) -> u32;
+  fn try_reset(&mut self) -> Result<(), String>;
+  fn upcoming_packet_idx(&mut self) -> usize;
 }
 
 impl PacketIterator for CaptureRecord {
@@ -267,6 +298,7 @@ impl PacketIterator for CaptureRecord {
       Ok(()) => (),
       Err(e) => {
         if e.kind() == ErrorKind::UnexpectedEof {
+          self.idx += 1;
           return Ok(None);
         } else {
           return Err(format!("Failed to read packet len: {}", e));
@@ -275,12 +307,16 @@ impl PacketIterator for CaptureRecord {
     };
     let len = u32::from_le_bytes(buf);
     if len == 0 {
+      self.idx += 1;
       return Ok(None);
     }
 
     let mut result = vec![0; len as usize];
     match self.file.read_exact(&mut result) {
-      Ok(_) => Ok(Some(result)),
+      Ok(_) => {
+        self.idx += 1;
+        Ok(Some(result))
+      }
       Err(e) => Err(format!("Error when reading {} packet len, err {}", len, e)),
     }
   }
@@ -291,6 +327,19 @@ impl PacketIterator for CaptureRecord {
 
   fn arg_count(&self) -> u32 {
     self.args as u32
+  }
+
+  fn try_reset(&mut self) -> Result<(), String> {
+    self.file = BufReader::with_capacity(
+      self.file.capacity(),
+      File::open(self.path.clone()).map_err(|e| e.to_string())?,
+    );
+    self.idx = 0;
+    Ok(())
+  }
+
+  fn upcoming_packet_idx(&mut self) -> usize {
+    self.idx
   }
 }
 
@@ -307,5 +356,35 @@ impl PacketIterator for EmptyPacketIter {
 
   fn arg_count(&self) -> u32 {
     0
+  }
+
+  fn try_reset(&mut self) -> Result<(), String> {
+    Ok(())
+  }
+
+  fn upcoming_packet_idx(&mut self) -> usize {
+    0
+  }
+}
+
+pub trait PacketProvider {
+  fn get_packet(&mut self, m: IntegralModId, f: IntegralFnId, index: usize) -> Option<Vec<u8>>;
+}
+
+impl PacketProvider for PacketReader {
+  fn get_packet(&mut self, m: IntegralModId, f: IntegralFnId, index: usize) -> Option<Vec<u8>> {
+    let tests = self.get_test_count(m, f)?;
+    if tests == 0 {
+      return None;
+    } else if index as u32 >= tests {
+      // tries to return the first packet 
+      self.try_reset(m, f).ok()?;
+    } else if self.get_upcoming_pkt_idx(m, f)? != index {
+      self.try_reset(m, f).ok()?;
+      while self.get_upcoming_pkt_idx(m, f)? < index {
+        self.read_next_packet(m, f).ok()?;
+      }
+    }
+    self.read_next_packet(m, f).ok()?
   }
 }

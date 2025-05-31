@@ -1,4 +1,9 @@
-use std::{process::Command, thread::sleep, time::Duration};
+use std::{
+  process::Command,
+  sync::{Arc, atomic::AtomicBool},
+  thread::sleep,
+  time::Duration,
+};
 
 use args::Cli;
 use clap::Parser;
@@ -26,6 +31,7 @@ use stages::{
     FunctionCallInfo, export_data, export_tracing_selection, import_data, import_tracing_selection,
     obtain_function_id_selection, print_summary,
   },
+  testing::test_server_job,
 };
 
 fn obtain_module_map(path: &std::path::PathBuf) -> Result<ExtModuleMap, String> {
@@ -54,7 +60,7 @@ fn cmd_from_args(args: &[String]) -> Result<Command, String> {
   }
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main()]
 async fn main() -> Result<(), String> {
   Log::set_verbosity(255);
   let lg = Log::get("main");
@@ -136,7 +142,7 @@ async fn main() -> Result<(), String> {
       selection_file,
       out_dir,
       mem_limit,
-      command
+      command,
     } => {
       lg.info("Reading function selection");
       let selection = import_tracing_selection(&selection_file)?;
@@ -152,12 +158,12 @@ async fn main() -> Result<(), String> {
       let mut tracing_infra = init_tracing(&cli.fd_prefix, buff_count, buff_size).await?;
 
       let mut cmd = cmd_from_args(&command)?;
-      
+
       let meta_fut = send_arg_capture_metadata(&cli.fd_prefix, buff_count, buff_size);
 
       let mut test = cmd
-      .spawn()
-      .map_err(|e| format!("Failed to spawn from command: {e}"))?;
+        .spawn()
+        .map_err(|e| format!("Failed to spawn from command: {e}"))?;
       meta_fut.await?;
 
       lg.info("Listening!");
@@ -188,6 +194,8 @@ async fn main() -> Result<(), String> {
       let selection = import_tracing_selection(&selection_file)?;
       lg.info("Masking");
       modules.mask_include(&selection)?;
+
+      let modules = Arc::new(modules);
       lg.info("Setting up function packet reader");
 
       let mut packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
@@ -195,6 +203,16 @@ async fn main() -> Result<(), String> {
 
       lg.info("Setting up function packet server");
       let mut svr = ZmqArgumentPacketServer::new(&zmq_packet_chnl_name(&cli.fd_prefix)).await?;
+      let end_flag = Arc::new(AtomicBool::new(false));
+
+      // TODO use this instead of svr
+      let svr2 = tokio::spawn(test_server_job(
+        cli.fd_prefix.clone(),
+        capture_dir,
+        modules.clone(),
+        mem_limit as usize,
+        end_flag.clone(),
+      ));
 
       let mut cmd = cmd_from_args(&command)?;
 
@@ -258,6 +276,8 @@ async fn main() -> Result<(), String> {
           }
         }
       }
+      end_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+      svr2.await.map_err(|e| e.to_string())??;
     }
   }
   

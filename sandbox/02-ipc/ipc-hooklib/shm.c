@@ -256,8 +256,19 @@ static bool send_packet_req(zsock_t *ack, uint32_t mod, uint32_t fn) {
 
 static zmsg_t *s_packet_msg = NULL;
 static size_t s_current_idx = 0;
+static int s_socket_fd = -1;
+static uint32_t s_packet_idx = 0;
 
+void init_packet_socket(int fd, uint32_t request_idx) {
+  s_socket_fd = fd;
+  s_packet_idx = request_idx;
+}
+
+// TODO complete
 bool receive_packet(uint32_t mod, uint32_t fn) {
+  // get packet:
+  // write(s_socket_fd, &s_packet_idx, sizeof(s_packet_idx));
+
   zsock_t *socket = NULL;
   socket = zsock_new_req(s_zmq_packet_server);
 
@@ -266,7 +277,9 @@ bool receive_packet(uint32_t mod, uint32_t fn) {
     zsock_destroy(&socket);
     return false;
   }
-
+  // uint32_t packet_len = 0;
+  // read(s_socket_fd, &packet_len, sizeof(packet_len));
+  // read(s_socket_fd, &buff, packet_len);
   s_packet_msg = zmsg_recv(socket);
   if (s_packet_msg == NULL) {
     printf("Fail packet rcv\n");

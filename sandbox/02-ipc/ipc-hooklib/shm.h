@@ -37,6 +37,7 @@ void set_fork_flag(void);
 
 bool consume_bytes_from_packet(size_t bytes, void *target);
 bool receive_packet(uint32_t mod, uint32_t fn);
+void init_packet_socket(int fd, uint32_t request_idx);
 
 bool report_test(uint32_t mod, uint32_t fn, uint32_t test_idx, int status,
   int result);
