@@ -24,41 +24,9 @@ float x = 1;
 float &retRef() { return x; }
 
 int int_called_with_int_float(int i, float f) {
-  // Var (x, builtintype::int) -> ImplicitCast
-  int x = i * f;
-
-  // Var (y, auto) -> -> BinaryOperator
-  auto y = i * f;
-  // ReturnStmt -> ImplicitCast -> BinaryOperator
+  printf("Got %d %f\n", i, f);
+  printf("Returning %d\n", int(i*f));
   return i * f;
-  // ImplicitCast -> BinaryOperator
-  return y;
-
-  // =>
-  // return (stmt);
-
-  // should be transformable to
-
-  // auto x = (stmt);
-  // ... instrument fn return ...
-  // return x;
-
-  // If -> Compound -> Return
-  if (true) {
-    return x;
-  }
-
-  // If -> Return
-  if (false)
-    return y;
-  if (false)
-    return y;
-
-  // NOT part of compound expression?
-  // replace Return with Compound, insert Return into Compound
-  // replace
-
-  return retRef();
 }
 
 float float_called_with_double_int([[maybe_unused]] double d, int i) {
@@ -112,7 +80,9 @@ Large returnLarge(uint64_t x) {
 
 char consumeLarge(Large l) { return l.c + l.a; }
 
-size_t consumeString(std::string s) { return s.size(); }
+size_t consumeString(std::string s) { 
+  return s.size();
+}
 
 size_t consumeStringRval(std::string &&s) { return s.size(); }
 
@@ -239,19 +209,22 @@ int main(int argc) {
   const char *p = "www";
   std::string v(p);
 
-  for(int t = 0; t < 100; ++t){  
-  foo_namespace::bar_namespace::foo(1, 3.14);
-  std::cout << p << std::endl;
-  templateTest<std::string>(v);
-  templateTest<float>(0.0);
+  for(int t = 0; t < 5; ++t){  
+    foo_namespace::bar_namespace::foo(1, 3.14);
+    v = templateTest<std::string>(v);
+    // if templateTest is instrumented, the line below demonstrates argument replacement for
+    // a C++ type
+    std::cout << v << std::endl; 
+    v += " x";
+    // if (t > 3) {
+    //   *((volatile int*)0);
+    // }
+    templateTest<float>(0.0);
   }
 
   myTypeTFoo(retRef());
   MyTypeT x = 4.53;
   myTypeTFoo(x);
-  if (argc > 1) {
-    *((volatile int*)0);
-  }
   overload1(overload1(num));
 
   auto nocapture_lam = [](int z) { return z; };
@@ -293,6 +266,7 @@ int main(int argc) {
   auto sz = c.skipTwoArgsTest(v).size();
   CX::staticFn();
   sz = 1 + consumeStringRval("test");
+  sz += consumeString("Val");
   printf("Test value representation:");
   justPrint<char>(0xff);
   justPrint<unsigned char>(0xff);
@@ -303,8 +277,14 @@ int main(int argc) {
   justPrint(std::numeric_limits<long long>::min());
   justPrint<unsigned long long>(0xffffffffffffffff);
   passReturnByVal64Struct(Fits64Bits());
+  int result = int_called_with_int_float(21, 1.0f);
+  int_called_with_int_float(-11, 1.0f);
+  if (result == 0) {
+    *((volatile int*)0);
+  }
+  int_called_with_int_float(2500, 1.0f);
+  // if int_called_with_int_float is tested, one test will fail due to the check above
+  int_called_with_int_float(0, 0);
   pass128Struct(Fits128Bits());
-  return everything(sz) + lambda_namespace::namespaced_lambda(1) + autofloat +
-         autoint + lambda_namespace::namespacedFnWithLambda(11.1) +
-         c.nestedWrap();
+  return result;
 }
