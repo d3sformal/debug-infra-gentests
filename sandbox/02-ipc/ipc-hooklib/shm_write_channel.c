@@ -196,7 +196,7 @@ static bool termination_sequence(WriteChannel *self) {
 }
 
 static void *get_buffer(WriteChannel *self, size_t idx) {
-  static_assert(sizeof(char) == 1, "Byte is a byte");
+  _Static_assert(sizeof(char) == 1, "Byte is a byte");
   assert(idx < self->info.buff_len);
   return (void *)((char *)self->buffer_base + idx * self->info.buff_len);
 }
@@ -235,8 +235,8 @@ static int unchecked_write(WriteChannel *self, const void *source,
 }
 
 static uint32_t get_buff_data_space(WriteChannel *self) {
-  static_assert(sizeof(self->bumper_offset) < (size_t)UINT32_MAX,
-                "Needed for the line below");
+  _Static_assert(sizeof(self->bumper_offset) < (size_t)UINT32_MAX,
+                 "Needed for the line below");
   return self->info.buff_len - (uint32_t)sizeof(self->bumper_offset);
 }
 

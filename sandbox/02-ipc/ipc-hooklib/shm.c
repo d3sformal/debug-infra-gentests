@@ -1,20 +1,17 @@
 #include "shm.h"
+#include "shm_commons.h"
+#include "shm_oneshot_rx.h"
 #include "shm_write_channel.h"
 #include <assert.h>
-#include <czmq.h>
-#include <czmq_library.h>
 #include <fcntl.h>
 #include <semaphore.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <zframe.h>
-#include <zmq.h>
-#include <zmsg.h>
-#include <zsock.h>
 
 /*
 Shared memory buffering & synchronization
@@ -50,88 +47,10 @@ Termination protocol: see the after_crash_recovery function
 
 static ShmMeta s_buff_info;
 static WriteChannel s_channel;
-static const char *s_main_chnl_name_data = "ipc:///tmp/llcap-zmqmain-meta";
-static const char *s_zmq_packet_server = "ipc:///tmp/llcap-zmqpackets";
-
-static bool mk_msg(void *data, size_t size, zmsg_t **target) {
-  zframe_t *frame = zframe_new(data, size);
-  if (frame == NULL) {
-    printf("Alloc err frame\n");
-    return false;
-  }
-
-  zmsg_t *msg = zmsg_new();
-  if (msg == NULL) {
-    printf("Alloc err msg\n");
-    zframe_destroy(&frame);
-    return false;
-  }
-
-  if (zmsg_append(msg, &frame) != 0) {
-    printf("Cannot append a frame to a message\n");
-    zframe_destroy(&frame);
-    zmsg_destroy(&msg);
-    return false;
-  }
-
-  *target = msg;
-  return true;
-}
-
-static int send_req(zsock_t *ack) {
-  int dummy = 1;
-  zmsg_t *msg;
-  if (!mk_msg(&dummy, sizeof(dummy), &msg)) {
-    printf("Req failed");
-    return false;
-  }
-
-  if (zmsg_send(&msg, ack) != 0) {
-    printf("Failed to send req message\n");
-    zmsg_destroy(&msg);
-    return false;
-  }
-
-  return true;
-}
 
 static bool get_buffer_info(ShmMeta *target) {
-  bool rv = false;
-
-  zsock_t *data = NULL;
-  data = zsock_new_req(s_main_chnl_name_data);
-
-  if (send_req(data) == -1) {
-    printf("Fail request\n");
-    goto fail_sock_dtor;
-  }
-
-  zmsg_t *msg = zmsg_recv(data);
-  if (msg == NULL) {
-    printf("Fail msg rcv - buffinfo\n");
-    goto fail_sock_dtor;
-  }
-  zframe_t *frame = zmsg_pop(msg);
-  if (frame == NULL) {
-    printf("Fail frame pop\n");
-    zmsg_destroy(&msg);
-    goto fail_sock_dtor;
-  }
-
-  if (zframe_size(frame) != sizeof(ShmMeta)) {
-    printf("Frame data size mismatch, expecterd %lu, got %lu\n",
-           sizeof(ShmMeta), zframe_size(frame));
-    zmsg_destroy(&msg);
-    goto fail_sock_dtor;
-  }
-
-  *target = *(ShmMeta *)zframe_data(frame);
-  zmsg_destroy(&msg);
-
-  rv = true;
-fail_sock_dtor:
-  zsock_destroy(&data);
-  return rv;
+  return oneshot_shm_read(META_SEM_DATA, META_SEM_ACK, META_MEM_NAME, target,
+                          sizeof(ShmMeta));
 }
 
 #define SEMPERMS (S_IROTH | S_IWOTH | S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR)
@@ -139,8 +58,9 @@ fail_sock_dtor:
 // sets up the semaphores and information required for buffer management
 // if this returns 0, s_channel is ready for use
 static int setup_infra(void) {
-  int rv = SHM_FAIL_NORET;
+  int rv = 1;
 
+  printf("Obtaining buffer info\n");
   if (!get_buffer_info(&s_buff_info)) {
     printf("Could not obtain buffer info\n");
     return rv;
@@ -168,7 +88,7 @@ static int setup_infra(void) {
 }
 
 int init(void) {
-  int rv = SHM_FAIL_NORET;
+  int rv = 1;
   if (setup_infra() != 0) {
     printf("Failed to init infra\n");
     exit(-1);
@@ -204,7 +124,7 @@ void deinit(void) {
 int after_crash_recovery(void) { return deinit_channel(&s_channel); }
 
 int init_finalize_after_crash(void) {
-  int rv = SHM_FAIL_NORET;
+  int rv = 1;
 
   if (setup_infra() != 0) {
     return rv;
@@ -232,92 +152,61 @@ bool is_fn_under_test(uint32_t mod, uint32_t fn) {
          s_buff_info.target_fnid == fn;
 }
 
-static bool send_packet_req(zsock_t *ack, uint32_t mod, uint32_t fn) {
-  uint16_t req_id = 1;
-  zmsg_t *msg;
-  unsigned char data[sizeof(req_id) + sizeof(mod) + sizeof(fn)];
-  memcpy(data, &req_id, sizeof(req_id));
-  memcpy(data + sizeof(req_id), &mod, sizeof(mod));
-  memcpy(data + sizeof(req_id) + sizeof(mod), &fn, sizeof(fn));
-
-  if (!mk_msg(data, sizeof(req_id) + sizeof(mod) + sizeof(fn), &msg)) {
-    printf("Pktrq failed");
-    return false;
-  }
-
-  if (zmsg_send(&msg, ack) != 0) {
-    printf("Failed to send req pktrq\n");
-    zmsg_destroy(&msg);
-    return false;
-  }
-
-  return true;
-}
-
-static zmsg_t *s_packet_msg = NULL;
+static void *s_packet = NULL;
 static size_t s_current_idx = 0;
-static int s_socket_fd = -1;
-static uint32_t s_packet_idx = 0;
+static uint32_t s_packet_size = 0;
 
-void init_packet_socket(int fd, uint32_t request_idx) {
+static int s_socket_fd = -1;
+static uint64_t s_packet_idx = 0;
+
+void init_packet_socket(int fd, uint64_t request_idx) {
   s_socket_fd = fd;
   s_packet_idx = request_idx;
 }
 
-// TODO complete
-bool receive_packet(uint32_t mod, uint32_t fn) {
-  // get packet:
-  // write(s_socket_fd, &s_packet_idx, sizeof(s_packet_idx));
-
-  zsock_t *socket = NULL;
-  socket = zsock_new_req(s_zmq_packet_server);
-
-  if (!send_packet_req(socket, mod, fn)) {
-    printf("Fail request packet\n");
-    zsock_destroy(&socket);
-    return false;
-  }
-  // uint32_t packet_len = 0;
-  // read(s_socket_fd, &packet_len, sizeof(packet_len));
-  // read(s_socket_fd, &buff, packet_len);
-  s_packet_msg = zmsg_recv(socket);
-  if (s_packet_msg == NULL) {
-    printf("Fail packet rcv\n");
-    zsock_destroy(&socket);
+bool receive_packet(void) {
+  if (write(s_socket_fd, &s_packet_idx, sizeof(s_packet_idx)) !=
+      sizeof(s_packet_idx)) {
     return false;
   }
 
-  printf("packet recevied\n");
+  if (read(s_socket_fd, &s_packet_size, sizeof(s_packet_size)) !=
+      sizeof(s_packet_size)) {
+    perror("Failed to recv packet sz");
+    return false;
+  }
 
-  zsock_destroy(&socket);
+  s_packet = malloc(s_packet_size);
+  if (s_packet == NULL) {
+    perror("Failed to alloc packet");
+    return false;
+  }
+
+  if (read(s_socket_fd, s_packet, s_packet_size) != s_packet_size) {
+    perror("Failed to recv packet data");
+    return false;
+  }
   return true;
 }
 
-bool report_test(uint32_t mod, uint32_t fn, uint32_t test_idx, int status,
-                 int result) {
-  FILE *file = NULL;
-  const char *res =
-      result == 0 ? "exit" : (result == -2 ? "signal" : "timeout");
-  file = fopen("/tmp/llcap-test-results", "a");
-  bool rv =
-      fprintf(file, "%u %u %u %d %s\n", mod, fn, test_idx, status, res) > 0;
-  fclose(file);
-  return rv;
-}
-
-static zframe_t *get_packet_frame(void) { return zmsg_first(s_packet_msg); }
-
 bool consume_bytes_from_packet(size_t bytes, void *target) {
-  if (s_packet_msg == NULL) {
+  if (s_packet == NULL) {
     printf("failed: packet uninitialized\n");
     return false;
   }
-  if (bytes + s_current_idx > zframe_size(get_packet_frame())) {
-    printf("failed: request %lu would result in packet overflow\n", bytes);
+
+  if (bytes > s_packet_size || (size_t)s_packet_size - bytes < s_current_idx) {
+    printf("failed: request %lu would result in packet overflow (%u %lu)\n",
+           bytes, s_packet_size, s_current_idx);
     return false;
   }
 
-  memcpy(target, zframe_data(get_packet_frame()) + s_current_idx, bytes);
+  memcpy(target, (const char *)s_packet + s_current_idx, bytes);
   s_current_idx += bytes;
+
+  if (s_current_idx == s_packet_size) {
+    free(s_packet);
+    s_packet_size = 0;
+  }
   return true;
 }

@@ -4,6 +4,10 @@
 #include <stddef.h>
 #define UNMAP_SHMEM_FLAG_TRY_ALL 1
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // unmaps memory of length "len" mapped to "mem" backed by descriptor "fd" that
 // was created with "name"
 //
@@ -21,5 +25,9 @@ int unmap_shmem(void *mem, int fd, const char *name, size_t len,
 // returns -1 if any step failed, target and fd invalid
 int mmap_shmem(const char *name, void **target, int *fd, size_t len,
                bool write);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // LLCAP_SHM_UTIL

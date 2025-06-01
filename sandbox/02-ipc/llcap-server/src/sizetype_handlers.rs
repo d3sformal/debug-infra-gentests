@@ -8,15 +8,6 @@ pub enum ReadProgress {
   Nop,    // buffer left untouched, you should call reset()
 }
 
-pub enum WriteProgress {
-  Done {
-    // writing of a value is done
-    consumed_bytes: usize, // nr of bytes consumed from input
-  },
-  NotYet, // all bytes from input consumed, write not complete yet, send another buffer
-  Nop,
-}
-
 #[derive(Debug, Copy, Clone)]
 pub enum ArgSizeTypeRef {
   Fixed(usize),
@@ -43,15 +34,6 @@ pub trait SizeTypeReader {
   fn done(&self) -> bool;
 }
 
-pub trait SizeTypeWriter {
-  fn write_reset(&mut self) -> bool;
-  fn write(
-    &mut self,
-    data: &[u8],
-    writer: impl Fn(u8) -> Result<(), String>,
-  ) -> Result<WriteProgress, String>;
-}
-
 pub struct FixedSizeTyData {
   required_size: usize,
 }
@@ -68,12 +50,6 @@ pub struct FixedSizeTyReader {
   data: FixedSizeTyData,
   done_read: bool,
   buffer: Vec<u8>,
-}
-
-pub struct FixedSizeTyWriter {
-  data: FixedSizeTyData,
-  progress_write: usize,
-  done_write: bool,
 }
 
 impl FixedSizeTyReader {
@@ -140,61 +116,6 @@ impl SizeTypeReader for FixedSizeTyReader {
 
   fn done(&self) -> bool {
     self.done_read
-  }
-}
-
-impl FixedSizeTyWriter {
-  pub fn new(data: FixedSizeTyData) -> Self {
-    Self {
-      data,
-      progress_write: 0,
-      done_write: false,
-    }
-  }
-}
-
-impl SizeTypeWriter for FixedSizeTyWriter {
-  fn write_reset(&mut self) -> bool {
-    if !self.done_write {
-      return false;
-    }
-    self.done_write = false;
-    self.progress_write = 0;
-
-    true
-  }
-
-  fn write(
-    &mut self,
-    data: &[u8],
-    writer: impl Fn(u8) -> Result<(), String>,
-  ) -> Result<WriteProgress, String> {
-    if self.done_write {
-      return Ok(WriteProgress::Nop);
-    }
-
-    if self.data.required_size < self.progress_write {
-      return Err("Invalid condition - len!".to_string());
-    }
-    let remaining = self.data.required_size - self.progress_write;
-    if remaining == 0 {
-      return Err("Invalid condition - rem!".to_string());
-    }
-
-    let to_cpy = remaining.min(data.len());
-    for item in data.iter().take(to_cpy) {
-      writer(*item)?;
-    }
-    self.progress_write += to_cpy;
-
-    if remaining == to_cpy {
-      self.done_write = true;
-      Ok(WriteProgress::Done {
-        consumed_bytes: to_cpy,
-      })
-    } else {
-      Ok(WriteProgress::NotYet)
-    }
   }
 }
 

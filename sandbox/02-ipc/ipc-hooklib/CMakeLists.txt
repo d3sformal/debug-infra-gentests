@@ -6,17 +6,9 @@ project(my-hook)
 
 add_compile_options(-Wall -Wextra -Wconversion -Wpedantic)
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(CZMQ REQUIRED libczmq)
-
-include_directories(${CMAKE_SOURCE_DIR})
-include_directories(${CZMQ_INCLUDE_DIRS})
-
-add_library(my-hook SHARED ./hook.cpp ./shm.c ./shm_write_channel.c ./shm_util.c)
-target_link_libraries(my-hook ${CZMQ_LIBRARIES})
+add_library(my-hook SHARED ./hook.cpp ./shm.c ./shm_write_channel.c ./shm_util.c ./shm_oneshot_rx.c)
 
 if(CFG_MANUAL)
-add_library(my-hook-manual SHARED ./hook.cpp ./shm.c ./shm_write_channel.c ./shm_util.c)
-target_link_libraries(my-hook-manual ${CZMQ_LIBRARIES})
+add_library(my-hook-manual SHARED ./hook.cpp ./shm.c ./shm_write_channel.c ./shm_util.c ./shm_oneshot_rx.c)
 set_target_properties(my-hook-manual PROPERTIES COMPILE_DEFINITIONS "MANUAL_INIT_DEINIT=1")
 endif()

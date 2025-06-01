@@ -15,7 +15,7 @@ use super::{
 
 #[derive(Debug)] // do not derive Clone or Copy!
 pub struct ShmemHandle<'a> {
-  pub mem: *mut c_void,
+  mem: *mut c_void,
   len: u32,
   _fd: i32,
   /// null-char-terminated string
@@ -39,6 +39,10 @@ impl ShmemHandle<'_> {
 
   pub fn len(&self) -> u32 {
     self.len
+  }
+
+  pub fn ptr(&self) -> *mut c_void {
+    self.mem
   }
 
   pub fn try_mmap(path: &CStr, len: u32) -> Result<Self, String> {

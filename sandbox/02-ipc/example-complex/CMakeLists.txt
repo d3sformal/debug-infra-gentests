@@ -4,8 +4,6 @@ project(Example)
 add_compile_options(-Wall -Wextra -pedantic)
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(CZMQ REQUIRED libczmq)
-
 
 add_library(hooklib SHARED IMPORTED)
 set_target_properties(hooklib PROPERTIES

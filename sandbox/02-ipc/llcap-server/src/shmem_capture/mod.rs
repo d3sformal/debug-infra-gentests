@@ -1,10 +1,10 @@
 pub mod arg_capture;
 pub mod call_tracing;
-mod hooklib_commons;
+pub mod hooklib_commons;
 pub mod mem_utils;
-pub mod zmq_channels;
+use std::ffi::CStr;
 
-use hooklib_commons::ShmMeta;
+use hooklib_commons::{META_MEM_NAME, META_SEM_ACK, META_SEM_DATA, ShmMeta};
 use mem_utils::read_w_alignment_chk;
 
 use crate::libc_wrappers::fd::try_shm_unlink_fd;
@@ -14,10 +14,6 @@ use crate::libc_wrappers::wrappers::to_cstr;
 use crate::log::Log;
 use crate::modmap::{IntegralFnId, IntegralModId};
 use libc::O_CREAT;
-use zmq_channels::{
-  ZmqMetadataServer, to_zmq_absolute_path, zmq_metadata_chnl_name, zmq_packet_chnl_name,
-};
-
 /// a handle to all shared memory infrastructure necessary for function tracing
 pub struct TracingInfra<'a> {
   pub sem_free: Semaphore,
@@ -33,7 +29,12 @@ enum Either<T, S> {
 pub fn cleanup(prefix: &str) -> Result<(), String> {
   let lg = Log::get("cleanup");
   let FreeFullSemNames { free, full } = FreeFullSemNames::get(prefix, "capture", "base");
-  for name in &[free, full] {
+  for name in &[
+    free,
+    full,
+    String::from_utf8(META_SEM_DATA.split_last().unwrap().1.to_vec()).unwrap(),
+    String::from_utf8(META_SEM_ACK.split_last().unwrap().1.to_vec()).unwrap(),
+  ] {
     lg.info(format!("Cleanup {}", name));
     let res = Semaphore::try_open(name, 0, O_CREAT.into(), None);
     if let Ok(sem) = res {
@@ -44,26 +45,17 @@ pub fn cleanup(prefix: &str) -> Result<(), String> {
     }
   }
 
-  let meta_tmp = format!("{prefix}-shmmeta\x00");
-  let buffs_tmp = format!("{prefix}-capture-base-buffmem\x00");
+  let metadata_shm_name = String::from_utf8(META_MEM_NAME.to_vec()).map_err(|e| e.to_string())?;
+  let buffs_shm_name = format!("{prefix}-capture-base-buffmem\x00");
   // SAFETY: line above
-  for name in [unsafe { to_cstr(&meta_tmp) }, unsafe {
-    to_cstr(&buffs_tmp)
+  for name in [unsafe { to_cstr(&metadata_shm_name) }, unsafe {
+    to_cstr(&buffs_shm_name)
   }] {
     lg.info(format!("Cleanup {:?}", name));
     if let Err(e) = try_shm_unlink_fd(name) {
       lg.info(format!("Cleanup error: {:?}: {e}", name));
     }
   }
-
-  let meta = to_zmq_absolute_path(&zmq_metadata_chnl_name(prefix));
-  let packets = to_zmq_absolute_path(&zmq_packet_chnl_name(prefix));
-  for name in [meta, packets] {
-    if let Err(e) = std::fs::remove_file(name.clone()) {
-      lg.info(format!("Cleanup error: {}: {e}", name));
-    }
-  }
-
   Ok(())
 }
 
@@ -136,13 +128,13 @@ pub async fn init_tracing(
   })
 }
 
-pub async fn send_call_tracing_metadata(
-  resource_prefix: &str,
+pub fn send_call_tracing_metadata(
+  chnl: &mut MetadataPublisher<'_>,
   buff_count: u32,
   buff_len: u32,
 ) -> Result<(), String> {
-  return send_metadata(
-    resource_prefix,
+  send_metadata(
+    chnl,
     ShmMeta {
       buff_count,
       buff_len,
@@ -155,16 +147,15 @@ pub async fn send_call_tracing_metadata(
       test_count: 0,
     },
   )
-  .await;
 }
 
-pub async fn send_arg_capture_metadata(
-  resource_prefix: &str,
+pub fn send_arg_capture_metadata(
+  chnl: &mut MetadataPublisher<'_>,
   buff_count: u32,
   buff_len: u32,
 ) -> Result<(), String> {
-  return send_metadata(
-    resource_prefix,
+  send_metadata(
+    chnl,
     ShmMeta {
       buff_count,
       buff_len,
@@ -177,11 +168,10 @@ pub async fn send_arg_capture_metadata(
       test_count: 0,
     },
   )
-  .await;
 }
 
-pub async fn send_test_metadata(
-  resource_prefix: &str,
+pub fn send_test_metadata(
+  chnl: &mut MetadataPublisher<'_>,
   buff_count: u32,
   buff_len: u32,
   module: IntegralModId,
@@ -190,7 +180,7 @@ pub async fn send_test_metadata(
   test_count: u32,
 ) -> Result<(), String> {
   send_metadata(
-    resource_prefix,
+    chnl,
     ShmMeta {
       buff_count,
       buff_len,
@@ -203,14 +193,14 @@ pub async fn send_test_metadata(
       test_count,
     },
   )
-  .await
 }
 
-async fn send_metadata(resource_prefix: &str, target_descriptor: ShmMeta) -> Result<(), String> {
-  let sock_name = zmq_metadata_chnl_name(resource_prefix);
-  let mut chnl = ZmqMetadataServer::new(&sock_name).await?;
+fn send_metadata(
+  chnl: &mut MetadataPublisher<'_>,
+  target_descriptor: ShmMeta,
+) -> Result<(), String> {
   Log::get("init_tracing").info("Waiting for a cooperating program");
-  chnl.send_metadata(target_descriptor).await
+  chnl.publish(target_descriptor)
 }
 
 pub fn deinit_tracing(infra: TracingInfra) -> Result<(), String> {
@@ -265,9 +255,10 @@ fn get_buffer_start(infra: &TracingInfra, buff_offset: usize) -> Result<*mut u8,
       buffers.len()
     ));
   }
-  let buff_ptr = buffers.mem.wrapping_byte_add(buff_offset) as *mut u8;
+  let mem = buffers.ptr();
+  let buff_ptr = mem.wrapping_byte_add(buff_offset) as *mut u8;
 
-  if buff_ptr.is_null() || buff_ptr < buffers.mem as *mut u8 {
+  if buff_ptr.is_null() || buff_ptr < mem as *mut u8 {
     return Err(format!(
       "Buffer pointer is invalid: {:?}, mem: {:?}",
       buff_ptr, buffers
@@ -291,3 +282,39 @@ fn buff_bounds_or_end(raw_buff: *const u8) -> Result<Either<(), (*const u8, *con
   let buff_end = start.wrapping_byte_add(valid_size as usize);
   Ok(Either::Right((start, buff_end)))
 }
+
+pub struct MetadataPublisher<'a> {
+  shm: ShmemHandle<'a>,
+  data_rdy_sem: Semaphore,
+  data_ack_sem: Semaphore,
+}
+
+impl<'a> MetadataPublisher<'a> {
+  pub fn new(mem_path: &CStr, data_sem_path: &str, ack_sem_path: &str) -> Result<Self, String> {
+    let data = Semaphore::try_open_exclusive(data_sem_path, 0)?;
+    let ack = Semaphore::try_open_exclusive(ack_sem_path, 1)?;
+    let shm = ShmemHandle::try_mmap(mem_path, std::mem::size_of::<ShmemHandle>() as u32)?;
+    Ok(Self {
+      shm,
+      data_rdy_sem: data,
+      data_ack_sem: ack,
+    })
+  }
+
+  pub fn publish(&mut self, meta: ShmMeta) -> Result<(), String> {
+    self.data_ack_sem.try_wait()?;
+
+    let mem = self.shm.ptr();
+    unsafe {
+      (mem as *mut ShmMeta).write(meta);
+    };
+
+    self.data_rdy_sem.try_post()
+  }
+}
+
+// safe because we do not give access to shared memory handle
+// and semaphores to the outside, furthermore, no suspension points
+// are present in associated functions & named
+// semaphores should be sharable between threads
+unsafe impl Send for MetadataPublisher<'_> {}

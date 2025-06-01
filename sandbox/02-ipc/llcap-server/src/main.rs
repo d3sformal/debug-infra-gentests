@@ -1,12 +1,12 @@
 use std::{
+  ops::DerefMut,
   process::Command,
-  sync::{Arc, atomic::AtomicBool},
-  thread::sleep,
-  time::Duration,
+  sync::{Arc, Mutex},
 };
 
 use args::Cli;
 use clap::Parser;
+use libc_wrappers::wrappers::to_cstr;
 use log::Log;
 
 use modmap::ExtModuleMap;
@@ -19,11 +19,12 @@ mod shmem_capture;
 mod sizetype_handlers;
 mod stages;
 use shmem_capture::{
+  MetadataPublisher,
   arg_capture::perform_arg_capture,
   call_tracing::msg_handler,
-  cleanup, deinit_tracing, init_tracing, send_arg_capture_metadata, send_call_tracing_metadata,
-  send_test_metadata,
-  zmq_channels::{ZmqArgumentPacketServer, zmq_packet_chnl_name},
+  cleanup, deinit_tracing,
+  hooklib_commons::{META_MEM_NAME, META_SEM_ACK, META_SEM_DATA},
+  init_tracing, send_arg_capture_metadata, send_call_tracing_metadata, send_test_metadata,
 };
 use stages::{
   arg_capture::{ArgPacketDumper, PacketReader},
@@ -81,6 +82,16 @@ async fn main() -> Result<(), String> {
   let mut modules = obtain_module_map(&cli.modmap)?;
 
   let (buff_count, buff_size) = (cli.buff_count, cli.buff_size);
+  let mem_cstr = String::from_utf8(META_MEM_NAME.to_vec()).map_err(|e| e.to_string())?;
+  let sem_str =
+    String::from_utf8(META_SEM_DATA.split_last().unwrap().1.to_vec()).map_err(|e| e.to_string())?;
+  let ack_str =
+    String::from_utf8(META_SEM_ACK.split_last().unwrap().1.to_vec()).map_err(|e| e.to_string())?;
+  let metadata_svr = Arc::new(Mutex::new(MetadataPublisher::new(
+    unsafe { to_cstr(&mem_cstr) },
+    &sem_str,
+    &ack_str,
+  )?));
 
   match cli.stage {
     args::Stage::TraceCalls {
@@ -100,7 +111,8 @@ async fn main() -> Result<(), String> {
         lg.info("Initializing tracing infrastructure");
         let mut tracing_infra = init_tracing(&cli.fd_prefix, buff_count, buff_size).await?;
 
-        send_call_tracing_metadata(&cli.fd_prefix, buff_count, buff_size).await?;
+        let mut guard = metadata_svr.lock().unwrap();
+        send_call_tracing_metadata(guard.deref_mut(), buff_count, buff_size)?;
 
         lg.info("Listening!");
 
@@ -158,13 +170,13 @@ async fn main() -> Result<(), String> {
       let mut tracing_infra = init_tracing(&cli.fd_prefix, buff_count, buff_size).await?;
 
       let mut cmd = cmd_from_args(&command)?;
+      let mut guard = metadata_svr.lock().unwrap();
+      let meta_fut = send_arg_capture_metadata(guard.deref_mut(), buff_count, buff_size);
 
-      let meta_fut = send_arg_capture_metadata(&cli.fd_prefix, buff_count, buff_size);
-
-      let mut test = cmd
+      let _ = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn from command: {e}"))?;
-      meta_fut.await?;
+      meta_fut?;
 
       lg.info("Listening!");
 
@@ -176,11 +188,6 @@ async fn main() -> Result<(), String> {
         &mut dumper,
       )?;
 
-      if test.try_wait().is_err() {
-        lg.warn("child did not exit, waiting 5s");
-        sleep(Duration::from_secs(5));
-      }
-
       lg.info("Shutting down tracing infrastructure...");
       deinit_tracing(tracing_infra)?;
     }
@@ -190,6 +197,7 @@ async fn main() -> Result<(), String> {
       mem_limit,
       command,
     } => {
+      let command = Arc::new(command);
       lg.info("Reading function selection");
       let selection = import_tracing_selection(&selection_file)?;
       lg.info("Masking");
@@ -198,23 +206,27 @@ async fn main() -> Result<(), String> {
       let modules = Arc::new(modules);
       lg.info("Setting up function packet reader");
 
-      let mut packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
+      let packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
         .map_err(|e| format!("Packet reader setup failed {e}"))?;
 
       lg.info("Setting up function packet server");
-      let mut svr = ZmqArgumentPacketServer::new(&zmq_packet_chnl_name(&cli.fd_prefix)).await?;
-      let end_flag = Arc::new(AtomicBool::new(false));
-
-      // TODO use this instead of svr
-      let svr2 = tokio::spawn(test_server_job(
+      let (end_tx, end_rx) = tokio::sync::oneshot::channel::<()>();
+      let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+      let results = Arc::new(Mutex::new(Vec::with_capacity(500)));
+      let svr = tokio::spawn(test_server_job(
         cli.fd_prefix.clone(),
         capture_dir,
         modules.clone(),
         mem_limit as usize,
-        end_flag.clone(),
+        end_rx,
+        ready_tx,
+        results.clone(),
       ));
 
-      let mut cmd = cmd_from_args(&command)?;
+      // wait for server to be ready
+      ready_rx.await.map_err(|e| e.to_string())?;
+
+      let mut futs = vec![];
 
       for module in modules.modules() {
         for function in modules.functions(*module).unwrap() {
@@ -250,37 +262,63 @@ async fn main() -> Result<(), String> {
             function.hex_string()
           ));
 
-          let meta_fut = send_test_metadata(
-            &cli.fd_prefix,
-            buff_count,
-            buff_size,
-            *module,
-            *function,
-            arg_count,
-            test_count,
-          );
+          let module = *module;
+          let function = *function;
+          let command = command.clone();
+          let metadata_svr = metadata_svr.clone();
+          let (buff_size, buff_count) = (buff_size, buff_count);
+          let test_job = tokio::spawn(async move {
+            {
+              let mut guard = metadata_svr.lock().unwrap();
+              send_test_metadata(
+                guard.deref_mut(),
+                buff_count,
+                buff_size,
+                module,
+                function,
+                arg_count,
+                test_count,
+              )?;
+            }
 
-          let mut test = cmd
-            .spawn()
-            .map_err(|e| format!("Failed to spawn from command: {e}"))?;
-          meta_fut.await?;
+            let mut test = cmd_from_args(&command)?
+              .spawn()
+              .map_err(|e| format!("Failed to spawn from command: {e}"))?;
 
-          while let Some(data) = packet_reader.read_next_packet(*module, *function)? {
-            lg.info(format!("Sending\n{} {:?}", &data.len(), data));
-            svr.process_msg(Some(data)).await?;
-          }
+            let _ = test.wait();
+            Ok::<(), String>(())
+          });
 
-          if test.try_wait().is_err() {
-            lg.warn("child did not exit, waiting 5s");
-            sleep(Duration::from_secs(5));
-          }
+          futs.push(test_job);
         }
       }
-      end_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-      svr2.await.map_err(|e| e.to_string())??;
+      lg.info("Waiting for jobs to finish...");
+      for fut in futs {
+        fut.await.map_err(|e| e.to_string())??;
+      }
+      lg.info("Waiting for server to exit...");
+      end_tx.send(()).map_err(|_| "failed to end server")?;
+      svr.await.map_err(|e| e.to_string())??;
+      lg.info("---------------------------------------------------------------");
+      let mut results = results.lock().unwrap();
+      lg.info(format!("Test results ({}): ", results.len()));
+      results.sort_by(|a, b| a.2.cmp(&b.2));
+      results.sort_by(|a, b| a.1.cmp(&b.1));
+      results.sort_by(|a, b| a.0.cmp(&b.0));
+      for result in results.iter() {
+        let s = format!(
+          "{} {} {} {:?}",
+          result.0.hex_string(),
+          result.1.hex_string(),
+          result.2,
+          result.3
+        );
+        lg.info(s);
+      }
+      lg.info("---------------------------------------------------------------");
     }
   }
-  
+
   lg.info("Exiting...");
   Ok(())
 }

@@ -7,11 +7,6 @@ extern "C" {
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#define SHM_OK 0
-#define SHM_FAIL_RET 1
-#define SHM_FAIL_NORET 2
-
-#include "shm_commons.h"
 
 #ifdef MANUAL_INIT_DEINIT
 
@@ -36,11 +31,8 @@ void register_argument(void);
 void set_fork_flag(void);
 
 bool consume_bytes_from_packet(size_t bytes, void *target);
-bool receive_packet(uint32_t mod, uint32_t fn);
-void init_packet_socket(int fd, uint32_t request_idx);
-
-bool report_test(uint32_t mod, uint32_t fn, uint32_t test_idx, int status,
-  int result);
+bool receive_packet(void);
+void init_packet_socket(int fd, uint64_t request_idx);
 
 #ifdef __cplusplus
 }

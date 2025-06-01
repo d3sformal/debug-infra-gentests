@@ -377,7 +377,7 @@ impl PacketProvider for PacketReader {
     if tests == 0 {
       return None;
     } else if index as u32 >= tests {
-      // tries to return the first packet 
+      // tries to return the first packet
       self.try_reset(m, f).ok()?;
     } else if self.get_upcoming_pkt_idx(m, f)? != index {
       self.try_reset(m, f).ok()?;

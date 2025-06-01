@@ -10,9 +10,9 @@
 
 #ifdef __cplusplus
 extern "C" {
-#endif
-static_assert(sizeof(int) == 4, "Expecting int to be 4 bytes");
 static_assert(sizeof(long long) == 8, "Expecting long long to be 8 bytes");
+static_assert(sizeof(int) == 4, "Expecting int to be 4 bytes");
+#endif
 
 #define GENFNDECLTEST(name, argt, argvar)                                      \
   void name(argt argvar, argt *target, uint32_t module, uint32_t fn)

@@ -1,28 +1,51 @@
-#include <stdint.h>
 
+#ifndef LLCAP_SHM_COMMONS
+#define LLCAP_SHM_COMMONS
+
+#ifdef __cplusplus
+static_assert(sizeof(unsigned int) == 4, "expected size of u32");
+static_assert(sizeof(unsigned short) == 2, "expected size of u16");
+#endif
 // idea: 3 phases: call tracing, arg capture, testing
 // call tracing only needs the first three parameters
 //
 
 typedef struct {
-  uint32_t buff_count;
-  uint32_t buff_len;
-  uint32_t total_len;
+  unsigned int buff_count;
+  unsigned int buff_len;
+  unsigned int total_len;
   // the above required for call tracing and argument capture
   // false if zero, indicates whether we are in capture mode or not
-  uint32_t mode; // required for argument capture and testing, 0 for call
+  unsigned int mode; // required for argument capture and testing, 0 for call
                  // tracing, 1 for capture, 2 for testing
   // the below is required for only the testing phase
   // identifier of function under test
-  uint32_t target_fnid;
-  uint32_t target_modid;
+  unsigned int target_fnid;
+  unsigned int target_modid;
   // false if zero, indicates whether we are inside a forked process - and
   // should prevent further forking when instrumented code (preamble) is reached
   // multiple times
-  uint32_t forked;
+  unsigned int forked;
   // number of arguments to read, should prevent argument hijacking when
   // instrumented code is reached multiple times (decrement & check if zero)
-  uint32_t arg_count;
+  unsigned int arg_count;
   // number of tests to be performed (number of forks to perform)
-  uint32_t test_count;
+  unsigned int test_count;
 } ShmMeta;
+
+
+const unsigned short TAG_START = 0;
+const unsigned short TAG_PKT = 1;
+const unsigned short TAG_TEST_END = 2;
+const unsigned short TAG_TEST_FINISH = 3;
+
+const unsigned short TAG_TIMEOUT = 15;
+const unsigned short TAG_EXIT = 16;
+const unsigned short TAG_SGNL = 17;
+const unsigned short TAG_FATAL = 18;
+
+const char* const META_SEM_DATA = "/llcap-meta-sem-data";
+const char* const META_SEM_ACK = "/llcap-meta-sem-ack";
+const char* const META_MEM_NAME = "/llcap-meta-shmem"; 
+
+#endif // LLCAP_SHM_COMMONS

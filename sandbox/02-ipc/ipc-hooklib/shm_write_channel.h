@@ -5,6 +5,10 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define SEMPERMS (S_IROTH | S_IWOTH | S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR)
 
 typedef struct {
@@ -39,4 +43,9 @@ int channel_start(WriteChannel *self);
 int channel_write(WriteChannel *self, const void *source, uint32_t len);
 
 int deinit_channel(WriteChannel *self);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif // LLCAP_SHM_WR_CHNL
