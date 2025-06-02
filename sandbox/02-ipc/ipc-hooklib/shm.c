@@ -60,7 +60,6 @@ static bool get_buffer_info(ShmMeta *target) {
 static int setup_infra(void) {
   int rv = 1;
 
-  printf("Obtaining buffer info\n");
   if (!get_buffer_info(&s_buff_info)) {
     printf("Could not obtain buffer info\n");
     return rv;
@@ -70,11 +69,13 @@ static int setup_infra(void) {
   info.buff_count = s_buff_info.buff_count;
   info.buff_len = s_buff_info.buff_len;
   info.total_len = s_buff_info.total_len;
+#ifdef DEBUG
   printf("Buffer info: cnt %u, len %u, tot %u, mod %u, fn %u, tests %u, args "
          "%u, mode %u\n",
          info.buff_count, info.buff_len, info.total_len,
          s_buff_info.target_modid, s_buff_info.target_fnid,
          s_buff_info.test_count, s_buff_info.arg_count, s_buff_info.mode);
+#endif // DEBUG
   if (info.buff_count * info.buff_len != info.total_len) {
     printf("sanity check failed - buffer sizes\n");
     return -1;

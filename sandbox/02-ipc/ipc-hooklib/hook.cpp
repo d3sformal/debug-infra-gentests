@@ -194,23 +194,18 @@ static bool try_wait_pid(pid_t pid, int32_t *status, EMsgEnd *result) {
       printf("Weird, PID does not match... %d, %d\n", pid, w);
     }
     if (WIFEXITED(*status)) {
-      printf("\tTEST exited, status=%d\n", WEXITSTATUS(*status));
       *status = WEXITSTATUS(*status);
       *result = MSG_END_STATUS;
     } else if (WIFSIGNALED(*status)) {
-      printf("\tTEST FAIL killed by signal %d\n", WTERMSIG(*status));
       *status = WTERMSIG(*status);
       *result = MSG_END_SIGNAL;
     } else if (WIFSTOPPED(*status)) {
-      printf("\tTEST FAIL stopped by signal %d\n", WSTOPSIG(*status));
       *status = WSTOPSIG(*status);
       *result = MSG_END_SIGNAL;
     } else if (WIFCONTINUED(*status)) {
-      printf("\tTEST FAIL continued\n");
       *status = 0;
       *result = MSG_END_SIGNAL;
     } else {
-      printf("Waitpid error... %d\n", *status);
       *result = MSG_END_SIGNAL;
     }
     return true;
