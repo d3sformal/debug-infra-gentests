@@ -15,7 +15,7 @@ use super::{
 
 #[derive(Debug)] // do not derive Clone or Copy!
 pub struct ShmemHandle<'a> {
-  mem: *mut c_void,
+  mem: *mut c_void, // declare !Send, !Sync as we expose this pointer in assoc. fn ptr()
   len: u32,
   _fd: i32,
   /// null-char-terminated string
@@ -41,7 +41,7 @@ impl ShmemHandle<'_> {
     self.len
   }
 
-  pub fn ptr(&self) -> *mut c_void {
+  pub fn ptr(&mut self) -> *mut c_void {
     self.mem
   }
 

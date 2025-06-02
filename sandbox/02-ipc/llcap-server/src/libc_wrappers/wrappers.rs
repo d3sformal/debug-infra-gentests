@@ -1,15 +1,23 @@
 use std::ffi::CStr;
 
-use libc::{__errno_location, S_IRWXG, S_IRWXO, S_IRWXU, mode_t};
+use libc::{__errno_location, S_IRWXU, mode_t};
 
 use crate::log::Log;
 
-// todo: change to user only
-pub const PERMS_PERMISSIVE: mode_t = S_IRWXO | S_IRWXG | S_IRWXU;
+pub const PERMS_PERMISSIVE: mode_t = S_IRWXU;
+
+const INVALID_ERRNO: &CStr = c"Errno invalid";
 
 pub fn get_errno_string() -> String {
-  // SAFETY: entire app single thread for now
-  let errno_str: &CStr = unsafe { CStr::from_ptr(libc::strerror(*__errno_location())) };
+  // SAFETY: errno location should be thread-local, null retval from libc::strerror is handled
+  let errno_str = unsafe {
+    let c_errno = libc::strerror(*__errno_location());
+    if c_errno.is_null() {
+      INVALID_ERRNO
+    } else {
+      CStr::from_ptr(c_errno)
+    }
+  };
   let s = match errno_str.to_str() {
     Err(e) => {
       Log::get("get_errno_string")

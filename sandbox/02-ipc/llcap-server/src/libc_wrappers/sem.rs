@@ -11,7 +11,7 @@ use super::wrappers::{PERMS_PERMISSIVE, get_errno_string, to_cstr};
 pub enum Semaphore {
   Open {
     // SAFETY INVARIANT: sem is a valid pointer to an initialized semaphore obtained via correspodnging syscalls
-    sem: *mut sem_t, // should mark !Send & !Sync
+    sem: *mut sem_t, // marks !Send & !Sync
     cname: String,
     marker: PhantomData<sem_t>,
   },

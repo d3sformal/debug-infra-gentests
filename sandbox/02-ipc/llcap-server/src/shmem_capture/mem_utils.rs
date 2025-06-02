@@ -27,12 +27,30 @@ pub fn overread_check(
   sz: usize,
   msg: &str,
 ) -> Result<(), String> {
-  if raw_buff.wrapping_byte_add(sz) > buff_end {
+  if ptr_add_nowrap(raw_buff, sz)? > buff_end {
     Err(format!(
       "Would over-read {msg}... ptr: {:?} offset: {} end: {:?}",
       raw_buff, sz, buff_end
     ))
   } else {
     Ok(())
+  }
+}
+
+pub fn ptr_add_nowrap(ptr: *const u8, sz: usize) -> Result<*const u8, String> {
+  let mb_wrapped = ptr.wrapping_add(sz);
+  if mb_wrapped < ptr {
+    Err(format!("Wraparound for ptr {:?} len {}", ptr, sz))
+  } else {
+    Ok(mb_wrapped)
+  }
+}
+
+pub fn ptr_add_nowrap_mut(ptr: *mut u8, sz: usize) -> Result<*mut u8, String> {
+  let mb_wrapped: *mut u8 = ptr.wrapping_add(sz);
+  if mb_wrapped < ptr {
+    Err(format!("Wraparound for mut ptr {:?} len {}", ptr, sz))
+  } else {
+    Ok(mb_wrapped)
   }
 }

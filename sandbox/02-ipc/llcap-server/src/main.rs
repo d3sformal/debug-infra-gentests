@@ -6,7 +6,6 @@ use std::{
 
 use args::Cli;
 use clap::Parser;
-use libc_wrappers::wrappers::to_cstr;
 use log::Log;
 
 use modmap::ExtModuleMap;
@@ -82,15 +81,13 @@ async fn main() -> Result<(), String> {
   let mut modules = obtain_module_map(&cli.modmap)?;
 
   let (buff_count, buff_size) = (cli.buff_count, cli.buff_size);
-  let mem_cstr = String::from_utf8(META_MEM_NAME.to_vec()).map_err(|e| e.to_string())?;
+  let mem_cstr = std::ffi::CStr::from_bytes_with_nul(META_MEM_NAME).map_err(|e| e.to_string())?;
   let sem_str =
     String::from_utf8(META_SEM_DATA.split_last().unwrap().1.to_vec()).map_err(|e| e.to_string())?;
   let ack_str =
     String::from_utf8(META_SEM_ACK.split_last().unwrap().1.to_vec()).map_err(|e| e.to_string())?;
   let metadata_svr = Arc::new(Mutex::new(MetadataPublisher::new(
-    unsafe { to_cstr(&mem_cstr) },
-    &sem_str,
-    &ack_str,
+    mem_cstr, &sem_str, &ack_str,
   )?));
 
   match cli.stage {

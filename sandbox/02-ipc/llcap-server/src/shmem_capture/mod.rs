@@ -13,6 +13,7 @@ use crate::libc_wrappers::shared_memory::ShmemHandle;
 use crate::libc_wrappers::wrappers::to_cstr;
 use crate::log::Log;
 use crate::modmap::{IntegralFnId, IntegralModId};
+use crate::shmem_capture::mem_utils::{ptr_add_nowrap, ptr_add_nowrap_mut};
 use libc::O_CREAT;
 /// a handle to all shared memory infrastructure necessary for function tracing
 pub struct TracingInfra<'a> {
@@ -246,8 +247,8 @@ fn post_free_buffer(infra: &mut TracingInfra, dbg_buff_idx: usize) -> Result<(),
 }
 
 // get the start of a buffer at an offset
-fn get_buffer_start(infra: &TracingInfra, buff_offset: usize) -> Result<*mut u8, String> {
-  let buffers = &infra.backing_buffer;
+fn get_buffer_start(infra: &mut TracingInfra, buff_offset: usize) -> Result<*mut u8, String> {
+  let buffers = &mut infra.backing_buffer;
   if buff_offset >= buffers.len() as usize {
     return Err(format!(
       "Calculated offset too large: {}, compared to the buffers len {}",
@@ -256,7 +257,7 @@ fn get_buffer_start(infra: &TracingInfra, buff_offset: usize) -> Result<*mut u8,
     ));
   }
   let mem = buffers.ptr();
-  let buff_ptr = mem.wrapping_byte_add(buff_offset) as *mut u8;
+  let buff_ptr = ptr_add_nowrap_mut(mem as *mut u8, buff_offset)?;
 
   if buff_ptr.is_null() || buff_ptr < mem as *mut u8 {
     return Err(format!(
@@ -271,6 +272,9 @@ fn get_buffer_start(infra: &TracingInfra, buff_offset: usize) -> Result<*mut u8,
 // Okay Left = ending (empty) message reached, no further processing needed
 // Okay Right = [start, end) buffer's data bounds
 fn buff_bounds_or_end(raw_buff: *const u8) -> Result<Either<(), (*const u8, *const u8)>, String> {
+  if raw_buff.is_null() {
+    return Err("Input is null".to_string());
+  }
   // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
   let valid_size: u32 = unsafe { read_w_alignment_chk(raw_buff) }?;
 
@@ -278,8 +282,12 @@ fn buff_bounds_or_end(raw_buff: *const u8) -> Result<Either<(), (*const u8, *con
     return Ok(Either::Left(()));
   }
 
-  let start = raw_buff.wrapping_byte_add(std::mem::size_of_val(&valid_size));
-  let buff_end = start.wrapping_byte_add(valid_size as usize);
+  let start = ptr_add_nowrap(raw_buff, std::mem::size_of_val(&valid_size))?;
+  let buff_end = ptr_add_nowrap(start, valid_size as usize)?;
+  if buff_end.is_null() {
+    return Err("Buffer end is null".to_string());
+  }
+  // validity of buff_end depends on the protocol
   Ok(Either::Right((start, buff_end)))
 }
 
@@ -313,7 +321,7 @@ impl<'a> MetadataPublisher<'a> {
   }
 }
 
-// safe because we do not give access to shared memory handle
+// SAFETY: we do not give access to shared memory handle
 // and semaphores to the outside, furthermore, no suspension points
 // are present in associated functions & named
 // semaphores should be sharable between threads

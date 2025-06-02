@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::{
   log::Log,
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId},
+  shmem_capture::mem_utils::ptr_add_nowrap,
   stages::call_tracing::{FunctionCallInfo, Message},
 };
 
@@ -70,7 +71,7 @@ fn update_from_buffer(
       return Err(format!("Unknown module ID: {}", *mod_id));
     }
 
-    const FUNN_ID_SIZE: usize = IntegralFnId::byte_size();
+    const FUNC_ID_SIZE: usize = IntegralFnId::byte_size();
     if raw_buff >= buff_end {
       if raw_buff > buff_end {
         lg.warn(format!(
@@ -82,7 +83,7 @@ fn update_from_buffer(
       state.mod_id_wip = Some(mod_id);
       return Ok(state);
     }
-    overread_check(raw_buff, buff_end, FUNN_ID_SIZE, "function ID")?;
+    overread_check(raw_buff, buff_end, FUNC_ID_SIZE, "function ID")?;
 
     // SAFETY: read_w_alignment_chk + similar to buff_bounds_or_end's requirements, raw_buff within bounds as checked above
     let fn_id: u32 = unsafe { read_w_alignment_chk(raw_buff) }?;
@@ -93,7 +94,7 @@ fn update_from_buffer(
       IntegralFnId(fn_id),
       mod_id,
     )));
-    raw_buff = raw_buff.wrapping_byte_add(FUNN_ID_SIZE);
+    raw_buff = ptr_add_nowrap(raw_buff, FUNC_ID_SIZE)?;
   }
   Ok(state)
 }
@@ -114,7 +115,7 @@ fn receive_module_id(
     // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
     // poitner validity ensured by protocol, target type is copied, no allocation over the same memory region
     let mod_id = IntegralModId(unsafe { read_w_alignment_chk(*raw_buff)? });
-    *raw_buff = raw_buff.wrapping_byte_add(MODID_SIZE);
+    *raw_buff = ptr_add_nowrap(*raw_buff, MODID_SIZE)?;
     mod_id
   })
 }
