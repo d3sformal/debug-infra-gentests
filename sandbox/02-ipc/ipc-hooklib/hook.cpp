@@ -313,7 +313,7 @@ static void perform_testing(uint32_t module_id, uint32_t function_id) {
     exit(2388);
   }
   set_fork_flag();
-  printf("TEST %u %u\n", module_id, function_id);
+
   for (uint32_t test_idx = 0; test_idx < test_count(); ++test_idx) {
     int sockets[2];
 
