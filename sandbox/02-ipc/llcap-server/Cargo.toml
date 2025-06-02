@@ -8,8 +8,7 @@ bytes = "1.10.1"
 clap = { version = "4.5.37", features = ["derive"] }
 libc = "0.2.172"
 num-traits = "0.2.19"
-tokio = "1.45.1"
-zeromq = "0.4.1"
+tokio = { version = "1.45.1", features = ["full"] }
 
 [build-dependencies]
 bindgen = "0.71.1"
