@@ -311,8 +311,9 @@ async fn main() -> Result<(), String> {
         fut.await.map_err(|e| e.to_string())??;
       }
       lg.info("Waiting for server to exit...");
-      end_tx.send(()).map_err(|_| "failed to end server")?;
-      svr.await.map_err(|e| e.to_string())??;
+      let defer_res_end_svr = end_tx.send(()).map_err(|_| "failed to end server");
+      let defer_res_joins = svr.await.map_err(|e| e.to_string());
+
       lg.info("---------------------------------------------------------------");
       let mut results = results.lock().unwrap();
       lg.info(format!("Test results ({}): ", results.len()));
@@ -330,6 +331,12 @@ async fn main() -> Result<(), String> {
         lg.info(s);
       }
       lg.info("---------------------------------------------------------------");
+      lg.trace("Cleaning up");
+      let metadata_svr = Arc::try_unwrap(metadata_svr)
+        .map_err(|_| ("Failed to unwrap from arc... this is not expected".to_string()))?;
+      metadata_svr.into_inner().unwrap().deinit()?;
+      defer_res_end_svr?;
+      defer_res_joins??;
     }
   }
 

@@ -324,6 +324,13 @@ impl<'a> MetadataPublisher<'a> {
 
     self.data_rdy_sem.try_post()
   }
+
+  pub fn deinit(self) -> Result<(), String> {
+    self.shm.try_unmap()?;
+    self.data_ack_sem.try_destroy().map_err(|e| e.1)?;
+    self.data_rdy_sem.try_destroy().map_err(|e| e.1)?;
+    Ok(())
+  }
 }
 
 // SAFETY: we do not give access to shared memory handle
