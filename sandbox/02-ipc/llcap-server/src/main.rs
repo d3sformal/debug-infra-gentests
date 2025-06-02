@@ -265,43 +265,17 @@ async fn main() -> Result<(), String> {
             function.hex_string()
           ));
 
-          let module = *module;
-          let function = *function;
-          let command = command.clone();
-          let metadata_svr = metadata_svr.clone();
-          let (buff_size, buff_count) = (buff_size, buff_count);
-          let output_gen = output_gen.clone();
-          let test_job = tokio::spawn(async move {
-            {
-              let mut guard = metadata_svr.lock().unwrap();
-              send_test_metadata(
-                guard.deref_mut(),
-                buff_count,
-                buff_size,
-                module,
-                function,
-                arg_count,
-                test_count,
-              )?;
-            }
-            let mut cmd = cmd_from_args(&command)?;
-            if let Some(output_gen) = output_gen.as_ref() {
-              let out_path = output_gen.get_out_path(module, function);
-              let err_path = output_gen.get_err_path(module, function);
-              cmd.stdout(Stdio::from(
-                File::create(out_path).map_err(|e| format!("Stdout file creation failed: {e}"))?,
-              ));
-              cmd.stderr(Stdio::from(
-                File::create(err_path).map_err(|e| format!("Stderr file creation failed: {e}"))?,
-              ));
-            }
-            let mut test = cmd
-              .spawn()
-              .map_err(|e| format!("Failed to spawn from command: {e}"))?;
-
-            let _ = test.wait();
-            Ok::<(), String>(())
-          });
+          let test_job = tokio::spawn(test_job(
+            metadata_svr.clone(),
+            buff_count,
+            buff_size,
+            *module,
+            *function,
+            arg_count,
+            test_count,
+            command.clone(),
+            output_gen.clone(),
+          ));
 
           futs.push(test_job);
         }
@@ -342,6 +316,48 @@ async fn main() -> Result<(), String> {
 
   lg.info("Exiting...");
   Ok(())
+}
+
+async fn test_job(
+  metadata_svr: Arc<Mutex<MetadataPublisher<'_>>>,
+  buff_count: u32,
+  buff_size: u32,
+  m: IntegralModId,
+  f: IntegralFnId,
+  arg_count: u32,
+  test_count: u32,
+  command: Arc<Vec<String>>,
+  output_gen: Arc<Option<TestOutputPathGen>>,
+) -> Result<(), String> {
+  {
+    let mut guard = metadata_svr.lock().unwrap();
+    send_test_metadata(
+      guard.deref_mut(),
+      buff_count,
+      buff_size,
+      m,
+      f,
+      arg_count,
+      test_count,
+    )?;
+  }
+  let mut cmd = cmd_from_args(&command)?;
+  if let Some(output_gen) = output_gen.as_ref() {
+    let out_path = output_gen.get_out_path(m, f);
+    let err_path = output_gen.get_err_path(m, f);
+    cmd.stdout(Stdio::from(
+      File::create(out_path).map_err(|e| format!("Stdout file creation failed: {e}"))?,
+    ));
+    cmd.stderr(Stdio::from(
+      File::create(err_path).map_err(|e| format!("Stderr file creation failed: {e}"))?,
+    ));
+  }
+  let mut test = cmd
+    .spawn()
+    .map_err(|e| format!("Failed to spawn from command: {e}"))?;
+
+  let _ = test.wait();
+  Ok::<(), String>(())
 }
 
 struct TestOutputPathGen {
