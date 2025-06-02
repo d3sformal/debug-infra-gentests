@@ -14,6 +14,7 @@ use crate::libc_wrappers::wrappers::to_cstr;
 use crate::log::Log;
 use crate::modmap::{IntegralFnId, IntegralModId};
 use crate::shmem_capture::mem_utils::{ptr_add_nowrap, ptr_add_nowrap_mut};
+use crate::stages::testing::test_server_socket;
 use libc::O_CREAT;
 /// a handle to all shared memory infrastructure necessary for function tracing
 pub struct TracingInfra<'a> {
@@ -57,6 +58,10 @@ pub fn cleanup(prefix: &str) -> Result<(), String> {
       lg.info(format!("Cleanup error: {:?}: {e}", name));
     }
   }
+  let svr_sock_name = test_server_socket(prefix);
+  lg.info(format!("Cleanup {:?}", svr_sock_name));
+  let _ = std::fs::remove_file(svr_sock_name.clone())
+    .inspect_err(|e| lg.info(format!("Cleanup error: {}: {}", svr_sock_name, e)));
   Ok(())
 }
 

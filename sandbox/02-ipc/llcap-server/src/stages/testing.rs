@@ -1,4 +1,6 @@
 use std::{
+  fs::{self},
+  mem,
   path::PathBuf,
   sync::{Arc, Mutex},
   time::Duration,
@@ -38,7 +40,7 @@ pub async fn test_server_job(
   let lg = Log::get("test_server_job");
   let path = test_server_socket(&prefix);
   lg.info(format!("Starting at {path}"));
-  let listener = UnixListener::bind(path).map_err(|e| e.to_string())?;
+  let listener = UnixListener::bind(path.clone()).map_err(|e| e.to_string())?;
   ready_tx.send(()).map_err(|_| "Receiver dropped")?;
   lg.info("Listening");
 
@@ -66,6 +68,8 @@ pub async fn test_server_job(
     lg.trace("Finishing handle");
     handle.await.map_err(|e| e.to_string())?;
   }
+  mem::drop(listener);
+  fs::remove_file(path).map_err(|e| e.to_string())?;
   Ok(())
 }
 
