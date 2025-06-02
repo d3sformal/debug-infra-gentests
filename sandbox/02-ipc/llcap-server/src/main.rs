@@ -1,6 +1,8 @@
 use std::{
+  fs::File,
   ops::DerefMut,
-  process::Command,
+  path::PathBuf,
+  process::{Command, Stdio},
   sync::{Arc, Mutex},
 };
 
@@ -33,6 +35,8 @@ use stages::{
   },
   testing::test_server_job,
 };
+
+use crate::modmap::{IntegralFnId, IntegralModId};
 
 fn obtain_module_map(path: &std::path::PathBuf) -> Result<ExtModuleMap, String> {
   let lg = Log::get("obtain_module_map");
@@ -192,6 +196,7 @@ async fn main() -> Result<(), String> {
       selection_file,
       capture_dir,
       mem_limit,
+      test_output,
       command,
     } => {
       let command = Arc::new(command);
@@ -219,6 +224,7 @@ async fn main() -> Result<(), String> {
         ready_tx,
         results.clone(),
       ));
+      let output_gen = Arc::new(TestOutputPathGen::new(test_output));
 
       // wait for server to be ready
       ready_rx.await.map_err(|e| e.to_string())?;
@@ -264,6 +270,7 @@ async fn main() -> Result<(), String> {
           let command = command.clone();
           let metadata_svr = metadata_svr.clone();
           let (buff_size, buff_count) = (buff_size, buff_count);
+          let output_gen = output_gen.clone();
           let test_job = tokio::spawn(async move {
             {
               let mut guard = metadata_svr.lock().unwrap();
@@ -277,8 +284,18 @@ async fn main() -> Result<(), String> {
                 test_count,
               )?;
             }
-
-            let mut test = cmd_from_args(&command)?
+            let mut cmd = cmd_from_args(&command)?;
+            if let Some(output_gen) = output_gen.as_ref() {
+              let out_path = output_gen.get_out_path(module, function);
+              let err_path = output_gen.get_err_path(module, function);
+              cmd.stdout(Stdio::from(
+                File::create(out_path).map_err(|e| format!("Stdout file creation failed: {e}"))?,
+              ));
+              cmd.stderr(Stdio::from(
+                File::create(err_path).map_err(|e| format!("Stderr file creation failed: {e}"))?,
+              ));
+            }
+            let mut test = cmd
               .spawn()
               .map_err(|e| format!("Failed to spawn from command: {e}"))?;
 
@@ -318,4 +335,39 @@ async fn main() -> Result<(), String> {
 
   lg.info("Exiting...");
   Ok(())
+}
+
+struct TestOutputPathGen {
+  dir: bool,
+  base: PathBuf,
+}
+
+impl TestOutputPathGen {
+  pub fn new(base: Option<PathBuf>) -> Option<Self> {
+    if let Some(base) = base {
+      Self {
+        dir: base.clone().is_dir(),
+        base,
+      }
+      .into()
+    } else {
+      None
+    }
+  }
+
+  pub fn get_out_path(&self, m: IntegralModId, f: IntegralFnId) -> PathBuf {
+    self.get_path(format!("M{}-F{}.out", m.hex_string(), f.hex_string()))
+  }
+
+  pub fn get_err_path(&self, m: IntegralModId, f: IntegralFnId) -> PathBuf {
+    self.get_path(format!("M{}-F{}.err", m.hex_string(), f.hex_string()))
+  }
+
+  fn get_path(&self, dir_append_variant: String) -> PathBuf {
+    if self.dir {
+      self.base.join(dir_append_variant)
+    } else {
+      self.base.clone()
+    }
+  }
 }
