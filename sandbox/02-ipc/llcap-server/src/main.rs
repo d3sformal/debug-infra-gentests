@@ -3,7 +3,8 @@ use std::{
   ops::DerefMut,
   path::PathBuf,
   process::{Command, Stdio},
-  sync::{Arc, Mutex}, time::Duration,
+  sync::{Arc, Mutex},
+  time::Duration,
 };
 
 use anyhow::{Result, anyhow, bail, ensure};
@@ -357,17 +358,17 @@ async fn test_job(
       .map_err(|e| anyhow!(e).context("spawn from command"))?;
 
     let _ = test.wait();
-  // TODO decide:
-  // fully parallel test execution VS costs of seeking/re-reading packet capture files
-  // when two non-subsequent packets are requested
-  // for parallel impl, uncomment the below and the 1st line in this fn 
-  //    tests.push(test);
+    // TODO decide:
+    // fully parallel test execution VS costs of seeking/re-reading packet capture files
+    // when two non-subsequent packets are requested
+    // for parallel impl, uncomment the below and the 1st line in this fn
+    //    tests.push(test);
   }
   // while !tests.iter_mut().all(|t| t.try_wait().is_ok()) {
   //   sleep(Duration::from_millis(300)).await;
   // }
   // additional sleep here to ensure that server processes all the incoming "test end" messages
-  // before we "kill" it 
+  // before we "kill" it
   sleep(Duration::from_millis(300)).await;
   Ok(())
 }
