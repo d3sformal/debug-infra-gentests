@@ -24,9 +24,9 @@ use shmem_capture::{
   MetadataPublisher,
   arg_capture::perform_arg_capture,
   call_tracing::msg_handler,
-  cleanup, deinit_tracing,
+  cleanup,
   hooklib_commons::{META_MEM_NAME, META_SEM_ACK, META_SEM_DATA},
-  init_tracing, send_arg_capture_metadata, send_call_tracing_metadata, send_test_metadata,
+  send_arg_capture_metadata, send_call_tracing_metadata, send_test_metadata,
 };
 use stages::{
   arg_capture::{ArgPacketDumper, PacketReader},
@@ -37,7 +37,10 @@ use stages::{
   testing::test_server_job,
 };
 
-use crate::modmap::{IntegralFnId, IntegralModId};
+use crate::{
+  modmap::{IntegralFnId, IntegralModId},
+  shmem_capture::TracingInfra,
+};
 
 fn obtain_module_map(path: &std::path::PathBuf) -> Result<ExtModuleMap> {
   let lg = Log::get("obtain_module_map");
@@ -101,7 +104,8 @@ async fn main() -> Result<()> {
         result
       } else {
         lg.info("Initializing tracing infrastructure");
-        let mut tracing_infra = init_tracing(&cli.fd_prefix, buff_count, buff_size).await?;
+        let mut tracing_infra =
+          TracingInfra::try_new(&cli.fd_prefix, buff_count, buff_size).await?;
 
         let mut guard = metadata_svr.lock().unwrap();
         send_call_tracing_metadata(guard.deref_mut(), buff_count, buff_size)?;
@@ -121,7 +125,7 @@ async fn main() -> Result<()> {
           }
         };
         lg.info("Shutting down call tracing infrastructure...");
-        deinit_tracing(tracing_infra)?;
+        tracing_infra.deinit()?;
 
         pairs?
       };
@@ -158,7 +162,7 @@ async fn main() -> Result<()> {
       let mut dumper = ArgPacketDumper::new(&out_dir, &modules, mem_limit as usize)?;
 
       lg.info("Initializing tracing infrastructure");
-      let mut tracing_infra = init_tracing(&cli.fd_prefix, buff_count, buff_size).await?;
+      let mut tracing_infra = TracingInfra::try_new(&cli.fd_prefix, buff_count, buff_size).await?;
 
       let mut cmd = cmd_from_args(&command)?;
       let mut guard = metadata_svr.lock().unwrap();
@@ -180,7 +184,7 @@ async fn main() -> Result<()> {
       )?;
 
       lg.info("Shutting down tracing infrastructure...");
-      deinit_tracing(tracing_infra)?;
+      tracing_infra.deinit()?;
     }
     args::Stage::Test {
       selection_file,

@@ -10,9 +10,8 @@ use crate::{
 use anyhow::{Result, bail, ensure};
 
 use super::{
-  Either, TracingInfra, buff_bounds_or_end, get_buffer_start,
+  Either, TracingInfra, buff_bounds_or_end,
   mem_utils::{overread_check, read_w_alignment_chk},
-  post_free_buffer, wait_for_free_buffer,
 };
 
 pub struct CallTraceMessageState {
@@ -154,11 +153,11 @@ pub fn msg_handler(
   let mut state = CallTraceMessageState::new(None, vec![]);
   let mut recorded_frequencies = HashMap::new();
   loop {
-    wait_for_free_buffer(infra)?;
+    infra.wait_for_free_buffer()?;
 
     lg.trace(format!("Received buffer {}", buff_idx));
     let buff_offset = buff_idx * buff_size;
-    let buff_ptr = get_buffer_start(infra, buff_offset)?;
+    let buff_ptr = infra.get_buffer_start(buff_offset)?;
     let mut st: CallTraceMessageState =
       update_from_buffer(buff_ptr as *const u8, buff_size, modules, state)?;
 
@@ -168,7 +167,7 @@ pub fn msg_handler(
     unsafe {
       (buff_ptr as *mut u32).write(0);
     }
-    post_free_buffer(infra, buff_idx)?;
+    infra.post_free_buffer(buff_idx)?;
 
     let messages = st.extract_messages();
     state = st; // copy st into state (discards st and makes state ready for another iteration)

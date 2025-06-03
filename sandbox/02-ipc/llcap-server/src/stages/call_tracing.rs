@@ -1,10 +1,10 @@
+use anyhow::{Result, anyhow, bail, ensure};
 use std::{
   collections::HashSet,
   fs::File,
   io::{self, BufRead, BufReader, Write},
   path::{Path, PathBuf},
 };
-use anyhow::{Result, anyhow, bail, ensure};
 
 use crate::{
   constants::Constants,

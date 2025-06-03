@@ -12,10 +12,7 @@ use crate::{
 };
 use anyhow::{Result, ensure};
 
-use super::{
-  Either, TracingInfra, buff_bounds_or_end, get_buffer_start, mem_utils::read_w_alignment_chk,
-  post_free_buffer, wait_for_free_buffer,
-};
+use super::{Either, TracingInfra, buff_bounds_or_end, mem_utils::read_w_alignment_chk};
 
 struct SizeTypeReaders {
   fixed: [Box<dyn SizeTypeReader>; 17],
@@ -416,11 +413,11 @@ pub fn perform_arg_capture(
   let mut state = ArgCaptureState::default();
   let mut results = vec![];
   loop {
-    wait_for_free_buffer(infra)?;
+    infra.wait_for_free_buffer()?;
 
     lg.trace(format!("Received buffer {}", buff_idx));
     let buff_offset = buff_idx * buff_size;
-    let buff_ptr = get_buffer_start(infra, buff_offset)?;
+    let buff_ptr = infra.get_buffer_start(buff_offset)?;
     let st: ArgCaptureState = update_from_buffer(
       buff_ptr as *const u8,
       buff_size,
@@ -435,7 +432,7 @@ pub fn perform_arg_capture(
     unsafe {
       (buff_ptr as *mut u32).write(0);
     }
-    post_free_buffer(infra, buff_idx)?;
+    infra.post_free_buffer(buff_idx)?;
 
     let (mut msgs, new_state) = st.extract_massages();
     state = new_state;

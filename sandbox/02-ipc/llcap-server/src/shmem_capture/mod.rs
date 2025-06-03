@@ -23,6 +23,74 @@ pub struct TracingInfra<'a> {
   pub backing_buffer: ShmemHandle<'a>,
 }
 
+impl<'a> TracingInfra<'a> {
+  pub fn wait_for_free_buffer(&mut self) -> Result<()> {
+    let sem_res = self.sem_full.try_wait();
+    sem_res.map_err(|e| e.context("wait_for_free_buffer"))
+  }
+
+  pub fn post_free_buffer(&mut self, dbg_buff_idx: usize) -> Result<()> {
+    let sem_res = self.sem_free.try_post();
+    sem_res.map_err(|e| e.context(format!("While posting a free buffer (idx {dbg_buff_idx}")))
+  }
+
+  pub fn deinit(self) -> Result<()> {
+    let (semfree, semfull, buffers_shm) = (self.sem_free, self.sem_full, self.backing_buffer);
+    let shm_uninit = deinit_shmem(buffers_shm);
+    let sem_uninit = deinit_semaphores(semfree, semfull);
+
+    let goodbye_errors = [shm_uninit, sem_uninit]
+      .iter()
+      .fold("".to_string(), |acc, v| {
+        if let Err(e) = v {
+          acc + &e.to_string()
+        } else {
+          acc
+        }
+      });
+    ensure!(
+      goodbye_errors.is_empty(),
+      "Deinit failures: {}",
+      goodbye_errors
+    );
+    Ok(())
+  }
+
+  pub async fn try_new(resource_prefix: &'a str, buff_count: u32, buff_len: u32) -> Result<Self> {
+    let lg = Log::get("init_tracing");
+    let (sem_free, sem_full) = init_semaphores(resource_prefix, buff_count)?;
+    lg.info("Initializing shmem");
+
+    let backing_buffer = init_shmem(resource_prefix, buff_count, buff_len)?;
+
+    Ok(Self {
+      sem_free,
+      sem_full,
+      backing_buffer,
+    })
+  }
+
+  // get the start of a buffer at an offset
+  pub fn get_buffer_start(&mut self, buff_offset: usize) -> Result<*mut u8> {
+    let buffers = &mut self.backing_buffer;
+    ensure!(
+      buff_offset < buffers.len() as usize,
+      "Calculated offset too large: {}, compared to the buffers len {}",
+      buff_offset,
+      buffers.len()
+    );
+    let base_mem = buffers.ptr();
+    let buff_ptr = ptr_add_nowrap_mut(base_mem as *mut u8, buff_offset)?;
+    ensure!(
+      !buff_ptr.is_null() && buff_ptr >= base_mem as *mut u8,
+      "Buffer pointer is invalid: {:?}, mem: {:?}",
+      buff_ptr,
+      buffers
+    );
+    Ok(buff_ptr)
+  }
+}
+
 enum Either<T, S> {
   Left(T),
   Right(S),
@@ -116,24 +184,6 @@ fn deinit_shmem(buffers_mem: ShmemHandle) -> Result<()> {
     .map_err(|e| e.context("deinit_shmem"))
 }
 
-pub async fn init_tracing(
-  resource_prefix: &str,
-  buff_count: u32,
-  buff_len: u32,
-) -> Result<TracingInfra> {
-  let lg = Log::get("init_tracing");
-  let (sem_free, sem_full) = init_semaphores(resource_prefix, buff_count)?;
-  lg.info("Initializing shmem");
-
-  let backing_buffer = init_shmem(resource_prefix, buff_count, buff_len)?;
-
-  Ok(TracingInfra {
-    sem_free,
-    sem_full,
-    backing_buffer,
-  })
-}
-
 pub fn send_call_tracing_metadata(
   chnl: &mut MetadataPublisher<'_>,
   buff_count: u32,
@@ -204,58 +254,6 @@ pub fn send_test_metadata(
 fn send_metadata(chnl: &mut MetadataPublisher<'_>, target_descriptor: ShmMeta) -> Result<()> {
   Log::get("init_tracing").info("Waiting for a cooperating program");
   chnl.publish(target_descriptor)
-}
-
-pub fn deinit_tracing(infra: TracingInfra) -> Result<()> {
-  let (semfree, semfull, buffers_shm) = (infra.sem_free, infra.sem_full, infra.backing_buffer);
-  let shm_uninit = deinit_shmem(buffers_shm);
-  let sem_uninit = deinit_semaphores(semfree, semfull);
-
-  let goodbye_errors = [shm_uninit, sem_uninit]
-    .iter()
-    .fold("".to_string(), |acc, v| {
-      if let Err(e) = v {
-        acc + &e.to_string()
-      } else {
-        acc
-      }
-    });
-  ensure!(
-    goodbye_errors.is_empty(),
-    "Deinit failures: {}",
-    goodbye_errors
-  );
-  Ok(())
-}
-
-fn wait_for_free_buffer(infra: &mut TracingInfra) -> Result<()> {
-  let sem_res = infra.sem_full.try_wait();
-  sem_res.map_err(|e| e.context("wait_for_free_buffer"))
-}
-
-fn post_free_buffer(infra: &mut TracingInfra, dbg_buff_idx: usize) -> Result<()> {
-  let sem_res = infra.sem_free.try_post();
-  sem_res.map_err(|e| e.context(format!("While posting a free buffer (idx {dbg_buff_idx}")))
-}
-
-// get the start of a buffer at an offset
-fn get_buffer_start(infra: &mut TracingInfra, buff_offset: usize) -> Result<*mut u8> {
-  let buffers = &mut infra.backing_buffer;
-  ensure!(
-    buff_offset < buffers.len() as usize,
-    "Calculated offset too large: {}, compared to the buffers len {}",
-    buff_offset,
-    buffers.len()
-  );
-  let base_mem = buffers.ptr();
-  let buff_ptr = ptr_add_nowrap_mut(base_mem as *mut u8, buff_offset)?;
-  ensure!(
-    !buff_ptr.is_null() && buff_ptr >= base_mem as *mut u8,
-    "Buffer pointer is invalid: {:?}, mem: {:?}",
-    buff_ptr,
-    buffers
-  );
-  Ok(buff_ptr)
 }
 
 // raw_buff arg: poitner validity must be ensured by protocol, target type is copied, no allocation over the same memory region
