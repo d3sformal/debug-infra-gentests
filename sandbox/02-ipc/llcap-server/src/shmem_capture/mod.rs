@@ -56,10 +56,36 @@ impl<'a> TracingInfra<'a> {
     Ok(())
   }
 
+  fn init_semaphores(prefix: &str, n_buffs: u32) -> Result<(Semaphore, Semaphore)> {
+    let FreeFullSemNames {
+      free: free_name,
+      full: full_name,
+    } = FreeFullSemNames::get(prefix, "capture", "base");
+
+    let free_sem = Semaphore::try_open_exclusive(&free_name, n_buffs)?;
+    let full_sem = Semaphore::try_open_exclusive(&full_name, 0);
+
+    if let Err(e) = full_sem {
+      match deinit_semaphore_single(free_sem) {
+        Ok(()) => Err(anyhow!(e)),
+        Err(e2) => Err(anyhow!(
+          "Failed cleanup after FULL semaphore init failure: {e2}, init failure: {e}"
+        )),
+      }
+    } else {
+      Ok((free_sem, full_sem.unwrap()))
+    }
+  }
+
   pub async fn try_new(resource_prefix: &'a str, buff_count: u32, buff_len: u32) -> Result<Self> {
     let lg = Log::get("init_tracing");
-    let (sem_free, sem_full) = init_semaphores(resource_prefix, buff_count)?;
+    let (sem_free, sem_full) = Self::init_semaphores(resource_prefix, buff_count)?;
     lg.info("Initializing shmem");
+    lg.warn(format!(
+      "Cleanup arguments for finalizer: {} {}",
+      sem_full.cname().trim_end_matches('\x00'),
+      buff_count
+    ));
 
     let backing_buffer = init_shmem(resource_prefix, buff_count, buff_len)?;
 
@@ -131,27 +157,6 @@ pub fn cleanup(prefix: &str) -> Result<()> {
   let _ = std::fs::remove_file(svr_sock_name.clone())
     .inspect_err(|e| lg.info(format!("Cleanup error: {}: {}", svr_sock_name, e)));
   Ok(())
-}
-
-fn init_semaphores(prefix: &str, n_buffs: u32) -> Result<(Semaphore, Semaphore)> {
-  let FreeFullSemNames {
-    free: free_name,
-    full: full_name,
-  } = FreeFullSemNames::get(prefix, "capture", "base");
-
-  let free_sem = Semaphore::try_open_exclusive(&free_name, n_buffs)?;
-  let full_sem = Semaphore::try_open_exclusive(&full_name, 0);
-
-  if let Err(e) = full_sem {
-    match deinit_semaphore_single(free_sem) {
-      Ok(()) => Err(anyhow!(e)),
-      Err(e2) => Err(anyhow!(
-        "Failed cleanup after FULL semaphore init failure: {e2}, init failure: {e}"
-      )),
-    }
-  } else {
-    Ok((free_sem, full_sem.unwrap()))
-  }
 }
 
 fn deinit_semaphore_single(sem: Semaphore) -> Result<()> {

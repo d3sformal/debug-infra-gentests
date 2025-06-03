@@ -179,20 +179,23 @@ static bool move_to_next_buff(WriteChannel *self) {
   return update_buffer_idx(self);
 }
 
-// terminates the protocol on a channel
-static bool termination_sequence(WriteChannel *self) {
+int termination_sequence_raw(sem_t* sem_full, uint32_t buffer_count) {
   // we'll post to the "full" semaphore exactly 2 * N times (N = number of
   // buffers) this is in order to guarantee N consecutive "empty" buffers being
   // sent the above relies on the fact that the other side of the communication
   // sets the payload length (inside a buffer) to zero before "pushing it back"
-  for (uint32_t i = 0; i < 2 * self->info.buff_count; ++i) {
-    if (sem_post(self->sem_full) != 0) {
-      printf("Failed posting a full buffer in termination sequence! %s\n",
-             strerror(errno));
-      return false;
+  for (uint32_t i = 0; i < 2 * buffer_count; ++i) {
+    if (sem_post(sem_full) != 0) {
+      perror("Failed posting a full buffer in termination sequence");
+      return -1;
     }
   }
-  return true;
+  return 0;
+}
+
+// terminates the protocol on a channel
+static bool termination_sequence(WriteChannel *self) {
+  return termination_sequence_raw(self->sem_full, self->info.buff_count) == 0;
 }
 
 static void *get_buffer(WriteChannel *self, size_t idx) {

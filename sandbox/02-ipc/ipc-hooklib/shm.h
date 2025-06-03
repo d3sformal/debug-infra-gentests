@@ -12,7 +12,7 @@ extern "C" {
 
 int init(void);
 void deinit(void);
-int init_finalize_after_crash(void);
+int init_finalize_after_crash(const char* full_semaphore, uint32_t buff_count);
 
 #else
 int init(void) __attribute__((constructor));

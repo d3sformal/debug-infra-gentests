@@ -44,6 +44,8 @@ int channel_write(WriteChannel *self, const void *source, uint32_t len);
 
 int deinit_channel(WriteChannel *self);
 
+int termination_sequence_raw(sem_t* sem_full, uint32_t buffer_count);
+
 #ifdef __cplusplus
 }
 #endif

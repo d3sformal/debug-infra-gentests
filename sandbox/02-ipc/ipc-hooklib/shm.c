@@ -3,6 +3,7 @@
 #include "shm_oneshot_rx.h"
 #include "shm_write_channel.h"
 #include <assert.h>
+#include <stdint.h>
 #include <fcntl.h>
 #include <semaphore.h>
 #include <stdbool.h>
@@ -122,19 +123,19 @@ void deinit(void) {
 // if there is non-zero -> buffer was used and not flushed (due to a crash)
 //  -> we signal 2 times on the semaphore, once for the outgoing data and once
 //  for the terminating message
-int after_crash_recovery(void) { return deinit_channel(&s_channel); }
-
-int init_finalize_after_crash(void) {
-  int rv = 1;
-
-  // TODO: fix - does not work with current metadata passing
-  if (setup_infra() != 0) {
-    return rv;
+int init_finalize_after_crash(const char* name_full_sem, uint32_t buff_count) {
+  sem_t* sem_full =
+      sem_open(name_full_sem, O_CREAT, SEMPERMS, 0);
+  if (sem_full == SEM_FAILED) {
+    printf("Failed to initialize FULL semaphore %s\n",
+           name_full_sem);
+    perror("");
+    return 1;
   }
   // notice no channel_start - we don't want to gain a free buffer at start - we
   // are trying to flush an already dirty buffer left over by the crashed
   // process
-  return after_crash_recovery();
+  return termination_sequence_raw(sem_full, buff_count);
 }
 
 bool in_testing_mode(void) { return s_buff_info.mode == 2; }

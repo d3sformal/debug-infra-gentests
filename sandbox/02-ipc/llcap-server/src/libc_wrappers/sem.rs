@@ -97,7 +97,7 @@ impl Semaphore {
     }
   }
 
-  fn cname(&self) -> &String {
+  pub fn cname(&self) -> &String {
     match self {
       Semaphore::Open {
         sem: _,
