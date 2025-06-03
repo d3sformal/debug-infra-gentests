@@ -3,7 +3,7 @@ use std::{
   ops::DerefMut,
   path::PathBuf,
   process::{Command, Stdio},
-  sync::{Arc, Mutex},
+  sync::{Arc, Mutex}, time::Duration,
 };
 
 use anyhow::{Result, anyhow, bail, ensure};
@@ -36,6 +36,7 @@ use stages::{
   },
   testing::test_server_job,
 };
+use tokio::time::sleep;
 
 use crate::{
   modmap::{IntegralFnId, IntegralModId},
@@ -325,6 +326,7 @@ async fn test_job(
   command: Arc<Vec<String>>,
   output_gen: Arc<Option<TestOutputPathGen>>,
 ) -> Result<()> {
+  // let mut tests = vec![];
   for call_idx in 0..test_count {
     {
       let mut guard = metadata_svr.lock().unwrap();
@@ -336,7 +338,7 @@ async fn test_job(
         f,
         arg_count,
         test_count,
-        call_idx + 1,
+        call_idx + 2,
       )?;
     }
     let mut cmd = cmd_from_args(&command)?;
@@ -355,7 +357,18 @@ async fn test_job(
       .map_err(|e| anyhow!(e).context("spawn from command"))?;
 
     let _ = test.wait();
+  // TODO decide:
+  // fully parallel test execution VS costs of seeking/re-reading packet capture files
+  // when two non-subsequent packets are requested
+  // for parallel impl, uncomment the below and the 1st line in this fn 
+  //    tests.push(test);
   }
+  // while !tests.iter_mut().all(|t| t.try_wait().is_ok()) {
+  //   sleep(Duration::from_millis(300)).await;
+  // }
+  // additional sleep here to ensure that server processes all the incoming "test end" messages
+  // before we "kill" it 
+  sleep(Duration::from_millis(300)).await;
   Ok(())
 }
 
