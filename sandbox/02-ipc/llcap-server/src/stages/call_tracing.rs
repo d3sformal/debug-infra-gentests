@@ -135,7 +135,11 @@ pub fn export_tracing_selection(selection: &[LLVMFunId], mapping: &ExtModuleMap)
     PathBuf::from(user_input)
   };
 
-  ensure!(!path.is_dir(), "Path {} a directory", path.to_string_lossy());
+  ensure!(
+    !path.is_dir(),
+    "Path {} a directory",
+    path.to_string_lossy()
+  );
 
   let mut file = File::create(&path).map_err(|e| anyhow!(e).context("export_tracing_seleciton"))?;
   for selected in selection {

@@ -206,6 +206,7 @@ pub fn send_call_tracing_metadata(
       forked: 0,
       arg_count: 0,
       test_count: 0,
+      target_call_number: 0,
     },
   )
 }
@@ -227,6 +228,7 @@ pub fn send_arg_capture_metadata(
       forked: 0,
       arg_count: 0,
       test_count: 0,
+      target_call_number: 0,
     },
   )
 }
@@ -239,6 +241,7 @@ pub fn send_test_metadata(
   fn_id: IntegralFnId,
   arg_count: u32,
   test_count: u32,
+  target_call_number: u32,
 ) -> Result<()> {
   send_metadata(
     chnl,
@@ -252,6 +255,7 @@ pub fn send_test_metadata(
       forked: 0,
       arg_count,
       test_count,
+      target_call_number,
     },
   )
 }

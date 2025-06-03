@@ -3,7 +3,6 @@
 #include "shm_oneshot_rx.h"
 #include "shm_write_channel.h"
 #include <assert.h>
-#include <stdint.h>
 #include <fcntl.h>
 #include <semaphore.h>
 #include <stdbool.h>
@@ -123,12 +122,10 @@ void deinit(void) {
 // if there is non-zero -> buffer was used and not flushed (due to a crash)
 //  -> we signal 2 times on the semaphore, once for the outgoing data and once
 //  for the terminating message
-int init_finalize_after_crash(const char* name_full_sem, uint32_t buff_count) {
-  sem_t* sem_full =
-      sem_open(name_full_sem, O_CREAT, SEMPERMS, 0);
+int init_finalize_after_crash(const char *name_full_sem, uint32_t buff_count) {
+  sem_t *sem_full = sem_open(name_full_sem, O_CREAT, SEMPERMS, 0);
   if (sem_full == SEM_FAILED) {
-    printf("Failed to initialize FULL semaphore %s\n",
-           name_full_sem);
+    printf("Failed to initialize FULL semaphore %s\n", name_full_sem);
     perror("");
     return 1;
   }
@@ -144,11 +141,15 @@ uint32_t test_count(void) { return s_buff_info.test_count; }
 
 void set_fork_flag(void) { s_buff_info.forked = true; }
 
-// so far only the first call is hijacked
-// the tool simply counts down the arguments for each argument replacement
-// when count reaches zero, all arguments from the first call were instrumented
+uint32_t get_call_idx(void) { return s_buff_info.target_call_number - 1; }
+void register_call(void) {
+  s_buff_info.target_call_number > 0 ? s_buff_info.target_call_number-- : 0;
+}
+// counts down the arguments for each argument replacement
 void register_argument(void) { s_buff_info.arg_count--; }
-bool should_hijack_arg(void) { return s_buff_info.arg_count > 0; }
+bool should_hijack_arg(void) {
+  return s_buff_info.target_call_number == 1 && s_buff_info.arg_count > 0;
+}
 
 bool is_fn_under_test(uint32_t mod, uint32_t fn) {
   return in_testing_mode() && s_buff_info.target_modid == mod &&

@@ -74,9 +74,10 @@ pub async fn test_server_job(
   Ok(())
 }
 
+pub type CallIndexT = u32;
 #[derive(Debug, Clone, Copy)]
 enum TestMessage {
-  Start(IntegralModId, IntegralFnId),
+  Start(IntegralModId, IntegralFnId, CallIndexT),
   PacketRequest(u64),
   EndTest(u64, TestStatus),
   End,
@@ -92,7 +93,7 @@ pub enum TestStatus {
   Fatal,
 }
 
-pub type TestResults = Vec<(IntegralModId, IntegralFnId, u64, TestStatus)>;
+pub type TestResults = Vec<(IntegralModId, IntegralFnId, CallIndexT, u64, TestStatus)>;
 
 impl TryFrom<&[u8]> for TestStatus {
   type Error = String;
@@ -142,6 +143,7 @@ impl TryFrom<&[u8]> for TestMessage {
       Ok(Self::Start(
         IntegralModId(consume_to_u32(data, 0)?),
         IntegralFnId(consume_to_u32(data, 4)?),
+        consume_to_u32(data, 8)?,
       ))
     } else if tag.starts_with(&TAG_PKT.to_le_bytes()) {
       let sized: [u8; 8] = data
@@ -170,7 +172,7 @@ impl TryFrom<&[u8]> for TestMessage {
 #[derive(Debug)]
 enum ClientState {
   Init,
-  Started(IntegralModId, IntegralFnId),
+  Started(IntegralModId, IntegralFnId, CallIndexT),
   Ended,
 }
 
@@ -272,14 +274,14 @@ fn handle_client_msg(
 ) -> Result<(ClientState, Option<Vec<u8>>), String> {
   match state {
     ClientState::Init => match msg {
-      TestMessage::Start(m, f) => Ok((ClientState::Started(m, f), None)),
+      TestMessage::Start(m, f, i) => Ok((ClientState::Started(m, f, i), None)),
       TestMessage::End => Ok((ClientState::Ended, None)),
       _ => Err(format!(
         "Invalid transition from Init state with msg {:?}",
         msg
       )),
     },
-    ClientState::Started(mod_id, fn_id) => match msg {
+    ClientState::Started(mod_id, fn_id, call_idx) => match msg {
       TestMessage::EndTest(test_index, status) => {
         Log::get("handle_client_msg").info(format!(
           "test {} {} ended: {:?}, idx: {}",
@@ -291,12 +293,12 @@ fn handle_client_msg(
         results
           .lock()
           .unwrap()
-          .push((mod_id, fn_id, test_index, status));
+          .push((mod_id, fn_id, call_idx, test_index, status));
         Ok((state, None))
       }
       TestMessage::PacketRequest(idx) => {
         let response = packets.get_packet(mod_id, fn_id, idx as usize);
-        Ok((ClientState::Started(mod_id, fn_id), response))
+        Ok((ClientState::Started(mod_id, fn_id, call_idx), response))
       }
       TestMessage::End => Ok((ClientState::Ended, None)),
       _ => Err(format!(

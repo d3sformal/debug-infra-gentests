@@ -285,16 +285,18 @@ async fn main() -> Result<()> {
       lg.info("---------------------------------------------------------------");
       let mut results = results.lock().unwrap();
       lg.info(format!("Test results ({}): ", results.len()));
+      results.sort_by(|a, b| a.3.cmp(&b.3));
       results.sort_by(|a, b| a.2.cmp(&b.2));
       results.sort_by(|a, b| a.1.cmp(&b.1));
       results.sort_by(|a, b| a.0.cmp(&b.0));
       for result in results.iter() {
         let s = format!(
-          "{} {} {} {:?}",
+          "{} {} {} {} {:?}",
           result.0.hex_string(),
           result.1.hex_string(),
           result.2,
-          result.3
+          result.3,
+          result.4
         );
         lg.info(s);
       }
@@ -323,34 +325,37 @@ async fn test_job(
   command: Arc<Vec<String>>,
   output_gen: Arc<Option<TestOutputPathGen>>,
 ) -> Result<()> {
-  {
-    let mut guard = metadata_svr.lock().unwrap();
-    send_test_metadata(
-      guard.deref_mut(),
-      buff_count,
-      buff_size,
-      m,
-      f,
-      arg_count,
-      test_count,
-    )?;
-  }
-  let mut cmd = cmd_from_args(&command)?;
-  if let Some(output_gen) = output_gen.as_ref() {
-    let out_path = output_gen.get_out_path(m, f);
-    let err_path = output_gen.get_err_path(m, f);
-    cmd.stdout(Stdio::from(
-      File::create(out_path).map_err(|e| anyhow!(e).context("Stdout file creation failed"))?,
-    ));
-    cmd.stderr(Stdio::from(
-      File::create(err_path).map_err(|e| anyhow!(e).context("Stderr file creation failed"))?,
-    ));
-  }
-  let mut test = cmd
-    .spawn()
-    .map_err(|e| anyhow!(e).context("spawn from command"))?;
+  for call_idx in 0..test_count {
+    {
+      let mut guard = metadata_svr.lock().unwrap();
+      send_test_metadata(
+        guard.deref_mut(),
+        buff_count,
+        buff_size,
+        m,
+        f,
+        arg_count,
+        test_count,
+        call_idx + 1,
+      )?;
+    }
+    let mut cmd = cmd_from_args(&command)?;
+    if let Some(output_gen) = output_gen.as_ref() {
+      let out_path = output_gen.get_out_path(m, f, call_idx + 1);
+      let err_path = output_gen.get_err_path(m, f, call_idx + 1);
+      cmd.stdout(Stdio::from(
+        File::create(out_path).map_err(|e| anyhow!(e).context("Stdout file creation failed"))?,
+      ));
+      cmd.stderr(Stdio::from(
+        File::create(err_path).map_err(|e| anyhow!(e).context("Stderr file creation failed"))?,
+      ));
+    }
+    let mut test = cmd
+      .spawn()
+      .map_err(|e| anyhow!(e).context("spawn from command"))?;
 
-  let _ = test.wait();
+    let _ = test.wait();
+  }
   Ok(())
 }
 
@@ -372,12 +377,22 @@ impl TestOutputPathGen {
     }
   }
 
-  pub fn get_out_path(&self, m: IntegralModId, f: IntegralFnId) -> PathBuf {
-    self.get_path(format!("M{}-F{}.out", m.hex_string(), f.hex_string()))
+  pub fn get_out_path(&self, m: IntegralModId, f: IntegralFnId, id: u32) -> PathBuf {
+    self.get_path(format!(
+      "M{}-F{}-{}.out",
+      m.hex_string(),
+      f.hex_string(),
+      id
+    ))
   }
 
-  pub fn get_err_path(&self, m: IntegralModId, f: IntegralFnId) -> PathBuf {
-    self.get_path(format!("M{}-F{}.err", m.hex_string(), f.hex_string()))
+  pub fn get_err_path(&self, m: IntegralModId, f: IntegralFnId, id: u32) -> PathBuf {
+    self.get_path(format!(
+      "M{}-F{}-{}.err",
+      m.hex_string(),
+      f.hex_string(),
+      id
+    ))
   }
 
   fn get_path(&self, dir_append_variant: String) -> PathBuf {

@@ -12,7 +12,7 @@ extern "C" {
 
 int init(void);
 void deinit(void);
-int init_finalize_after_crash(const char* full_semaphore, uint32_t buff_count);
+int init_finalize_after_crash(const char *full_semaphore, uint32_t buff_count);
 
 #else
 int init(void) __attribute__((constructor));
@@ -27,6 +27,8 @@ bool should_hijack_arg(void);
 uint32_t test_count(void);
 bool is_fn_under_test(uint32_t mod, uint32_t fn);
 
+uint32_t get_call_idx(void);
+void register_call(void);
 void register_argument(void);
 void set_fork_flag(void);
 

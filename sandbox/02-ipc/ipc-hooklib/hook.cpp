@@ -39,9 +39,8 @@ static_assert(sizeof(long long) == 8, "Expecting long long to be 8 bytes");
       if (!is_fn_under_test(module, fn)) {                                     \
         goto just_copy_arg;                                                    \
       } else {                                                                 \
-        if (!should_hijack_arg()) { /* so far only the first call is hijacked  \
-                                       - this is because recursion comes into  \
-                                       play for multiple calls*/               \
+        register_call();                                                       \
+        if (!should_hijack_arg()) {                                            \
           goto just_copy_arg;                                                  \
         }                                                                      \
         register_argument();                                                   \
@@ -111,11 +110,12 @@ static bool do_srv_recv(void *target, size_t size, const char *desc) {
 
 #define MSG_SIZE 16
 
-static bool send_start_msg(uint32_t mod, uint32_t fun) {
+static bool send_start_msg(uint32_t mod, uint32_t fun, uint32_t call_idx) {
   char message[MSG_SIZE];
   memcpy(message, &TAG_START, sizeof(TAG_START));
   memcpy(message + 2, &mod, sizeof(mod));
   memcpy(message + 6, &fun, sizeof(fun));
+  memcpy(message + 10, &call_idx, sizeof(call_idx));
   return do_srv_send(message, sizeof(message), "msg start");
 }
 
@@ -297,13 +297,14 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
   return MSG_END_FATAL;
 }
 
-static void perform_testing(uint32_t module_id, uint32_t function_id) {
+static void perform_testing(uint32_t module_id, uint32_t function_id,
+                            uint32_t call_idx) {
   if (!connect_to_server("/tmp/llcap-test-server")) {
     printf("Failed to connect");
     exit(2389);
   }
 
-  if (!send_start_msg(module_id, function_id)) {
+  if (!send_start_msg(module_id, function_id, call_idx)) {
     printf("Failed send start message");
     exit(2388);
   }
@@ -356,7 +357,7 @@ void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id) {
     return;
   }
   if (!in_testing_fork() && is_fn_under_test(module_id, fn_id)) {
-    perform_testing(module_id, fn_id);
+    perform_testing(module_id, fn_id, get_call_idx());
   }
 }
 
