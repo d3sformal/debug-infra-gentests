@@ -6,6 +6,7 @@ use std::{
   sync::{Arc, Mutex},
 };
 
+use anyhow::{Result, anyhow, bail, ensure};
 use args::Cli;
 use clap::Parser;
 use log::Log;
@@ -38,7 +39,7 @@ use stages::{
 
 use crate::modmap::{IntegralFnId, IntegralModId};
 
-fn obtain_module_map(path: &std::path::PathBuf) -> Result<ExtModuleMap, String> {
+fn obtain_module_map(path: &std::path::PathBuf) -> Result<ExtModuleMap> {
   let lg = Log::get("obtain_module_map");
   let mb_modules = ExtModuleMap::try_from(path);
   match mb_modules {
@@ -49,31 +50,23 @@ fn obtain_module_map(path: &std::path::PathBuf) -> Result<ExtModuleMap, String> 
         path.to_string_lossy(),
         e
       ));
-      Err("".to_owned())
+      bail!("Could not parse module mapping");
     }
   }
 }
 
-fn cmd_from_args(args: &[String]) -> Result<Command, String> {
-  if args.is_empty() {
-    Err("Command must be specified".to_string())
-  } else {
-    let mut cmd = std::process::Command::new(args.first().unwrap());
-    cmd.args(args.iter().skip(1));
-    Ok(cmd)
-  }
+fn cmd_from_args(args: &[String]) -> Result<Command> {
+  ensure!(!args.is_empty(), "Command must be specified");
+  let mut cmd = std::process::Command::new(args.first().unwrap());
+  cmd.args(args.iter().skip(1));
+  Ok(cmd)
 }
 
 #[tokio::main()]
-async fn main() -> Result<(), String> {
+async fn main() -> Result<()> {
   Log::set_verbosity(255);
   let lg = Log::get("main");
-  let cli = Cli::try_parse();
-  if let Err(e) = cli {
-    lg.crit(format!("{}", e));
-    return Err("".to_owned());
-  }
-  let cli = cli.unwrap();
+  let cli = Cli::try_parse()?;
   Log::set_verbosity(cli.verbose);
   lg.info(format!("Verbosity: {}", cli.verbose));
 
@@ -85,11 +78,9 @@ async fn main() -> Result<(), String> {
   let mut modules = obtain_module_map(&cli.modmap)?;
 
   let (buff_count, buff_size) = (cli.buff_count, cli.buff_size);
-  let mem_cstr = std::ffi::CStr::from_bytes_with_nul(META_MEM_NAME).map_err(|e| e.to_string())?;
-  let sem_str =
-    String::from_utf8(META_SEM_DATA.split_last().unwrap().1.to_vec()).map_err(|e| e.to_string())?;
-  let ack_str =
-    String::from_utf8(META_SEM_ACK.split_last().unwrap().1.to_vec()).map_err(|e| e.to_string())?;
+  let mem_cstr = std::ffi::CStr::from_bytes_with_nul(META_MEM_NAME)?;
+  let sem_str = String::from_utf8(META_SEM_DATA.split_last().unwrap().1.to_vec())?;
+  let ack_str = String::from_utf8(META_SEM_ACK.split_last().unwrap().1.to_vec())?;
   let metadata_svr = Arc::new(Mutex::new(MetadataPublisher::new(
     mem_cstr, &sem_str, &ack_str,
   )?));
@@ -125,7 +116,7 @@ async fn main() -> Result<(), String> {
         ) {
           Ok(freqs) => Ok(freqs.into_iter().collect::<Vec<(_, _)>>()),
           Err(e) => {
-            lg.crit(&e);
+            lg.crit(e.to_string());
             Err(e)
           }
         };
@@ -164,8 +155,7 @@ async fn main() -> Result<(), String> {
       modules.mask_include(&selection)?;
 
       lg.info("Setting up function packet dumping");
-      let mut dumper =
-        ArgPacketDumper::new(&out_dir, &modules, mem_limit as usize).map_err(|x| x.to_string())?;
+      let mut dumper = ArgPacketDumper::new(&out_dir, &modules, mem_limit as usize)?;
 
       lg.info("Initializing tracing infrastructure");
       let mut tracing_infra = init_tracing(&cli.fd_prefix, buff_count, buff_size).await?;
@@ -176,7 +166,7 @@ async fn main() -> Result<(), String> {
 
       let _ = cmd
         .spawn()
-        .map_err(|e| format!("Failed to spawn from command: {e}"))?;
+        .map_err(|e| anyhow!(e).context("Failed to spawn from command"))?;
       meta_fut?;
 
       lg.info("Listening!");
@@ -209,7 +199,7 @@ async fn main() -> Result<(), String> {
       lg.info("Setting up function packet reader");
 
       let packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
-        .map_err(|e| format!("Packet reader setup failed {e}"))?;
+        .map_err(|e| anyhow!(e).context("Packet reader setup failed"))?;
 
       lg.info("Setting up function packet server");
       let (end_tx, end_rx) = tokio::sync::oneshot::channel::<()>();
@@ -227,7 +217,7 @@ async fn main() -> Result<(), String> {
       let output_gen = Arc::new(TestOutputPathGen::new(test_output));
 
       // wait for server to be ready
-      ready_rx.await.map_err(|e| e.to_string())?;
+      ready_rx.await?;
 
       let mut futs = vec![];
 
@@ -235,14 +225,14 @@ async fn main() -> Result<(), String> {
         for function in modules.functions(*module).unwrap() {
           let test_count = packet_reader
             .get_test_count(*module, *function)
-            .ok_or(format!(
+            .ok_or(anyhow!(
               "Not found tests: {} {}",
               module.hex_string(),
               function.hex_string()
             ))?;
           let arg_count = packet_reader
             .get_arg_count(*module, *function)
-            .ok_or(format!(
+            .ok_or(anyhow!(
               "Not found args: {} {}",
               module.hex_string(),
               function.hex_string()
@@ -282,11 +272,11 @@ async fn main() -> Result<(), String> {
       }
       lg.info("Waiting for jobs to finish...");
       for fut in futs {
-        fut.await.map_err(|e| e.to_string())??;
+        fut.await??;
       }
       lg.info("Waiting for server to exit...");
-      let defer_res_end_svr = end_tx.send(()).map_err(|_| "failed to end server");
-      let defer_res_joins = svr.await.map_err(|e| e.to_string());
+      let defer_res_end_svr = end_tx.send(()).map_err(|_| anyhow!("failed to end server"));
+      let defer_res_joins = svr.await.map_err(|e| anyhow!(e).context("joins"));
 
       lg.info("---------------------------------------------------------------");
       let mut results = results.lock().unwrap();
@@ -307,7 +297,7 @@ async fn main() -> Result<(), String> {
       lg.info("---------------------------------------------------------------");
       lg.trace("Cleaning up");
       let metadata_svr = Arc::try_unwrap(metadata_svr)
-        .map_err(|_| ("Failed to unwrap from arc... this is not expected".to_string()))?;
+        .map_err(|_| anyhow!("Failed to unwrap from arc... this is not expected"))?;
       metadata_svr.into_inner().unwrap().deinit()?;
       defer_res_end_svr?;
       defer_res_joins??;
@@ -328,7 +318,7 @@ async fn test_job(
   test_count: u32,
   command: Arc<Vec<String>>,
   output_gen: Arc<Option<TestOutputPathGen>>,
-) -> Result<(), String> {
+) -> Result<()> {
   {
     let mut guard = metadata_svr.lock().unwrap();
     send_test_metadata(
@@ -346,18 +336,18 @@ async fn test_job(
     let out_path = output_gen.get_out_path(m, f);
     let err_path = output_gen.get_err_path(m, f);
     cmd.stdout(Stdio::from(
-      File::create(out_path).map_err(|e| format!("Stdout file creation failed: {e}"))?,
+      File::create(out_path).map_err(|e| anyhow!(e).context("Stdout file creation failed"))?,
     ));
     cmd.stderr(Stdio::from(
-      File::create(err_path).map_err(|e| format!("Stderr file creation failed: {e}"))?,
+      File::create(err_path).map_err(|e| anyhow!(e).context("Stderr file creation failed"))?,
     ));
   }
   let mut test = cmd
     .spawn()
-    .map_err(|e| format!("Failed to spawn from command: {e}"))?;
+    .map_err(|e| anyhow!(e).context("spawn from command"))?;
 
   let _ = test.wait();
-  Ok::<(), String>(())
+  Ok(())
 }
 
 struct TestOutputPathGen {

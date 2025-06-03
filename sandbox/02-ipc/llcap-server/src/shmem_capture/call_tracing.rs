@@ -7,6 +7,8 @@ use crate::{
   stages::call_tracing::{FunctionCallInfo, Message},
 };
 
+use anyhow::{Result, bail, ensure};
+
 use super::{
   Either, TracingInfra, buff_bounds_or_end, get_buffer_start,
   mem_utils::{overread_check, read_w_alignment_chk},
@@ -43,15 +45,15 @@ fn update_from_buffer(
   _max_size: usize,
   modules: &ExtModuleMap,
   mut state: CallTraceMessageState,
-) -> Result<CallTraceMessageState, String> {
+) -> Result<CallTraceMessageState> {
   let lg = Log::get("update_from_buffer");
   let (buff_start, buff_end) = match buff_bounds_or_end(raw_buff)? {
     Either::Left(()) => {
       if let Some(m_id) = state.mod_id_wip {
-        return Err(format!(
+        bail!(
           "Comms corruption - partial state with empty message following it! Module id {}",
           *m_id
-        ));
+        );
       }
 
       state.add_message(Message::ControlEnd);
@@ -62,14 +64,14 @@ fn update_from_buffer(
 
   raw_buff = buff_start;
   while raw_buff < buff_end {
-    if raw_buff.is_null() {
-      return Err("Null pointer when iterating buffer...".to_string());
-    }
+    ensure!(!raw_buff.is_null(), "Null pointer when iterating buffer...");
 
     let mod_id = receive_module_id(&mut raw_buff, &mut state, buff_end)?;
-    if modules.get_module_string_id(mod_id).is_none() {
-      return Err(format!("Unknown module ID: {}", *mod_id));
-    }
+    ensure!(
+      modules.get_module_string_id(mod_id).is_some(),
+      "Unknown module ID: {}",
+      *mod_id
+    );
 
     const FUNC_ID_SIZE: usize = IntegralFnId::byte_size();
     if raw_buff >= buff_end {
@@ -104,7 +106,7 @@ fn receive_module_id(
   raw_buff: &mut *const u8,
   state: &mut CallTraceMessageState,
   buff_end: *const u8,
-) -> Result<IntegralModId, String> {
+) -> Result<IntegralModId> {
   Ok(if let Some(mod_id) = state.mod_id_wip {
     // module id from a previous buffer -> skip readnig for module id and instead read function id corresponding to the module id from a previous bufer
     state.mod_id_wip = None;
@@ -123,7 +125,7 @@ fn receive_module_id(
 fn process_messages(
   messages: &Vec<Message>,
   recorded_frequencies: &mut HashMap<FunctionCallInfo, u64>,
-) -> Result<(), String> {
+) -> Result<()> {
   for m in messages {
     match m {
       Message::Normal(content) => {
@@ -133,7 +135,7 @@ fn process_messages(
           .or_insert(1);
       }
       Message::ControlEnd => {
-        return Err("Unexpected end message!".to_string());
+        bail!("Unexpected end message!");
       }
     }
   }
@@ -145,7 +147,7 @@ pub fn msg_handler(
   buff_size: usize,
   buff_num: usize,
   modules: &ExtModuleMap,
-) -> Result<HashMap<FunctionCallInfo, u64>, String> {
+) -> Result<HashMap<FunctionCallInfo, u64>> {
   let lg = Log::get("msghandler");
   let mut buff_idx: usize = 0;
   let mut end_message_counter = 0;

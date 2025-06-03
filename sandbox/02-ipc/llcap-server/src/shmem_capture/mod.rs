@@ -2,10 +2,10 @@ pub mod arg_capture;
 pub mod call_tracing;
 pub mod hooklib_commons;
 pub mod mem_utils;
-use std::ffi::CStr;
-
+use anyhow::{Result, anyhow, bail, ensure};
 use hooklib_commons::{META_MEM_NAME, META_SEM_ACK, META_SEM_DATA, ShmMeta};
 use mem_utils::read_w_alignment_chk;
+use std::ffi::CStr;
 
 use crate::libc_wrappers::fd::try_shm_unlink_fd;
 use crate::libc_wrappers::sem::{FreeFullSemNames, Semaphore};
@@ -28,7 +28,7 @@ enum Either<T, S> {
   Right(S),
 }
 
-pub fn cleanup(prefix: &str) -> Result<(), String> {
+pub fn cleanup(prefix: &str) -> Result<()> {
   let lg = Log::get("cleanup");
   let FreeFullSemNames { free, full } = FreeFullSemNames::get(prefix, "capture", "base");
   for name in &[
@@ -47,7 +47,7 @@ pub fn cleanup(prefix: &str) -> Result<(), String> {
     }
   }
 
-  let metadata_shm_name = String::from_utf8(META_MEM_NAME.to_vec()).map_err(|e| e.to_string())?;
+  let metadata_shm_name = String::from_utf8(META_MEM_NAME.to_vec())?;
   let buffs_shm_name = format!("{prefix}-capture-base-buffmem\x00");
   // SAFETY: line above
   for name in [unsafe { to_cstr(&metadata_shm_name) }, unsafe {
@@ -65,7 +65,7 @@ pub fn cleanup(prefix: &str) -> Result<(), String> {
   Ok(())
 }
 
-fn init_semaphores(prefix: &str, n_buffs: u32) -> Result<(Semaphore, Semaphore), String> {
+fn init_semaphores(prefix: &str, n_buffs: u32) -> Result<(Semaphore, Semaphore)> {
   let FreeFullSemNames {
     free: free_name,
     full: full_name,
@@ -76,8 +76,8 @@ fn init_semaphores(prefix: &str, n_buffs: u32) -> Result<(Semaphore, Semaphore),
 
   if let Err(e) = full_sem {
     match deinit_semaphore_single(free_sem) {
-      Ok(()) => Err(e),
-      Err(e2) => Err(format!(
+      Ok(()) => Err(anyhow!(e)),
+      Err(e2) => Err(anyhow!(
         "Failed cleanup after FULL semaphore init failure: {e2}, init failure: {e}"
       )),
     }
@@ -86,23 +86,23 @@ fn init_semaphores(prefix: &str, n_buffs: u32) -> Result<(Semaphore, Semaphore),
   }
 }
 
-fn deinit_semaphore_single(sem: Semaphore) -> Result<(), String> {
+fn deinit_semaphore_single(sem: Semaphore) -> Result<()> {
   match sem.try_close() {
     Ok(sem) => sem,
-    Err((_, err)) => return Err(err),
+    Err((_, err)) => bail!(err),
   }
   .try_destroy()
-  .map_err(|(_, s)| s)
+  .map_err(|(_, s)| anyhow!(s))
 }
 
-pub fn deinit_semaphores(free_handle: Semaphore, full_handle: Semaphore) -> Result<(), String> {
+pub fn deinit_semaphores(free_handle: Semaphore, full_handle: Semaphore) -> Result<()> {
   deinit_semaphore_single(free_handle)
-    .map_err(|e| format!("When closing free semaphore: {e}"))
+    .map_err(|e| e.context("When closing free semaphore"))
     .and_then(|_| deinit_semaphore_single(full_handle))
-    .map_err(|e| format!("When closing full semaphore: {e}"))
+    .map_err(|e| e.context("When closing full semaphore"))
 }
 
-fn init_shmem(prefix: &str, buff_count: u32, buff_len: u32) -> Result<ShmemHandle, String> {
+fn init_shmem(prefix: &str, buff_count: u32, buff_len: u32) -> Result<ShmemHandle> {
   let buffs_tmp = format!("{prefix}-capture-base-buffmem\x00");
   // SAFETY: line above
   let buffscstr = unsafe { to_cstr(&buffs_tmp) };
@@ -110,17 +110,17 @@ fn init_shmem(prefix: &str, buff_count: u32, buff_len: u32) -> Result<ShmemHandl
   ShmemHandle::try_mmap(buffscstr, buff_count * buff_len)
 }
 
-fn deinit_shmem(buffers_mem: ShmemHandle) -> Result<(), String> {
+fn deinit_shmem(buffers_mem: ShmemHandle) -> Result<()> {
   buffers_mem
     .try_unmap()
-    .map_err(|e| format!("When unmapping buffers mem: {e}"))
+    .map_err(|e| e.context("deinit_shmem"))
 }
 
 pub async fn init_tracing(
   resource_prefix: &str,
   buff_count: u32,
   buff_len: u32,
-) -> Result<TracingInfra, String> {
+) -> Result<TracingInfra> {
   let lg = Log::get("init_tracing");
   let (sem_free, sem_full) = init_semaphores(resource_prefix, buff_count)?;
   lg.info("Initializing shmem");
@@ -138,7 +138,7 @@ pub fn send_call_tracing_metadata(
   chnl: &mut MetadataPublisher<'_>,
   buff_count: u32,
   buff_len: u32,
-) -> Result<(), String> {
+) -> Result<()> {
   send_metadata(
     chnl,
     ShmMeta {
@@ -159,7 +159,7 @@ pub fn send_arg_capture_metadata(
   chnl: &mut MetadataPublisher<'_>,
   buff_count: u32,
   buff_len: u32,
-) -> Result<(), String> {
+) -> Result<()> {
   send_metadata(
     chnl,
     ShmMeta {
@@ -184,7 +184,7 @@ pub fn send_test_metadata(
   fn_id: IntegralFnId,
   arg_count: u32,
   test_count: u32,
-) -> Result<(), String> {
+) -> Result<()> {
   send_metadata(
     chnl,
     ShmMeta {
@@ -201,15 +201,12 @@ pub fn send_test_metadata(
   )
 }
 
-fn send_metadata(
-  chnl: &mut MetadataPublisher<'_>,
-  target_descriptor: ShmMeta,
-) -> Result<(), String> {
+fn send_metadata(chnl: &mut MetadataPublisher<'_>, target_descriptor: ShmMeta) -> Result<()> {
   Log::get("init_tracing").info("Waiting for a cooperating program");
   chnl.publish(target_descriptor)
 }
 
-pub fn deinit_tracing(infra: TracingInfra) -> Result<(), String> {
+pub fn deinit_tracing(infra: TracingInfra) -> Result<()> {
   let (semfree, semfull, buffers_shm) = (infra.sem_free, infra.sem_full, infra.backing_buffer);
   let shm_uninit = deinit_shmem(buffers_shm);
   let sem_uninit = deinit_semaphores(semfree, semfull);
@@ -217,69 +214,55 @@ pub fn deinit_tracing(infra: TracingInfra) -> Result<(), String> {
   let goodbye_errors = [shm_uninit, sem_uninit]
     .iter()
     .fold("".to_string(), |acc, v| {
-      if v.is_err() {
-        acc + v.as_ref().unwrap_err()
+      if let Err(e) = v {
+        acc + &e.to_string()
       } else {
         acc
       }
     });
-
-  if !goodbye_errors.is_empty() {
-    Err(format!("Failed deinit! {goodbye_errors}"))
-  } else {
-    Ok(())
-  }
-}
-
-fn wait_for_free_buffer(infra: &mut TracingInfra) -> Result<(), String> {
-  let sem_res = infra.sem_full.try_wait();
-  if let Err(e) = sem_res {
-    Err(format!("While waiting for buffer: {}", e))
-  } else {
-    Ok(())
-  }
-}
-
-fn post_free_buffer(infra: &mut TracingInfra, dbg_buff_idx: usize) -> Result<(), String> {
-  let sem_res = infra.sem_free.try_post();
-  if let Err(e) = sem_res {
-    return Err(format!(
-      "While posting a free buffer (idx {dbg_buff_idx}): {}",
-      e
-    ));
-  }
+  ensure!(
+    goodbye_errors.is_empty(),
+    "Deinit failures: {}",
+    goodbye_errors
+  );
   Ok(())
 }
 
-// get the start of a buffer at an offset
-fn get_buffer_start(infra: &mut TracingInfra, buff_offset: usize) -> Result<*mut u8, String> {
-  let buffers = &mut infra.backing_buffer;
-  if buff_offset >= buffers.len() as usize {
-    return Err(format!(
-      "Calculated offset too large: {}, compared to the buffers len {}",
-      buff_offset,
-      buffers.len()
-    ));
-  }
-  let mem = buffers.ptr();
-  let buff_ptr = ptr_add_nowrap_mut(mem as *mut u8, buff_offset)?;
+fn wait_for_free_buffer(infra: &mut TracingInfra) -> Result<()> {
+  let sem_res = infra.sem_full.try_wait();
+  sem_res.map_err(|e| e.context("wait_for_free_buffer"))
+}
 
-  if buff_ptr.is_null() || buff_ptr < mem as *mut u8 {
-    return Err(format!(
-      "Buffer pointer is invalid: {:?}, mem: {:?}",
-      buff_ptr, buffers
-    ));
-  }
+fn post_free_buffer(infra: &mut TracingInfra, dbg_buff_idx: usize) -> Result<()> {
+  let sem_res = infra.sem_free.try_post();
+  sem_res.map_err(|e| e.context(format!("While posting a free buffer (idx {dbg_buff_idx}")))
+}
+
+// get the start of a buffer at an offset
+fn get_buffer_start(infra: &mut TracingInfra, buff_offset: usize) -> Result<*mut u8> {
+  let buffers = &mut infra.backing_buffer;
+  ensure!(
+    buff_offset < buffers.len() as usize,
+    "Calculated offset too large: {}, compared to the buffers len {}",
+    buff_offset,
+    buffers.len()
+  );
+  let base_mem = buffers.ptr();
+  let buff_ptr = ptr_add_nowrap_mut(base_mem as *mut u8, buff_offset)?;
+  ensure!(
+    !buff_ptr.is_null() && buff_ptr >= base_mem as *mut u8,
+    "Buffer pointer is invalid: {:?}, mem: {:?}",
+    buff_ptr,
+    buffers
+  );
   Ok(buff_ptr)
 }
 
 // raw_buff arg: poitner validity must be ensured by protocol, target type is copied, no allocation over the same memory region
 // Okay Left = ending (empty) message reached, no further processing needed
 // Okay Right = [start, end) buffer's data bounds
-fn buff_bounds_or_end(raw_buff: *const u8) -> Result<Either<(), (*const u8, *const u8)>, String> {
-  if raw_buff.is_null() {
-    return Err("Input is null".to_string());
-  }
+fn buff_bounds_or_end(raw_buff: *const u8) -> Result<Either<(), (*const u8, *const u8)>> {
+  ensure!(!raw_buff.is_null(), "Input is null");
   // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
   let valid_size: u32 = unsafe { read_w_alignment_chk(raw_buff) }?;
 
@@ -289,9 +272,7 @@ fn buff_bounds_or_end(raw_buff: *const u8) -> Result<Either<(), (*const u8, *con
 
   let start = ptr_add_nowrap(raw_buff, std::mem::size_of_val(&valid_size))?;
   let buff_end = ptr_add_nowrap(start, valid_size as usize)?;
-  if buff_end.is_null() {
-    return Err("Buffer end is null".to_string());
-  }
+  ensure!(!buff_end.is_null(), "Buffer end is null");
   // validity of buff_end depends on the protocol
   Ok(Either::Right((start, buff_end)))
 }
@@ -303,7 +284,7 @@ pub struct MetadataPublisher<'a> {
 }
 
 impl<'a> MetadataPublisher<'a> {
-  pub fn new(mem_path: &CStr, data_sem_path: &str, ack_sem_path: &str) -> Result<Self, String> {
+  pub fn new(mem_path: &CStr, data_sem_path: &str, ack_sem_path: &str) -> Result<Self> {
     let data = Semaphore::try_open_exclusive(data_sem_path, 0)?;
     let ack = Semaphore::try_open_exclusive(ack_sem_path, 1)?;
     let shm = ShmemHandle::try_mmap(mem_path, std::mem::size_of::<ShmemHandle>() as u32)?;
@@ -314,7 +295,7 @@ impl<'a> MetadataPublisher<'a> {
     })
   }
 
-  pub fn publish(&mut self, meta: ShmMeta) -> Result<(), String> {
+  pub fn publish(&mut self, meta: ShmMeta) -> Result<()> {
     self.data_ack_sem.try_wait()?;
 
     let mem = self.shm.ptr();
@@ -325,10 +306,10 @@ impl<'a> MetadataPublisher<'a> {
     self.data_rdy_sem.try_post()
   }
 
-  pub fn deinit(self) -> Result<(), String> {
+  pub fn deinit(self) -> Result<()> {
     self.shm.try_unmap()?;
-    self.data_ack_sem.try_destroy().map_err(|e| e.1)?;
-    self.data_rdy_sem.try_destroy().map_err(|e| e.1)?;
+    self.data_ack_sem.try_destroy().map_err(|e| anyhow!(e.1))?;
+    self.data_rdy_sem.try_destroy().map_err(|e| anyhow!(e.1))?;
     Ok(())
   }
 }

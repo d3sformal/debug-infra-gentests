@@ -6,6 +6,7 @@ use std::{
   time::Duration,
 };
 
+use anyhow::{Result, anyhow};
 use tokio::{
   io::{AsyncReadExt, BufReader},
   net::{UnixListener, UnixStream, unix::OwnedWriteHalf},
@@ -36,12 +37,12 @@ pub async fn test_server_job(
   mut end_rx: Receiver<()>,
   ready_tx: Sender<()>,
   results: Arc<Mutex<TestResults>>,
-) -> Result<(), String> {
+) -> Result<()> {
   let lg = Log::get("test_server_job");
   let path = test_server_socket(&prefix);
   lg.info(format!("Starting at {path}"));
-  let listener = UnixListener::bind(path.clone()).map_err(|e| e.to_string())?;
-  ready_tx.send(()).map_err(|_| "Receiver dropped")?;
+  let listener = UnixListener::bind(path.clone())?;
+  ready_tx.send(()).map_err(|_| anyhow!("Receiver dropped"))?;
   lg.info("Listening");
 
   let mut handles = vec![];
@@ -59,17 +60,17 @@ pub async fn test_server_job(
           results,
         )));
       }
-      Ok(Err(e)) => Err(e.to_string())?,
+      Ok(Err(e)) => Err(anyhow!(e))?,
       Err(_) => continue,
     }
   }
   lg.info("Finishing");
   for handle in handles {
     lg.trace("Finishing handle");
-    handle.await.map_err(|e| e.to_string())?;
+    handle.await?;
   }
   mem::drop(listener);
-  fs::remove_file(path).map_err(|e| e.to_string())?;
+  fs::remove_file(path)?;
   Ok(())
 }
 

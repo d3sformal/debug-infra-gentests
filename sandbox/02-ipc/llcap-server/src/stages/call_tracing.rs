@@ -4,6 +4,7 @@ use std::{
   io::{self, BufRead, BufReader, Write},
   path::{Path, PathBuf},
 };
+use anyhow::{Result, anyhow, bail, ensure};
 
 use crate::{
   constants::Constants,
@@ -67,7 +68,7 @@ pub fn print_summary(sorted_pairs: &mut [(FunctionCallInfo, u64)], mods: &ExtMod
   println!("Traces originated from {} modules", seen_modules.len());
 }
 
-fn get_line_input() -> Result<String, std::io::Error> {
+fn get_line_input() -> Result<String> {
   let mut user_input = String::new();
   std::io::stdin().read_line(&mut user_input)?;
   Ok(user_input)
@@ -118,10 +119,7 @@ pub fn obtain_function_id_selection(
   result
 }
 
-pub fn export_tracing_selection(
-  selection: &[LLVMFunId],
-  mapping: &ExtModuleMap,
-) -> Result<(), String> {
+pub fn export_tracing_selection(selection: &[LLVMFunId], mapping: &ExtModuleMap) -> Result<()> {
   let lg = Log::get("export_tracing_selection");
   let default_path = Constants::default_selected_functions_path();
   println!(
@@ -137,55 +135,50 @@ pub fn export_tracing_selection(
     PathBuf::from(user_input)
   };
 
-  if path.is_dir() {
-    return Err("Path is a directory".to_string());
+  ensure!(path.is_dir(), "Path {} a directory", path.to_string_lossy());
+
+  let mut file = File::create(&path).map_err(|e| anyhow!(e).context("export_tracing_seleciton"))?;
+  for selected in selection {
+    let mod_hash = mapping.find_module_hash_by_name(&selected.fn_module);
+    ensure!(
+      mod_hash.is_some(),
+      "Could not resolve module hash from {}",
+      selected.fn_module
+    );
+    let mod_hash = mod_hash.unwrap();
+    let fn_id = mapping.get_function_id(mod_hash, &selected.fn_name);
+    ensure!(
+      fn_id.is_some(),
+      "Could not resolve id of function {}, mod: {}, mapping: {:?}",
+      selected.fn_name,
+      selected.fn_module,
+      mapping
+    );
+    let fn_id = *fn_id.unwrap();
+
+    let to_write = format!(
+      "{}\x00{}\x00{}\x00{}\n",
+      selected.fn_module, mod_hash.0, selected.fn_name, *fn_id
+    )
+    .into_bytes();
+
+    let wr_res = file.write(&to_write)?;
+    ensure!(
+      wr_res == to_write.len(),
+      "Exporting of selection written unexpected amount: {} compared to {}",
+      wr_res,
+      to_write.len()
+    );
   }
-
-  let file = File::create(&path);
-  if let Ok(mut file) = file {
-    for selected in selection {
-      let mod_hash = mapping.find_module_hash_by_name(&selected.fn_module);
-      if mod_hash.is_none() {
-        return Err(format!(
-          "Could not resolve module hash from {}",
-          selected.fn_module
-        ));
-      }
-      let mod_hash = mod_hash.unwrap();
-      let fn_id = mapping.get_function_id(mod_hash, &selected.fn_name);
-      if fn_id.is_none() {
-        return Err(format!(
-          "Could not resolve id of function {}, mod: {}, mapping: {:?}",
-          selected.fn_name, selected.fn_module, mapping
-        ));
-      }
-      let fn_id = *fn_id.unwrap();
-
-      let to_write = format!(
-        "{}\x00{}\x00{}\x00{}\n",
-        selected.fn_module, mod_hash.0, selected.fn_name, *fn_id
-      );
-
-      let wr_res = file.write(to_write.as_bytes());
-      if let Err(e) = wr_res {
-        lg.crit(format!(
-          "Something went wrong when writing the file {:?}",
-          e
-        ));
-      }
-    }
-
-    lg.info(format!("Successfully exported to {:?}", path));
-    Ok(())
-  } else {
-    Err(format!("Could not open for writing: {:?}", path))
-  }
+  lg.info(format!("Successfully exported to {:?}", path));
+  Ok(())
 }
 
-pub fn import_tracing_selection(path: &Path) -> Result<Vec<LLVMFunId>, String> {
+pub fn import_tracing_selection(path: &Path) -> Result<Vec<LLVMFunId>> {
   let mut result = Vec::with_capacity(8);
 
-  let mut f = BufReader::new(File::open(path).map_err(|e| e.to_string())?);
+  let mut f =
+    BufReader::new(File::open(path).map_err(|e| anyhow!(e).context("import_tracing_seleciton"))?);
 
   let mut line = String::with_capacity(256);
   while let Ok(len) = f.read_line(&mut line) {
@@ -196,11 +189,8 @@ pub fn import_tracing_selection(path: &Path) -> Result<Vec<LLVMFunId>, String> {
     let mut it = line.trim().split('\x00');
     let module = it.next();
     let function = it.nth(1);
-    if module.is_none() {
-      return Err(format!("Module name not found in {:?}", line));
-    } else if function.is_none() {
-      return Err(format!("Function name not found in {:?}", line));
-    }
+    ensure!(module.is_some(), "Module name not found in {:?}", line);
+    ensure!(function.is_some(), "Function name not found in {:?}", line);
 
     result.push(LLVMFunId {
       fn_module: module.unwrap().to_string(),
@@ -216,10 +206,10 @@ pub fn import_tracing_selection(path: &Path) -> Result<Vec<LLVMFunId>, String> {
 pub type ImportFormat = Vec<(FunctionCallInfo, u64)>;
 pub type ExportFormat = ImportFormat;
 
-pub fn export_data(sorted_data: &ExportFormat, out_path: PathBuf) -> Result<(), String> {
+pub fn export_data(sorted_data: &ExportFormat, out_path: PathBuf) -> Result<()> {
   let lg = Log::get("call_tracing::export_data");
 
-  let mut f = File::create(&out_path).map_err(|e| format!("{}", e))?;
+  let mut f = File::create(&out_path)?;
   for (fninfo, freq) in sorted_data {
     let module_hash = fninfo.module_id;
 
@@ -227,17 +217,17 @@ pub fn export_data(sorted_data: &ExportFormat, out_path: PathBuf) -> Result<(), 
       "{}-{}-{}\n",
       freq, *fninfo.function_id, module_hash.0
     ))
-    .map_err(|e| format!("Write failed: {}", e))?;
+    .map_err(|e| anyhow!(e).context("export_data"))?;
   }
 
   lg.info(format!("Exported call tracing data to {:?}", out_path));
   Ok(())
 }
 
-pub fn import_data(in_path: PathBuf, modmap: &ExtModuleMap) -> Result<ImportFormat, String> {
+pub fn import_data(in_path: PathBuf, modmap: &ExtModuleMap) -> Result<ImportFormat> {
   let mut result = vec![];
 
-  let f = File::open(&in_path).map_err(|e| format!("{}", e))?;
+  let f = File::open(&in_path)?;
   let mut reader = io::BufReader::new(f);
   let mut line = String::new();
 
@@ -249,13 +239,12 @@ pub fn import_data(in_path: PathBuf, modmap: &ExtModuleMap) -> Result<ImportForm
     }
 
     let split: Vec<&str> = line.trim().split('-').collect();
-    if split.len() != 3 {
-      return Err(format!(
-        "Invalid import format, split len: {} of {}",
-        split.len(),
-        line
-      ));
-    }
+    ensure!(
+      split.len() == 3,
+      "Invalid import format, split len: {} of {}",
+      split.len(),
+      line
+    );
 
     let parse_res: (Result<u64, _>, Result<u32, _>, Result<u32, _>) = match split.as_slice() {
       &[s1, s2, s3] => (s1.parse(), s2.parse(), s3.parse()),
@@ -265,21 +254,20 @@ pub fn import_data(in_path: PathBuf, modmap: &ExtModuleMap) -> Result<ImportForm
 
     if let (Ok(fr), Ok(fnid), Ok(modhash)) = parse_res {
       let (fnid, mod_id) = (IntegralFnId(fnid), IntegralModId(modhash));
-      if modmap
-        .get_function_arg_size_descriptors(mod_id, fnid)
-        .is_none()
-      {
-        return Err(format!(
-          "Function not found, module: {}, fn: {}",
-          *mod_id, *fnid
-        ));
-      }
+      ensure!(
+        modmap
+          .get_function_arg_size_descriptors(mod_id, fnid)
+          .is_some(),
+        "Function not found, module: {}, fn: {}",
+        *mod_id,
+        *fnid
+      );
       result.push((FunctionCallInfo::new(fnid, mod_id), fr));
     } else {
-      return Err(format!(
+      bail!(
         "Failed to parse import, invalid format in one of the numbers {:?}",
         parse_res
-      ));
+      );
     }
   }
 

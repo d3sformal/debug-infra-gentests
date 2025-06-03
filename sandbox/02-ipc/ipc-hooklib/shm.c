@@ -127,6 +127,7 @@ int after_crash_recovery(void) { return deinit_channel(&s_channel); }
 int init_finalize_after_crash(void) {
   int rv = 1;
 
+  // TODO: fix - does not work with current metadata passing
   if (setup_infra() != 0) {
     return rv;
   }

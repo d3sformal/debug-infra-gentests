@@ -3,6 +3,7 @@ use std::{
   marker::PhantomData,
 };
 
+use anyhow::{Result, anyhow, ensure};
 use libc::{
   MAP_FAILED, MAP_SHARED_VALIDATE, O_CREAT, O_EXCL, O_RDWR, PROT_READ, PROT_WRITE, ftruncate, mmap,
   munmap, shm_open,
@@ -45,34 +46,35 @@ impl ShmemHandle<'_> {
     self.mem
   }
 
-  pub fn try_mmap(path: &CStr, len: u32) -> Result<Self, String> {
+  pub fn try_mmap(path: &CStr, len: u32) -> Result<Self> {
     let unlinking_handler = |error_string: String| {
-      let unlink_res =
-        try_shm_unlink_fd(path).map_err(|e| format!("{error_string}\n\tWith inner error: {e}"));
+      let unlink_res = try_shm_unlink_fd(path).map_err(|e| e.context(error_string.clone()));
 
       match unlink_res {
-        Ok(_) => Err(error_string),
-        Err(s) => Err(s),
+        Ok(_) => anyhow!(error_string),
+        Err(s) => anyhow!(s),
       }
     };
     // SAFETY: &CStr type, syscall docs
     let fd = unsafe { shm_open(path.as_ptr(), O_CREAT | O_EXCL | O_RDWR, PERMS_PERMISSIVE) };
-    if fd == -1 {
-      return Err(format!(
-        "Failed to open FD for shmem {}: {}",
-        path.to_string_lossy(),
-        get_errno_string()
-      ));
-    }
+    ensure!(
+      fd != -1,
+      "Failed to open FD for shmem {}: {}",
+      path.to_string_lossy(),
+      get_errno_string()
+    );
+
     // SAFETY: documentation of the syscall, fd obtained beforehand
-    if unsafe { ftruncate(fd, len as i64) } == -1 {
-      return unlinking_handler(format!(
+    let truncation = unsafe { ftruncate(fd, len as i64) };
+    ensure!(
+      truncation != -1,
+      unlinking_handler(format!(
         "Failed to truncate FD for shmem {}, len: {}: {}",
         path.to_string_lossy(),
         len,
         get_errno_string()
-      ));
-    }
+      ))
+    );
 
     // SAFETY: documentation of the syscall, fd obtained beforehand, len passed fntruncate above
     let mmap_res = unsafe {
@@ -85,14 +87,15 @@ impl ShmemHandle<'_> {
         0,
       )
     };
-    if mmap_res == MAP_FAILED {
-      return unlinking_handler(format!(
+    ensure!(
+      mmap_res != MAP_FAILED,
+      unlinking_handler(format!(
         "Failed to mmap {}, len: {}: {}",
         path.to_string_lossy(),
         len,
         get_errno_string()
-      ));
-    }
+      ))
+    );
 
     Ok(Self::new(
       mmap_res,
@@ -102,17 +105,18 @@ impl ShmemHandle<'_> {
     ))
   }
 
-  pub fn try_unmap(self) -> Result<(), String> {
+  pub fn try_unmap(self) -> Result<()> {
     // SAFETY: syscall docs, ShmHandle's invariant
     let unmap_res = unsafe { munmap(self.mem, self.len as usize) };
-    if unmap_res != 0 {
-      return Err(format!(
+    ensure!(
+      unmap_res == 0,
+      format!(
         "Failed to unmap memory @ {:?} of len {}: {}",
         self.mem,
         self.len,
         get_errno_string()
-      ));
-    }
+      )
+    );
     // SAFETY: cname from type's invariant
     let cstr_name = unsafe { to_cstr(&self.cname) };
     try_shm_unlink_fd(cstr_name)

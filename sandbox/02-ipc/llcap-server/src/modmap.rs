@@ -2,12 +2,12 @@ use std::collections::HashSet;
 use std::ops::Deref;
 use std::{collections::HashMap, fs, path::PathBuf};
 
-use num_traits::Num;
-
 use crate::Log;
 use crate::constants::Constants;
 use crate::sizetype_handlers::ArgSizeTypeRef;
 use crate::stages::call_tracing::LLVMFunId;
+use anyhow::{Result, anyhow, ensure};
+use num_traits::Num;
 
 #[derive(Debug)]
 pub struct FunctionMap {
@@ -50,7 +50,7 @@ impl FunctionMap {
     self.demangled_name_to_fnid.get(name)
   }
 
-  pub fn mask_include(&mut self, fn_ids: &HashSet<IntegralFnId>) -> Result<(), String> {
+  pub fn mask_include(&mut self, fn_ids: &HashSet<IntegralFnId>) -> Result<()> {
     let counter_ids = self
       .fnid_to_argument_sizes
       .keys()
@@ -61,52 +61,49 @@ impl FunctionMap {
     for counter_id in counter_ids {
       let expected_name = match self.fnid_to_demangled_name.remove(&counter_id) {
         Some(x) => Ok(x),
-        None => Err(format!("Could not find function {}", counter_id.0)),
+        None => Err(anyhow!("Could not find function {}", counter_id.0)),
       }?;
-
-      if self.demangled_name_to_fnid.remove(&expected_name).is_none() {
-        return Err(format!(
-          "Inconsistent structures: demangled -> id missing {}",
-          expected_name
-        ));
-      } else if self.fnid_to_argument_sizes.remove(&counter_id).is_none() {
-        return Err(format!(
-          "Inconsistent structures: id -> argsizes missing {} {}",
-          counter_id.0, expected_name
-        ));
-      }
+      ensure!(
+        self.demangled_name_to_fnid.remove(&expected_name).is_some(),
+        "Inconsistent structures: demangled -> id missing {}",
+        expected_name
+      );
+      ensure!(
+        self.fnid_to_argument_sizes.remove(&counter_id).is_some(),
+        "Inconsistent structures: id -> argsizes missing {} {}",
+        counter_id.0,
+        expected_name
+      );
       lg.trace(format!("Masked out function {}", counter_id.hex_string()));
     }
     Ok(())
   }
 }
 
-fn bytes_to_num<T: num_traits::Num>(inp: &[u8]) -> Result<T, String>
+fn bytes_to_num<T: num_traits::Num>(inp: &[u8]) -> Result<T>
 where
   <T as num_traits::Num>::FromStrRadixErr: ToString,
 {
   let radix10 = Constants::parse_fnid_radix();
   String::from_utf8(inp.to_vec())
-    .map_err(|e| e.to_string())
-    .and_then(|v| T::from_str_radix(&v, radix10).map_err(|e| e.to_string()))
+    .map_err(|e| anyhow!(e))
+    .and_then(|v| T::from_str_radix(&v, radix10).map_err(|e| anyhow!(e.to_string())))
 }
 
-fn parse_fn_id_tuple(inp: &[&[u8]]) -> Result<(IntegralFnId, String, Vec<u16>), String> {
-  if inp.len() < 3 {
-    return Err("Invalid ID format, expecting at least 3 items per line".into());
-  }
+fn parse_fn_id_tuple(inp: &[&[u8]]) -> Result<(IntegralFnId, String, Vec<u16>)> {
+  ensure!(
+    inp.len() >= 3,
+    "Invalid ID format, expecting at least 3 items per line"
+  );
 
-  let try_name = String::from_utf8(inp[0].to_vec());
-  if let Err(e) = try_name {
-    return Err(e.to_string());
-  }
-
+  let try_name = String::from_utf8(inp[0].to_vec())?;
   let fnid: IntegralFnId = IntegralFnId(bytes_to_num(inp[1])?);
 
   let arg_count: usize = bytes_to_num(inp[2])?;
-  if 3 + arg_count != inp.len() {
-    return Err("Invalid argumetn count - not in sync with the data".to_string());
-  }
+  ensure!(
+    3 + arg_count == inp.len(),
+    "Invalid argument count - not in sync with the data"
+  );
 
   let mut argument_specifiers: Vec<u16> = Vec::new();
   for v in inp.iter().skip(3) {
@@ -114,11 +111,11 @@ fn parse_fn_id_tuple(inp: &[&[u8]]) -> Result<(IntegralFnId, String, Vec<u16>), 
     argument_specifiers.push(arg_spec);
   }
 
-  Ok((fnid, try_name.unwrap(), argument_specifiers))
+  Ok((fnid, try_name, argument_specifiers))
 }
 
 impl TryFrom<&[&[u8]]> for FunctionMap {
-  type Error = String;
+  type Error = anyhow::Error;
   fn try_from(value: &[&[u8]]) -> Result<Self, Self::Error> {
     let newline_split = value.iter().filter(|v| !v.is_empty());
     let zero_splits: Vec<Vec<&[u8]>> = newline_split
@@ -225,24 +222,23 @@ impl IntegralModId {
 
 fn try_from_hex_string<T: Num + std::ops::ShlAssign<u32> + std::ops::AddAssign<u32>>(
   value: &str,
-) -> Result<T, String> {
-  if value.chars().count() != std::mem::size_of::<T>() * 2 {
-    return Err("Invalid size".to_string());
-  }
+) -> Result<T> {
+  ensure!(
+    value.chars().count() == std::mem::size_of::<T>() * 2,
+    "Invalid size"
+  );
 
   let mut inner: T = T::zero();
   for v in value.chars() {
     inner <<= 4; // in order to not "over shift" in the last iteration
 
-    if !v.is_ascii() {
-      return Err(format!("Invalid module id (ascii): {value}"));
-    }
+    ensure!(v.is_ascii(), "Invalid module id (ascii): {value}");
 
     let v = v.to_ascii_uppercase();
     let num_val = match v {
       '0'..='9' => v as u32 - '0' as u32,
       'A'..='F' => v as u32 - 'A' as u32 + 10,
-      _ => return Err(format!("Invalid module id (char): {value}")),
+      _ => return Err(anyhow!("Invalid module id (char): {value}")),
     };
 
     inner += num_val;
@@ -267,7 +263,7 @@ impl Deref for IntegralFnId {
 }
 
 impl TryFrom<&str> for IntegralModId {
-  type Error = String;
+  type Error = anyhow::Error;
 
   fn try_from(value: &str) -> Result<Self, Self::Error> {
     try_from_hex_string(value).map(Self)
@@ -275,7 +271,7 @@ impl TryFrom<&str> for IntegralModId {
 }
 
 impl TryFrom<&str> for IntegralFnId {
-  type Error = String;
+  type Error = anyhow::Error;
 
   fn try_from(value: &str) -> Result<Self, Self::Error> {
     try_from_hex_string(value).map(Self)
@@ -314,7 +310,7 @@ impl ExtModuleMap {
     self.function_ids.get(&mod_id).map(|f| f.functions())
   }
 
-  pub fn mask_include(&mut self, targets: &[LLVMFunId]) -> Result<(), String> {
+  pub fn mask_include(&mut self, targets: &[LLVMFunId]) -> Result<()> {
     let lg = Log::get("mask_include");
     lg.info(format!("Masking {} values", targets.len()));
 
@@ -374,7 +370,7 @@ impl ExtModuleMap {
     Ok(())
   }
 
-  pub fn add_module(&mut self, path_to_modfile: &PathBuf) -> Result<(), String> {
+  pub fn add_module(&mut self, path_to_modfile: &PathBuf) -> Result<()> {
     let modhash = if let Some(hash_res) = path_to_modfile
       .file_name()
       .and_then(|v| v.to_str())
@@ -382,33 +378,34 @@ impl ExtModuleMap {
     {
       hash_res
     } else {
-      Err(format!("Invalid path {:?}", path_to_modfile))
+      Err(anyhow!("Invalid path {:?}", path_to_modfile))
     }?;
 
-    if self.function_ids.contains_key(&modhash) {
-      return Err("Duplicate module hash!".to_owned());
-    }
+    ensure!(
+      !self.function_ids.contains_key(&modhash),
+      "Duplicate module hash {}",
+      modhash.hex_string()
+    );
 
     let contents = fs::read(path_to_modfile).map_err(|e| {
-      format!(
-        "Failed to read file {}: {}",
-        path_to_modfile.to_string_lossy(),
-        e
-      )
+      anyhow!(e).context(format!(
+        "add_module file read {}",
+        path_to_modfile.to_string_lossy()
+      ))
     })?;
     let lines: Vec<&[u8]> = contents.split(|x| x == &0xa).collect();
 
     let (module_str_id, fn_map) = if let Some((head, tail)) = lines.split_first() {
       String::from_utf8(head.to_vec())
         .map_err(|e| {
-          format!(
-            "Could not parse string id of a module (path): {:?}, error: {}",
-            head, e
-          )
+          anyhow!(e).context(format!(
+            "add_module cannot not parse string id of a module: {:?}",
+            head
+          ))
         })
         .map(|v| (v, tail))
     } else {
-      Err("Empty module file".to_owned())
+      Err(anyhow!("Empty module file"))
     }?;
 
     let fn_map = FunctionMap::try_from(fn_map)?;
@@ -460,21 +457,26 @@ impl ExtModuleMap {
 }
 
 impl TryFrom<&PathBuf> for ExtModuleMap {
-  type Error = String;
+  type Error = anyhow::Error;
 
   fn try_from(path: &PathBuf) -> Result<Self, Self::Error> {
-    if !path.exists() || !path.is_dir() {
-      return Err(format!("{} is not a directory", path.to_string_lossy()));
-    }
-
+    ensure!(
+      path.exists() && path.is_dir(),
+      "{} is not a directory",
+      path.to_string_lossy()
+    );
     let mut target = ExtModuleMap::new();
 
-    let dir = std::fs::read_dir(path)
-      .map_err(|x| format!("Cannot open directory {}: {}", path.to_string_lossy(), x))?;
+    let dir = std::fs::read_dir(path).map_err(|e| {
+      anyhow!(e).context(format!("Cannot open directory {}", path.to_string_lossy()))
+    })?;
 
     for file in dir {
       let res = match file {
-        Err(e) => Err(format!("Module file could not be listed: {}", e)),
+        Err(e) => Err(anyhow!(e).context(format!(
+          "Module file {} could not be listed",
+          path.to_string_lossy()
+        ))),
         Ok(entry) => target.add_module(&entry.path()),
       };
 

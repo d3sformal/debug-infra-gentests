@@ -7,6 +7,7 @@ pub enum ReadProgress {
   NotYet, // all bytes from input consumed, result not complete yet, send another buffer
   Nop,    // buffer left untouched, you should call reset()
 }
+use anyhow::{Result, anyhow, ensure};
 
 #[derive(Debug, Copy, Clone)]
 pub enum ArgSizeTypeRef {
@@ -16,21 +17,21 @@ pub enum ArgSizeTypeRef {
 }
 
 impl TryFrom<u16> for ArgSizeTypeRef {
-  type Error = String;
+  type Error = anyhow::Error;
 
   fn try_from(id: u16) -> Result<Self, Self::Error> {
     match id {
       0..16 => Ok(Self::Fixed(id.into())),
       1026 => Ok(Self::Cstr),
       1027 => Ok(Self::Custom),
-      _ => Err(format!("Unsupported argument size type: {id}")),
+      _ => Err(anyhow!("Unsupported argument size type: {id}")),
     }
   }
 }
 
 pub trait SizeTypeReader {
   fn read_reset(&mut self) -> bool;
-  fn read(&mut self, data: &[u8]) -> Result<ReadProgress, String>;
+  fn read(&mut self, data: &[u8]) -> Result<ReadProgress>;
   fn done(&self) -> bool;
 }
 
@@ -63,7 +64,7 @@ impl FixedSizeTyReader {
 }
 
 impl SizeTypeReader for FixedSizeTyReader {
-  fn read(&mut self, data: &[u8]) -> Result<ReadProgress, String> {
+  fn read(&mut self, data: &[u8]) -> Result<ReadProgress> {
     if self.data.required_size == 0 {
       self.done_read = true;
       return Ok(ReadProgress::Done {
@@ -76,13 +77,16 @@ impl SizeTypeReader for FixedSizeTyReader {
       return Ok(ReadProgress::Nop);
     }
 
-    if self.data.required_size < self.buffer.len() {
-      return Err("Invalid condition - len!".to_string());
-    }
+    ensure!(
+      self.data.required_size >= self.buffer.len(),
+      "Invalid fixed reader condition - len!"
+    );
+
     let remaining = self.data.required_size - self.buffer.len();
-    if remaining == 0 {
-      return Err("Invalid condition - rem!".to_string());
-    }
+    ensure!(
+      remaining != 0,
+      "Invalid fixed reader condition - remaining!"
+    );
 
     let to_cpy = remaining.min(data.len());
     for item in data.iter().take(to_cpy) {
@@ -152,7 +156,7 @@ impl SizeTypeReader for CStringTypeReader {
     true
   }
 
-  fn read(&mut self, data: &[u8]) -> Result<ReadProgress, String> {
+  fn read(&mut self, data: &[u8]) -> Result<ReadProgress> {
     // this "pair" thing is necessary to make borrow checker happy
     let (newstate, retval) = match self {
       CStringTypeReader::Start => {
@@ -243,7 +247,7 @@ impl SizeTypeReader for CustomTypeReader {
     true
   }
 
-  fn read(&mut self, data: &[u8]) -> Result<ReadProgress, String> {
+  fn read(&mut self, data: &[u8]) -> Result<ReadProgress> {
     let (newself, result) = match self {
       CustomTypeReader::Start => {
         let mut tgt_sz_buff = [0u8; 8];

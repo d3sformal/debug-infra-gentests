@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use libc::{O_CREAT, O_EXCL, SEM_FAILED, c_int, mode_t, sem_open, sem_t};
 
 use crate::log::Log;
+use anyhow::{Result, bail, ensure};
 
 use super::wrappers::{PERMS_PERMISSIVE, get_errno_string, to_cstr};
 
@@ -23,26 +24,26 @@ pub enum Semaphore {
 }
 
 impl Semaphore {
-  pub fn try_post(&mut self) -> Result<(), String> {
+  pub fn try_post(&mut self) -> Result<()> {
     match self {
       Semaphore::Open {
         sem,
         cname: _,
         marker: _pd,
-      } =>
-      // SAFETY: Self invariant
-      {
-        if unsafe { libc::sem_post(*sem) } == -1 {
-          Err(format!("Failed to post semaphore: {}", get_errno_string()))
-        } else {
-          Ok(())
-        }
+      } => {
+        // SAFETY: Self invariant
+        ensure!(
+          unsafe { libc::sem_post(*sem) } != -1,
+          "Failed to post semaphore: {}",
+          get_errno_string()
+        );
+        Ok(())
       }
-      Semaphore::Closed { cname: _ } => Err("Semaphore is closed".to_string()),
+      Semaphore::Closed { cname } => bail!("Post on closed semaphore {cname}"),
     }
   }
 
-  pub fn try_wait(&mut self) -> Result<(), String> {
+  pub fn try_wait(&mut self) -> Result<()> {
     match self {
       Semaphore::Open {
         sem,
@@ -51,16 +52,14 @@ impl Semaphore {
       } =>
       // SAFETY: Self invariant
       {
-        if unsafe { libc::sem_wait(*sem) } == -1 {
-          Err(format!(
-            "Failed to wait on semaphore: {}",
-            get_errno_string()
-          ))
-        } else {
-          Ok(())
-        }
+        ensure!(
+          unsafe { libc::sem_wait(*sem) } != -1,
+          "Failed to wait on semaphore: {}",
+          get_errno_string()
+        );
+        Ok(())
       }
-      Semaphore::Closed { cname: _ } => Err("Semaphore is closed".to_string()),
+      Semaphore::Closed { cname } => bail!("Wait on closed semaphore {cname}"),
     }
   }
 
@@ -76,16 +75,25 @@ impl Semaphore {
           Err((
             Semaphore::Open {
               sem,
-              cname,
+              cname: cname.clone(),
               marker: _pd,
             },
-            format!("Failed to close semaphore: {}", get_errno_string()),
+            format!(
+              "Failed to close semaphore {}: {}",
+              cname,
+              get_errno_string()
+            ),
           ))
         } else {
           Ok(Self::Closed { cname })
         }
       }
-      Semaphore::Closed { cname: _ } => Err((self, "Semaphore is closed".to_string())),
+      Semaphore::Closed { cname } => Err((
+        Semaphore::Closed {
+          cname: cname.clone(),
+        },
+        format!("Close on closed semaphore {}", cname),
+      )),
     }
   }
 
@@ -120,7 +128,7 @@ impl Semaphore {
     value: u32,
     flags: Option<c_int>,
     mode: Option<mode_t>,
-  ) -> Result<Self, String> {
+  ) -> Result<Self> {
     let s_name = format!("{name}\x00");
     // SAFETY: line above
     let cstr_name = unsafe { to_cstr(&s_name) };
@@ -134,23 +142,22 @@ impl Semaphore {
       )
     };
 
-    if result == SEM_FAILED {
-      Err(format!(
-        "Failed to initialize semaphore {}: {}",
-        name,
-        get_errno_string()
-      ))
-    } else {
-      Log::get("try_open").info(format!("Opened semaphore {} with value {}", s_name, value));
-      Ok(Self::Open {
-        sem: result,
-        cname: s_name,
-        marker: PhantomData,
-      })
-    }
+    ensure!(
+      result != SEM_FAILED,
+      "Failed to initialize semaphore {}: {}",
+      name,
+      get_errno_string()
+    );
+
+    Log::get("try_open").info(format!("Opened semaphore {} with value {}", s_name, value));
+    Ok(Self::Open {
+      sem: result,
+      cname: s_name,
+      marker: PhantomData,
+    })
   }
 
-  pub fn try_open_exclusive(name: &str, value: u32) -> Result<Self, String> {
+  pub fn try_open_exclusive(name: &str, value: u32) -> Result<Self> {
     Self::try_open(name, value, (O_CREAT | O_EXCL).into(), None)
   }
 }
