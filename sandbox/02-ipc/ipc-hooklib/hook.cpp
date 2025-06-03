@@ -39,7 +39,6 @@ static_assert(sizeof(long long) == 8, "Expecting long long to be 8 bytes");
       if (!is_fn_under_test(module, fn)) {                                     \
         goto just_copy_arg;                                                    \
       } else {                                                                 \
-        register_call();                                                       \
         if (!should_hijack_arg()) {                                            \
           goto just_copy_arg;                                                  \
         }                                                                      \
@@ -357,7 +356,12 @@ void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id) {
     return;
   }
   if (!in_testing_fork() && is_fn_under_test(module_id, fn_id)) {
-    perform_testing(module_id, fn_id, get_call_idx());
+    perform_testing(module_id, fn_id, get_call_num());
+    // PARENT process never returns from the first call to instrumented function
+  }
+  // CHILD process returns here and registers the call
+  if (in_testing_fork() && is_fn_under_test(module_id, fn_id)) {
+    register_call();
   }
 }
 

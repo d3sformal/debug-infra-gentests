@@ -27,7 +27,7 @@ bool should_hijack_arg(void);
 uint32_t test_count(void);
 bool is_fn_under_test(uint32_t mod, uint32_t fn);
 
-uint32_t get_call_idx(void);
+uint32_t get_call_num(void);
 void register_call(void);
 void register_argument(void);
 void set_fork_flag(void);

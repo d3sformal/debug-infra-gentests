@@ -34,6 +34,7 @@ typedef struct {
   // the number of the call of the target function to instrument
   // utitlized by decrementing this value on each call -> equality to 1
   // means the current call shall be instrumented
+  // the number passed here should be "intended call 0-based index" + 2!
   unsigned int target_call_number;
 } ShmMeta;
 

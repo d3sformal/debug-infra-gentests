@@ -141,7 +141,10 @@ uint32_t test_count(void) { return s_buff_info.test_count; }
 
 void set_fork_flag(void) { s_buff_info.forked = true; }
 
-uint32_t get_call_idx(void) { return s_buff_info.target_call_number - 1; }
+// call number >1 -> keep counting down, don't hijack this call
+// call number 1  -> hijack this call
+// call number 0  -> don't hijack this call
+uint32_t get_call_num(void) { return s_buff_info.target_call_number - 1; }
 void register_call(void) {
   s_buff_info.target_call_number > 0 ? s_buff_info.target_call_number-- : 0;
 }
