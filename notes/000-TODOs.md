@@ -18,6 +18,11 @@
 * ~~split 00-testing-* to analysis and progress updates~~
     * try link each other?
 * ~~move `Capturing function arguments` somewhere else... and document the status quo~~
+* establish terminology used *eveywhere* (but initial documents?)
+    * test driver == `llcap-server`
+    * hooklib, hook library, ...
+    * ... ?
+* add some tests for `llcap-server` and hooklib now that everything seems to be more or less stable?
  
 **List of topics:**
 
@@ -102,9 +107,11 @@
 * **[DONE]** discuss possible breakage points
     * structures fitting 64 bits passed in registers
     * changes in argument order
+* try to use LLVM debug information metadata to perform instrumentation **without** the LLVM metadata customization  
 
 # TOPIC: Testing / Isolation
 * isolation inspiration - to investigate? - (`clone`/`fork` used): [mem-isolate](https://github.com/brannondorsey/mem-isolate)
+* document architecture of testing, new hooklib, diagrams, ...
 
 # TOPIC: Papers
 
@@ -112,12 +119,15 @@
     * [repo](https://github.com/RUB-SysSec/aurora)
 
 # TOPIC: Modification of incoming arguments
-* are there assumptions in the IR, that would break if we replaced arguments mid-function?
-    * the idea is to "introduce new `alloca`d variable (`%x`)" for each `%n` argument and replace each `%n` occurence with the new `%x`  
+* **[DONE?]** are there assumptions in the IR, that would break if we replaced arguments mid-function?
+    * **[DONE]** the idea is to "introduce new `alloca`d variable (`%x`)" for each `%n` argument and replace each `%n` occurence with the new `%x`
 * `const`ness vs `IR`-level modifications
     * does `-O3`, etc. impact the number of arguments in IR? (e.g. via more agressive const propagation?)
     * if prohibitive for argument "hijacking", can we at least "remove" `const`
-* validate approach that modifies the IR
+* **[DONE]** validate approach that modifies the IR
+* add smaller demo (replace the current demo) that shows everything on a smaller scale
+    * particularly the argument replacement part (simple visual confirmation for the user)
+* document the architecture, add diagrams
 
 # TOPIC: Extras
 * **[CLOSED]** report mangling bug (after rebuild of latest llvm project)
