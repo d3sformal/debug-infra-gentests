@@ -24,7 +24,8 @@
     * ... ?
 * add some tests for `llcap-server` and hooklib now that everything seems to be more or less stable?
 * proper automatic cleanup / overwrite policies for outputs
- 
+* try out various scenarios (timeouts of test cases, crashes) 
+
 **List of topics:**
 
 * [Data Capture Library](#topic-data-capture-library)
@@ -37,6 +38,8 @@
 * [Extras](#topic-extras)
 
 # TOPIC: Data Capture Library
+
+* thoroughly check for alignment issues and other UB
 
 ## Capturing funciton arguments
 

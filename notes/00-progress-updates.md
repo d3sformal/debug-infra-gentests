@@ -617,6 +617,62 @@ the arguments to `foo` very soon (the test cases are created at the start of the
 
 The child process sends a request packet to this socket and receives the function argument data in response. The child stores this data and resumes execution. The next calls to hooklib functions initialize arguments from the received data (the same hooks are used in argument capture for capturing).
 
+Diagram of the testing phase
+
+![Diagram of the testing phase](./images/diags/testing-phase.png)
+
+<details>
+<summary>
+Click for plantuml source
+</summary>
+
+```plantuml
+@startuml
+participant "llcap-server" as LLCS
+participant "Test coordinator" as TECO
+participant "Test case\n(forked)" as FORK
+
+
+activate LLCS
+LLCS -> TECO: launches\n(test nth call of foo)
+activate TECO
+TECO -> TECO: execute
+...
+TECO -> TECO: foo call\n(hook preamble)
+TECO -> TECO: register call\n(hook preamble)
+...
+alt "n-th foo call (extends hook preamble functionality)"
+loop for every captured sets of arguments P_X = {arg1, ..., argm}
+TECO -> LLCS: test start (ID, n)
+TECO -> TECO: setup sockpair
+TECO -> FORK: fork
+activate FORK
+TECO -> FORK: try service\n(msg/termination/timeout)
+FORK -> TECO: request argument\npacket
+TECO -> LLCS: request argument packet X
+LLCS -> TECO: argument packet data
+TECO -> FORK: argument packet data
+FORK -> FORK: register argument
+FORK -> FORK: register, read & replace arg 1
+...
+FORK -> FORK: register, read & replace arg m
+FORK -> FORK: resume execution with\nreplaced arguments
+...
+TECO -> FORK: try service\n(msg/termination/timeout)
+...
+FORK -> FORK: execute
+destroy FORK
+TECO -> FORK: try service\n(msg/termination/timeout)
+TECO -> LLCS: case terminated (status)
+end
+TECO -> LLCS: test ended
+destroy TECO
+end
+deactivate LLCS
+@enduml
+```
+</details>
+
 ### Issues
 
 * "diagonal" test cases are not skipped (instrumenting `n`-th call with `n`-th set of captured arguments is the same as running the original uninstrumented binary)
