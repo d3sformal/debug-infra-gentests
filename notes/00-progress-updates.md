@@ -548,7 +548,7 @@ Current version of argument encoding.
 
 ## Hijacking function arguments
 
-Current prototype (`-S -emit-llvm` extra in `-DCMAKE_CXX_FLAGS`):
+Current prototype (`-S -emit-llvm` extra in `-DCMAKE_CXX_FLAGS` of [build-arg-trace.sh](../sandbox/02-ipc/example-complex/build-arg-trace.sh)):
 
 ```
 ; Function Attrs: mustprogress noinline nounwind optnone uwtable
@@ -572,3 +572,67 @@ define dso_local noundef float @_Z28float_called_with_double_intdi(double nounde
   ret float %11
 }
 ```
+
+## Testing
+
+On high level, the architecture follows this diagram:
+
+![Fork test diagram](./images/diags/diag-fork-1.png)
+
+On a lower level, the `llcap-server` spawns the application as many times as there are **traced** function calls:
+
+For a function `foo`, we may have recorded `n` calls whose arguments we captured. Currently, we spawn `n` test subprocesses for `foo` testing. In each process, we hijack the arguments of `n`-th call to `foo`, leaving the rest unmodified.
+
+### Test subprocess - the test "coordinator"
+
+The test subprocess utilizes modified hook library to execute tests using the `fork` method:
+
+The original subprocess is the test "coordinator": once the coordinator reaches its `n`th call of `foo` (that is supposed to be hijacked), it enters a branch which:
+
+1. sets up communication channels to the `llcap-server`
+2. registers the start of the test of `foo` at call index `n`
+
+Then, for each set of arguments, it
+
+1. sets up communication channels for the child process
+2. forks child process
+3. monitors the child process until it dies/timeout is reached
+4. report the end of a single test case and repeat from 1. or:
+5. report the end of the entire test session for `foo` and call index `n`
+6. terminate
+
+In other words, the test coordinator simply prepares the environment for the test cases (by simply executing) up to a specific call of `foo` and runs them while monitoring them.
+
+The monitoring phase has 2 responsibilities:
+
+* look for test case termination
+    * extraction of information (signal, status code, timeout)
+* provide data to the test case (see below)
+    * relays the request to the `llcap-server`
+
+### Test cases - forked from the coordinator
+
+The child processes continue execution as if "nothing" has happened. Since we aim to replace
+the arguments to `foo` very soon (the test cases are created at the start of the `n`th call of the instrumented `foo`), we must obtain the argument data. The parent (coordinator) has prepared a `sockpair` - a pair of sockets we use to communicate with the test coordinator.
+
+The child process sends a request packet to this socket and receives the function argument data in response. The child stores this data and resumes execution. The next calls to hooklib functions initialize arguments from the received data (the same hooks are used in argument capture for capturing).
+
+### Issues
+
+* "diagonal" test cases are not skipped (instrumenting `n`-th call with `n`-th set of captured arguments is the same as running the original uninstrumented binary)
+* *paralelization potential*: the current implementation of the test coordinator waits for each test separately, I believe that test cases can be multiplexed by the same mechanism as the test case termination / test case messages are handled - `poll` with a timeout
+* shared state - an obvious issue that comes from parallelization of the testing phase
+    * `llcap-server` testing can be forced to be sequential (is not currently sequential - TODO?)
+    * test case running is already sequential
+    * even if everything is sequential: forking may shatter invariants after a single test case is executed (files, ...)
+* cleanup - currently, the test coordinator simply terminates (`exit`) right after all tests are executed - the binary has no chance to perform any sort of cleanup that could be part of the binary's implementation
+* (experimental) `std::string` implementation & custom types concerns:
+    * replacement is currently done by creating a new pointer on the stack
+    * is argument is an `in out` argument (passed e.g. by non-const reference), the effects of the will be mostly a no-op (as modifications will be done on a different pointer, different object)
+    * alternative approach would be to "re-allocate" or "replace" the contents of the pointer argument
+        * would most likely violate invariants (already stored hashes of such objects, `const`-ness)
+        * compared to the current approach, it does not leak memory if the object is "replacable"
+
+### Idea
+
+The method itself could be of use for a kind of fuzzing. We could select a function as we do now and generate inputs based on some criteria (or direct inspection of the IR in the instrumentation phase, or through a more high-level scripting API, ...). These inputs would be stored the same way the function argument capture data is stored. Then, the "captured data" will be supplied to the testing phase to investigate some behavior that is "not so easily explored" via simple "input mutation". (e.g. in software whose architecture prohibits testing of some of its parts...)

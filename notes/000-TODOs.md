@@ -23,6 +23,7 @@
     * hooklib, hook library, ...
     * ... ?
 * add some tests for `llcap-server` and hooklib now that everything seems to be more or less stable?
+* proper automatic cleanup / overwrite policies for outputs
  
 **List of topics:**
 
@@ -112,6 +113,7 @@
 # TOPIC: Testing / Isolation
 * isolation inspiration - to investigate? - (`clone`/`fork` used): [mem-isolate](https://github.com/brannondorsey/mem-isolate)
 * document architecture of testing, new hooklib, diagrams, ...
+* send termination signal to a fork that timed out
 
 # TOPIC: Papers
 
