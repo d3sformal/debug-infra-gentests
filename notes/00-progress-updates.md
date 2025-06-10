@@ -692,3 +692,148 @@ deactivate LLCS
 ### Idea
 
 The method itself could be of use for a kind of fuzzing. We could select a function as we do now and generate inputs based on some criteria (or direct inspection of the IR in the instrumentation phase, or through a more high-level scripting API, ...). These inputs would be stored the same way the function argument capture data is stored. Then, the "captured data" will be supplied to the testing phase to investigate some behavior that is "not so easily explored" via simple "input mutation". (e.g. in software whose architecture prohibits testing of some of its parts...)
+
+
+## Demo log
+
+Consider the [example-complex](../sandbox/02-ipc/example-complex/) modified so that the last few statements of `main` look like this:
+
+```c++
+int main() {
+// snip main ...
+  int result = int_called_with_int_float(21, 3.0f);
+  int_called_with_int_float(3, 4.0f);
+  if (result == 0) {
+    *((volatile int*)0);
+  }
+  int_called_with_int_float(44, 2.0f);
+  // if int_called_with_int_float is tested, one test will fail due to the check above
+  int_called_with_int_float(0, 0);
+  pass128Struct(Fits128Bits());
+  return result;
+}
+```
+
+We instrument the `std::string templateTest<std::string>(std::string s)` (returns `s` unchanged) and `int_called_with_int_float(int, float)` (returns `int * float`), record calls and test, we obtain the following output:
+
+```
+I | [main] Verbosity: 0
+I | [main] Reading function selection
+I | [main] Masking
+I | [main] Setting up function packet reader
+I | [main] Setting up function packet server
+I | [main] Run program for fn m: F7DB0979 f: 03000000
+I | [main] Run program for fn m: F7DB0979 f: 17000000
+I | [main] Waiting for jobs to finish...
+I | [main] Waiting for server to exit...
+I | [main] ---------------------------------------------------------------
+I | [main] Test results (41): 
+I | [main] F7DB0979 03000000 1 0 Exit(21)
+I | [main] F7DB0979 03000000 1 1 Exit(12)
+I | [main] F7DB0979 03000000 1 2 Exit(88)
+I | [main] F7DB0979 03000000 1 3 Signal(11)
+I | [main] F7DB0979 03000000 2 0 Exit(63)
+I | [main] F7DB0979 03000000 2 1 Exit(63)
+I | [main] F7DB0979 03000000 2 2 Exit(63)
+I | [main] F7DB0979 03000000 2 3 Exit(63)
+I | [main] F7DB0979 03000000 3 0 Exit(63)
+I | [main] F7DB0979 03000000 3 1 Exit(63)
+I | [main] F7DB0979 03000000 3 2 Exit(63)
+I | [main] F7DB0979 03000000 3 3 Exit(63)
+I | [main] F7DB0979 03000000 4 0 Exit(63)
+I | [main] F7DB0979 03000000 4 1 Exit(63)
+I | [main] F7DB0979 03000000 4 2 Exit(63)
+I | [main] F7DB0979 03000000 4 3 Exit(63)
+I | [main] F7DB0979 17000000 1 0 Exit(63)
+I | [main] F7DB0979 17000000 1 1 Exit(63)
+I | [main] F7DB0979 17000000 1 2 Exit(63)
+I | [main] F7DB0979 17000000 1 3 Exit(63)
+I | [main] F7DB0979 17000000 1 4 Exit(63)
+I | [main] F7DB0979 17000000 2 0 Exit(63)
+I | [main] F7DB0979 17000000 2 1 Exit(63)
+I | [main] F7DB0979 17000000 2 2 Exit(63)
+I | [main] F7DB0979 17000000 2 3 Exit(63)
+I | [main] F7DB0979 17000000 2 4 Exit(63)
+I | [main] F7DB0979 17000000 3 0 Exit(63)
+I | [main] F7DB0979 17000000 3 1 Exit(63)
+I | [main] F7DB0979 17000000 3 2 Exit(63)
+I | [main] F7DB0979 17000000 3 3 Exit(63)
+I | [main] F7DB0979 17000000 3 4 Exit(63)
+I | [main] F7DB0979 17000000 4 0 Exit(63)
+I | [main] F7DB0979 17000000 4 1 Exit(63)
+I | [main] F7DB0979 17000000 4 2 Exit(63)
+I | [main] F7DB0979 17000000 4 3 Exit(63)
+I | [main] F7DB0979 17000000 4 4 Exit(63)
+I | [main] F7DB0979 17000000 5 0 Exit(63)
+I | [main] F7DB0979 17000000 5 1 Exit(63)
+I | [main] F7DB0979 17000000 5 2 Exit(63)
+I | [main] F7DB0979 17000000 5 3 Exit(63)
+I | [main] F7DB0979 17000000 5 4 Exit(63)
+I | [main] ---------------------------------------------------------------
+T | [main] Cleaning up
+I | [main] Exiting...
+```
+
+### Primitive value replacement
+
+The first numeric column is the number of the encountered call which is instrumented.
+The second numeric column indicates the index of the set of arguments used as a replacement. 
+From the first 4 results, we clearly see that the replacement of the primitive types took 
+place correctly because of the Exit code change / terminating signal.
+
+```
+I | [main] F7DB0979 03000000 1 0 Exit(21)
+I | [main] F7DB0979 03000000 1 1 Exit(12)
+I | [main] F7DB0979 03000000 1 2 Exit(88)
+I | [main] F7DB0979 03000000 1 3 Signal(11)
+```
+
+### String (custom) type replacement
+
+As for the string argument, we have to inspect the output.
+
+Normally, `templateTest` is called with a string, ` x` is appended to the result and `templateTest` si called again. This is done 5 times, printing the string in each iteration:
+
+```
+www
+www x
+www x x
+www x x x
+www x x x x
+```
+
+
+Inspection of the test cases where the last call of `templateTest` is instrumented yields this sequence of outputs:
+```
+// (argument and thus return value) replaced with the string visually identical to the first one
+www
+www x
+www x x
+www x x x
+www
+// replaced with the second one
+www
+www x
+www x x
+www x x x
+www x
+
+www
+www x
+www x x
+www x x x
+www x x
+
+www
+www x
+www x x
+www x x x
+www x x x
+
+// diagnoal case - seemingly no argument change
+www
+www x
+www x x
+www x x x
+www x x x x
+```

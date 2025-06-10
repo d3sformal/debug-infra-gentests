@@ -117,6 +117,7 @@
 * isolation inspiration - to investigate? - (`clone`/`fork` used): [mem-isolate](https://github.com/brannondorsey/mem-isolate)
 * document architecture of testing, new hooklib, diagrams, ...
 * send termination signal to a fork that timed out
+* `I | [main] Run program for fn m: F7DB0979 f: 03000000` - add name and module path (nonverbose output)
 
 # TOPIC: Papers
 
