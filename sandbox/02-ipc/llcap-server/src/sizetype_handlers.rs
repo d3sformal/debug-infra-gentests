@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub enum ReadProgress {
   Done {
     // reading of a value is done
@@ -208,7 +209,7 @@ impl SizeTypeReader for CStringTypeReader {
   }
 }
 
-// true if exactly done (taken n bytes)
+/// Returns start + number of bytes consumed
 fn take_num_into_slice(n: usize, start: usize, out: &mut [u8; 8], inp: &[u8]) -> usize {
   let mut offs = start;
   for i in inp.iter().take(n) {
@@ -220,6 +221,7 @@ fn take_num_into_slice(n: usize, start: usize, out: &mut [u8; 8], inp: &[u8]) ->
 }
 
 const CUSTOM_TYPE_SIZE_SPEC_SIZE: usize = 8;
+#[derive(Debug)]
 pub enum CustomTypeReader {
   Start,
   ReadingTgtSize {
@@ -262,7 +264,13 @@ impl SizeTypeReader for CustomTypeReader {
           )
         } else if idx == tgt_sz_buff.len() && tgt_sz_buff.len() < data.len() {
           let mut payload = vec![];
-          perform_reading_stage(data, idx, u64::from_le_bytes(tgt_sz_buff), &mut payload)
+          perform_reading_stage(
+            data,
+            idx,
+            u64::from_le_bytes(tgt_sz_buff),
+            &mut payload,
+            tgt_sz_buff.len(),
+          )
         } else {
           (
             Some(CustomTypeReader::ReadingTgtSize {
@@ -274,7 +282,8 @@ impl SizeTypeReader for CustomTypeReader {
         }
       }
       CustomTypeReader::ReadingTgtSize { idx, bytes } => {
-        let offs = take_num_into_slice(8, 0, bytes, data);
+        let uidx = *idx as usize;
+        let offs = take_num_into_slice(8 - uidx, uidx, bytes, data);
         if offs == bytes.len() {
           (
             Some(CustomTypeReader::Reading {
@@ -291,7 +300,7 @@ impl SizeTypeReader for CustomTypeReader {
       CustomTypeReader::Reading {
         target_size,
         payload,
-      } => perform_reading_stage(data, 0, *target_size, payload),
+      } => perform_reading_stage(data, 0, *target_size, payload, 0),
       CustomTypeReader::Finished => (None, ReadProgress::Nop),
     };
     if let Some(newself) = newself {
@@ -310,6 +319,7 @@ fn perform_reading_stage(
   offset: usize,
   target_size: u64,
   payload: &mut Vec<u8>,
+  previous_read: usize,
 ) -> (Option<CustomTypeReader>, ReadProgress) {
   let to_read = target_size as usize - payload.len();
   for b in data.iter().skip(offset).take(to_read) {
@@ -323,7 +333,7 @@ fn perform_reading_stage(
       Some(CustomTypeReader::Finished),
       ReadProgress::Done {
         payload: exhg,
-        consumed_bytes: to_read + CUSTOM_TYPE_SIZE_SPEC_SIZE,
+        consumed_bytes: to_read + previous_read,
       },
     )
   } else {
@@ -336,5 +346,318 @@ fn perform_reading_stage(
       }),
       ReadProgress::NotYet,
     )
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn fix_r_zero_done_on_init() {
+    let zero_reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 0 });
+    assert!(!zero_reader.done());
+  }
+
+  #[test]
+  fn fix_r_zero_does_not_consume() {
+    let data = [0u8, 0u8];
+    let mut zero_reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 0 });
+    assert!(
+      matches!(zero_reader.read(&data), Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() == 0 && consumed_bytes == 0 )
+    );
+  }
+
+  #[test]
+  fn fix_r_zero_does_not_consume_empty() {
+    let data = [];
+    let mut zero_reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 0 });
+    assert!(
+      matches!(zero_reader.read(&data), Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() == 0 && consumed_bytes == 0 )
+    );
+  }
+
+  #[test]
+  fn fix_r_zero_done_after_read() {
+    let data = [0u8, 0u8];
+    let mut zero_reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 0 });
+    let _ = zero_reader.read(&data);
+    assert!(zero_reader.done());
+  }
+
+  #[test]
+  fn fix_r_nonzero_done_on_init() {
+    let reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 2 });
+    assert!(!reader.done());
+  }
+
+  #[test]
+  fn fix_r_nonzero_read_exact() {
+    let data = [1u8, 2u8];
+    let mut reader = FixedSizeTyReader::new(FixedSizeTyData {
+      required_size: data.len(),
+    });
+    assert!(
+      matches!(reader.read(&data), Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() ==  data.len() && payload[0] == data[0] && payload[1] == data[1] && consumed_bytes == data.len() )
+    );
+  }
+
+  #[test]
+  fn fix_r_nonzero_done_after_read_exact() {
+    let data = [1u8, 2u8];
+    let mut reader = FixedSizeTyReader::new(FixedSizeTyData {
+      required_size: data.len(),
+    });
+    let _ = reader.read(&data);
+    assert!(reader.done());
+  }
+
+  #[test]
+  fn fix_r_nonzero_read_more() {
+    let data = [1u8, 2u8, 3u8];
+    let sz = data.len() - 1;
+    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: sz });
+    assert!(
+      matches!(reader.read(&data), Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() == sz && payload[0] == data[0] && payload[1] == data[1] && consumed_bytes == sz )
+    );
+  }
+
+  #[test]
+  fn fix_r_nonzero_done_after_read_more() {
+    let data = [1u8, 2u8, 3u8];
+    let sz = data.len() - 1;
+    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: sz });
+    let _ = reader.read(&data);
+    assert!(reader.done());
+  }
+
+  #[test]
+  fn fix_r_nonzero_not_done_after_read_less() {
+    let data = [1u8, 2u8];
+    let sz = data.len() + 1;
+    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: sz });
+    let _ = reader.read(&data);
+    assert!(!reader.done());
+  }
+
+  #[test]
+  fn fix_r_nonzero_read_less() {
+    let data = [1u8, 2u8];
+    let sz = data.len() + 1;
+    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: sz });
+    matches!(reader.read(&data), Ok(ReadProgress::NotYet));
+  }
+
+  #[test]
+  fn fix_r_nonzero_read_zero() {
+    let data = [];
+    let sz = 1;
+    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: sz });
+    matches!(reader.read(&data), Ok(ReadProgress::NotYet));
+  }
+
+  #[test]
+  fn fix_r_nonzero_read_less_and_exact() {
+    let data = [2u8];
+    let data2 = [111u8];
+    let sz = data.len() + 1;
+    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: sz });
+    let _ = reader.read(&data);
+    let res = reader.read(&data2);
+    assert!(
+      matches!(res, Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() == sz && consumed_bytes == 1 && payload[0] == data[0] && payload[1] == data2[0])
+    );
+  }
+
+  #[test]
+  fn fix_r_nonzero_done_after_read_less_and_exact() {
+    let data = [2u8];
+    let data2 = [111u8];
+    let sz = data.len() + 1;
+    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: sz });
+    let _ = reader.read(&data);
+    let _ = reader.read(&data2);
+    assert!(reader.done());
+  }
+
+  #[test]
+  fn cus_r_read_init_not_done() {
+    let reader = CustomTypeReader::new();
+    assert!(!reader.done());
+  }
+  #[test]
+  fn cus_r_read_zero_size() {
+    let mut reader = CustomTypeReader::new();
+    let res = reader.read(&(0u8).to_le_bytes());
+    assert!(matches!(res, Ok(ReadProgress::NotYet)));
+  }
+
+  fn make_packet(data: &[u8]) -> Vec<u8> {
+    let mut res: Vec<u8> = vec![];
+    res.append(&mut data.len().to_le_bytes().to_vec());
+    res.append(&mut data.to_vec());
+    res
+  }
+
+  #[test]
+  fn cus_r_read_size_less() {
+    let mut reader = CustomTypeReader::new();
+    let num_data = 123098u32;
+    let pkt = make_packet(&num_data.to_le_bytes());
+    let (len, _) = pkt.split_at(8);
+    let (len_less, _) = len.split_at(4);
+    let res = reader.read(len_less);
+    assert!(matches!(res, Ok(ReadProgress::NotYet)));
+    assert!(matches!(
+      reader,
+      CustomTypeReader::ReadingTgtSize { idx: _, bytes: _ }
+    ));
+  }
+
+  fn assert_reader_finished(
+    res: Result<ReadProgress>,
+    reader: CustomTypeReader,
+    expected_parsed: u32,
+    expected_consumed: usize,
+  ) {
+    assert!(
+      matches!(res, Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() == 4 && u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]) == expected_parsed && consumed_bytes == expected_consumed)
+    );
+    assert!(matches!(reader, CustomTypeReader::Finished));
+  }
+  #[test]
+  fn cus_r_read_size_exact_w_data_exact() {
+    let mut reader = CustomTypeReader::new();
+    let num_data = 123098u32;
+    let pkt = make_packet(&num_data.to_le_bytes());
+    let (len, data) = pkt.split_at(8);
+    let res = reader.read(len);
+    assert!(matches!(res, Ok(ReadProgress::NotYet)));
+
+    let res = reader.read(data);
+    assert_reader_finished(res, reader, num_data, data.len());
+  }
+
+  #[test]
+  fn cus_r_read_size_less_exact_w_data_exact() {
+    let mut reader = CustomTypeReader::new();
+    let num_data = 123098u32;
+    let pkt = make_packet(&num_data.to_le_bytes());
+    let (len, data) = pkt.split_at(8);
+    let (len_less, len_ex) = len.split_at(4);
+    let res = reader.read(len_less);
+    assert!(matches!(res, Ok(ReadProgress::NotYet)));
+    assert!(matches!(
+      reader,
+      CustomTypeReader::ReadingTgtSize { idx: _, bytes: _ }
+    ));
+
+    let res = reader.read(len_ex);
+    assert!(matches!(res, Ok(ReadProgress::NotYet)));
+    assert!(matches!(
+      reader,
+      CustomTypeReader::Reading {
+        target_size: _,
+        payload: _
+      }
+    ));
+
+    let res = reader.read(data);
+    assert_reader_finished(res, reader, num_data, data.len());
+  }
+
+  #[test]
+  fn cus_r_read_size_exact_w_data_less() {
+    let mut reader = CustomTypeReader::new();
+    let num_data = 123098u32;
+    let pkt = make_packet(&num_data.to_le_bytes());
+    let (len, data) = pkt.split_at(8);
+    let res = reader.read(len);
+    assert!(matches!(res, Ok(ReadProgress::NotYet)));
+
+    let (data_less, _) = data.split_at(1);
+    let res = reader.read(data_less);
+    assert!(matches!(res, Ok(ReadProgress::NotYet)));
+    assert!(matches!(
+      reader,
+      CustomTypeReader::Reading {
+        target_size: _,
+        payload: _
+      }
+    ));
+  }
+
+  #[test]
+  fn cus_r_read_size_less_exact_w_data_less() {
+    let mut reader = CustomTypeReader::new();
+    let num_data = 123098u32;
+    let pkt = make_packet(&num_data.to_le_bytes());
+    let (len, data) = pkt.split_at(8);
+    let (len_less, len_ex) = len.split_at(4);
+    let res = reader.read(len_less);
+    assert!(matches!(res, Ok(ReadProgress::NotYet)));
+    assert!(matches!(
+      reader,
+      CustomTypeReader::ReadingTgtSize { idx: _, bytes: _ }
+    ));
+    let res = reader.read(len_ex);
+    assert!(matches!(res, Ok(ReadProgress::NotYet)));
+    assert!(matches!(
+      reader,
+      CustomTypeReader::Reading {
+        target_size: _,
+        payload: _
+      }
+    ));
+
+    let (data_less, _) = data.split_at(1);
+    let res = reader.read(data_less);
+    assert!(matches!(res, Ok(ReadProgress::NotYet)));
+    assert!(matches!(
+      reader,
+      CustomTypeReader::Reading {
+        target_size: _,
+        payload: _
+      }
+    ));
+  }
+
+  #[test]
+  fn cus_r_read_size_exact_w_data_less_exact() {
+    let mut reader = CustomTypeReader::new();
+    let num_data = 123098u32;
+    let pkt = make_packet(&num_data.to_le_bytes());
+    let (len, data) = pkt.split_at(8);
+    let _ = reader.read(len);
+
+    let (data_less, data_exact) = data.split_at(1);
+    let _ = reader.read(data_less);
+    let res = reader.read(data_exact);
+    assert_reader_finished(res, reader, num_data, data_exact.len());
+  }
+
+  #[test]
+  fn cus_r_read_size_less_exact_w_data_less_exact() {
+    let mut reader = CustomTypeReader::new();
+    let num_data = 123098u32;
+    let pkt = make_packet(&num_data.to_le_bytes());
+    let (len, data) = pkt.split_at(8);
+    let (len_less, len_ex) = len.split_at(4);
+    let _ = reader.read(len_less);
+    let _ = reader.read(len_ex);
+
+    let (data_less, data_exact) = data.split_at(1);
+    let _ = reader.read(data_less);
+    let res = reader.read(data_exact);
+    assert_reader_finished(res, reader, num_data, data_exact.len());
+  }
+
+  #[test]
+  fn cus_r_read_payload_exact() {
+    let mut reader = CustomTypeReader::new();
+    let num_data = 123098u32;
+    let pkt = make_packet(&num_data.to_le_bytes());
+    let res = reader.read(&pkt);
+    assert_reader_finished(res, reader, num_data, pkt.len());
   }
 }
