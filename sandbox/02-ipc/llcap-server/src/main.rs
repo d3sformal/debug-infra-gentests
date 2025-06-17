@@ -32,8 +32,8 @@ use shmem_capture::{
 use stages::{
   arg_capture::{ArgPacketDumper, PacketReader},
   call_tracing::{
-    export_data, export_tracing_selection, import_data, import_tracing_selection,
-    obtain_function_id_selection, print_summary,
+    export_call_trace_data, export_tracing_selection, import_call_trace_data,
+    import_tracing_selection, obtain_function_id_selection, print_summary,
   },
   testing::test_server_job,
 };
@@ -101,7 +101,7 @@ async fn main() -> Result<()> {
 
       let mut pairs = if let Some(in_path) = import_path {
         lg.trace("Importing");
-        let result = import_data(in_path, &modules)?;
+        let result = import_call_trace_data(in_path, &modules)?;
         lg.info("Import done");
         result
       } else {
@@ -138,8 +138,8 @@ async fn main() -> Result<()> {
       if let Some(out_path) = out_file {
         lg.trace("Exporting");
 
-        let _ =
-          export_data(&pairs, out_path).inspect_err(|e| lg.crit(format!("Export failed: {e}")));
+        let _ = export_call_trace_data(&pairs, out_path)
+          .inspect_err(|e| lg.crit(format!("Export failed: {e}")));
 
         lg.info("Export done");
       }

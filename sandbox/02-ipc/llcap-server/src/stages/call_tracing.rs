@@ -17,11 +17,11 @@ pub enum Message {
   ControlEnd,
 }
 
-pub fn print_summary(sorted_pairs: &mut [(NumFunUid, u64)], mods: &ExtModuleMap) {
+pub fn print_summary(frequencies: &mut [(NumFunUid, u64)], mods: &ExtModuleMap) {
   let lg = Log::get("summary");
   let mut seen_modules: HashSet<IntegralModId> = HashSet::new();
 
-  for (idx, (fninfo, freq)) in sorted_pairs.iter().enumerate() {
+  for (idx, (fninfo, freq)) in frequencies.iter().enumerate() {
     let modstr = mods.get_module_string_id(fninfo.module_id);
     let fn_name = mods.get_function_name(fninfo.module_id, fninfo.function_id);
     seen_modules.insert(fninfo.module_id);
@@ -42,7 +42,7 @@ pub fn print_summary(sorted_pairs: &mut [(NumFunUid, u64)], mods: &ExtModuleMap)
   mods.print_summary();
   println!(
     "Total traced calls: {}",
-    sorted_pairs.iter_mut().map(|x| x.1).sum::<u64>()
+    frequencies.iter_mut().map(|x| x.1).sum::<u64>()
   );
   println!("Traces originated from {} modules", seen_modules.len());
 }
@@ -53,6 +53,7 @@ fn get_line_input() -> Result<String> {
   Ok(user_input)
 }
 
+/// a CLI "dialog" that collects a list of functions the user wishes to trace
 pub fn obtain_function_id_selection(
   ordered_traces: &[NumFunUid],
   mapping: &ExtModuleMap,
@@ -98,6 +99,7 @@ pub fn obtain_function_id_selection(
   result
 }
 
+/// exports function identifiers for later reuse (in instrumentation, re-importing between llcap-server re-executions)
 pub fn export_tracing_selection(selection: &[TextFunUid], mapping: &ExtModuleMap) -> Result<()> {
   let lg = Log::get("export_tracing_selection");
   let default_path = Constants::default_selected_functions_path();
@@ -157,6 +159,7 @@ pub fn export_tracing_selection(selection: &[TextFunUid], mapping: &ExtModuleMap
   Ok(())
 }
 
+/// imports selection (as exported by [`export_tracing_selection`])
 pub fn import_tracing_selection(path: &Path) -> Result<Vec<TextFunUid>> {
   let mut result = Vec::with_capacity(8);
 
@@ -186,10 +189,13 @@ pub fn import_tracing_selection(path: &Path) -> Result<Vec<TextFunUid>> {
   Ok(result)
 }
 
-pub type ImportFormat = Vec<(NumFunUid, u64)>;
-pub type ExportFormat = ImportFormat;
+pub type CallTraceImportExport = Vec<(NumFunUid, u64)>;
 
-pub fn export_data(sorted_data: &ExportFormat, out_path: PathBuf) -> Result<()> {
+/// exports traced information for later reuse (e.g. for importing later to generate a new function selection without the need to call-trace the target program)
+pub fn export_call_trace_data(
+  sorted_data: &CallTraceImportExport,
+  out_path: PathBuf,
+) -> Result<()> {
   let lg = Log::get("call_tracing::export_data");
 
   let mut f = File::create(&out_path)?;
@@ -207,7 +213,11 @@ pub fn export_data(sorted_data: &ExportFormat, out_path: PathBuf) -> Result<()> 
   Ok(())
 }
 
-pub fn import_data(in_path: PathBuf, modmap: &ExtModuleMap) -> Result<ImportFormat> {
+/// imports call tracing results as exported by [`export_data`]
+pub fn import_call_trace_data(
+  in_path: PathBuf,
+  modmap: &ExtModuleMap,
+) -> Result<CallTraceImportExport> {
   let mut result = vec![];
 
   let f = File::open(&in_path)?;
