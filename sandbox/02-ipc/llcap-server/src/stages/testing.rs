@@ -6,7 +6,7 @@ use std::{
   time::Duration,
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use tokio::{
   io::{AsyncReadExt, BufReader},
   net::{UnixListener, UnixStream, unix::OwnedWriteHalf},
@@ -72,8 +72,9 @@ pub async fn test_server_job(
   }
   lg.info("Finishing");
   for handle in handles {
-    lg.trace("Finishing handle");
-    handle.await?;
+    if let Err(e) = handle.await? {
+      lg.crit(format!("A job has finished with error: {}", e));
+    }
   }
   mem::drop(listener);
   fs::remove_file(path)?;
@@ -236,19 +237,13 @@ async fn single_test_job(
   modules: Arc<ExtModuleMap>,
   mem_limit: usize,
   results: Arc<Mutex<TestResults>>,
-) {
+) -> Result<()> {
   // TODO: report test failures in "results" (see return statements - failure is only logged)
-  // TODO: consider returning a Result since the "parent" of this future waits for it
+
   // initialize state, packet supply and the stream for reading and writing to the client on the other side
   let mut state = ClientState::Init;
   let mut lg = Log::get(&format!("single_test_job@{:?}", state));
-  let mut packets = match PacketReader::new(&packet_dir, &modules, mem_limit) {
-    Ok(p) => p,
-    Err(e) => {
-      lg.crit(e.to_string());
-      return;
-    }
-  };
+  let mut packets = PacketReader::new(&packet_dir, &modules, mem_limit)?;
   let (read, mut write) = stream.into_split();
   let mut buff_stream = BufReader::new(read);
 
@@ -258,51 +253,34 @@ async fn single_test_job(
     // polling with timeout to check for client status updates
     match timeout(Duration::from_millis(100), buff_stream.read(&mut data)).await {
       Ok(Ok(0)) => {
-        lg.crit(format!(
-          "Client closed connection - ending, state: {:?}",
-          state
-        ));
-        return;
+        bail!("Client closed connection - ending, state: {:?}", state);
       }
       Ok(Ok(n)) => {
         if n != data.len() {
-          lg.crit(format!(
+          bail!(
             "Expected {} bytes, got {n} - ending, state: {:?}",
             data.len(),
             state
-          ));
-          return;
+          );
         }
         // we received a message, we continue to message handling
       }
       Ok(Err(e)) => {
-        lg.crit(format!("Not readable {e} - ending, state: {:?}", state));
-        return;
+        bail!("Not readable {e} - ending, state: {:?}", state);
       }
       Err(_) => continue, // timeout
     }
 
     lg.trace(format!("Read done: {:?}", data));
-    let msg = match TestMessage::try_from(data.as_slice()) {
-      Ok(msg) => msg,
-      Err(e) => {
-        lg.crit(e);
-        return;
-      }
-    };
+    let msg = TestMessage::try_from(data.as_slice()).map_err(|e| anyhow!(e))?;
 
-    let (new_state, response) = match handle_client_msg(state, msg, &mut packets, results.clone()) {
-      Ok((s, r)) => (s, r),
-      Err(e) => {
-        lg.crit(e);
-        return;
-      }
-    };
+    let (new_state, response) =
+      handle_client_msg(state, msg, &mut packets, results.clone()).map_err(|e| anyhow!(e))?;
     state = new_state;
     lg = Log::get(&format!("single_test_job@{:?}", state)); // rename logger for a new state
     if matches!(state, ClientState::Ended) {
       lg.trace("Client ended");
-      return;
+      return Ok(());
     }
 
     lg.trace(format!("Response: {:?}", response));
@@ -310,13 +288,7 @@ async fn single_test_job(
       continue; // no response required
     }
 
-    match send_protocol_response(&mut write, &response.unwrap()).await {
-      Ok(_) => (),
-      Err(e) => {
-        lg.crit(e);
-        return;
-      }
-    }
+    send_protocol_response(&mut write, &response.unwrap()).await?;
   }
 }
 
@@ -378,10 +350,10 @@ fn handle_client_msg(
   }
 }
 
-async fn raw_send_to_client(stream: &mut OwnedWriteHalf, data: &[u8]) -> Result<(), String> {
+async fn raw_send_to_client(stream: &mut OwnedWriteHalf, data: &[u8]) -> Result<()> {
   let mut idx = 0;
   loop {
-    stream.writable().await.map_err(|e| e.to_string())?;
+    stream.writable().await?;
     // not expecting too much contention/throughput, busy looping seems okay
     match stream.try_write(data.split_at(idx).1) {
       Ok(n) => {
@@ -395,17 +367,14 @@ async fn raw_send_to_client(stream: &mut OwnedWriteHalf, data: &[u8]) -> Result<
         continue;
       }
       Err(e) => {
-        return Err(e.to_string());
+        bail!(e.to_string());
       }
     }
   }
 }
 
 /// sends response in accordance with the comms protocol between the test client and this server
-async fn send_protocol_response(
-  write_stream: &mut OwnedWriteHalf,
-  response: &[u8],
-) -> Result<(), String> {
+async fn send_protocol_response(write_stream: &mut OwnedWriteHalf, response: &[u8]) -> Result<()> {
   // send response length + response
   raw_send_to_client(
     write_stream,
