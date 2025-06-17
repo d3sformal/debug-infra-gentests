@@ -10,6 +10,7 @@ use anyhow::{Result, anyhow, ensure};
 use num_traits::Num;
 
 #[derive(Debug)]
+/// Contains information about functions (in a single module)
 pub struct FunctionMap {
   fnid_to_demangled_name: HashMap<IntegralFnId, String>,
   demangled_name_to_fnid: HashMap<String, IntegralFnId>,
@@ -50,6 +51,7 @@ impl FunctionMap {
     self.demangled_name_to_fnid.get(name)
   }
 
+  /// masks (removes) function IDs in this object that are NOT present in fn_ids
   pub fn mask_include(&mut self, fn_ids: &HashSet<IntegralFnId>) -> Result<()> {
     let counter_ids = self
       .fnid_to_argument_sizes
@@ -90,6 +92,11 @@ where
     .and_then(|v| T::from_str_radix(&v, radix10).map_err(|e| anyhow!(e.to_string())))
 }
 
+/// parses a function metadata tuple
+///
+/// Note that this format is not binary, the name, fnId, argCnt, ... are all
+/// parsed as strings
+/// expected format: name | fnId | argCnt | [argSpec: argCnt \0 delimited strings ]
 fn parse_fn_id_tuple(inp: &[&[u8]]) -> Result<(IntegralFnId, String, Vec<u16>)> {
   ensure!(
     inp.len() >= 3,
@@ -99,9 +106,9 @@ fn parse_fn_id_tuple(inp: &[&[u8]]) -> Result<(IntegralFnId, String, Vec<u16>)> 
   let try_name = String::from_utf8(inp[0].to_vec())?;
   let fnid: IntegralFnId = IntegralFnId(bytes_to_num(inp[1])?);
 
-  let arg_count: usize = bytes_to_num(inp[2])?;
+  let arg_count: u64 = bytes_to_num(inp[2])?;
   ensure!(
-    3 + arg_count == inp.len(),
+    3 + arg_count == inp.len() as u64,
     "Invalid argument count - not in sync with the data"
   );
 
@@ -116,6 +123,8 @@ fn parse_fn_id_tuple(inp: &[&[u8]]) -> Result<(IntegralFnId, String, Vec<u16>)> 
 
 impl TryFrom<&[&[u8]]> for FunctionMap {
   type Error = anyhow::Error;
+  /// parses the function metadata "lines"
+  /// each "line" is a \0 delimited list of bytes (format specified in parse_fn_id_tuple)
   fn try_from(value: &[&[u8]]) -> Result<Self, Self::Error> {
     let newline_split = value.iter().filter(|v| !v.is_empty());
     let zero_splits: Vec<Vec<&[u8]>> = newline_split
@@ -169,10 +178,15 @@ impl TryFrom<&[&[u8]]> for FunctionMap {
 
 fn u32_to_hex_string(num: u32) -> String {
   let [b1, b2, b3, b4] = num.to_le_bytes();
-  format!("{:02X}{:02X}{:02X}{:02X}", b1, b2, b3, b4)
+  format!("{b1:02X}{b2:02X}{b3:02X}{b4:02X}")
 }
 
 #[derive(Hash, Debug, PartialEq, Eq, Clone, Copy)]
+/// a binary identifier of a function - this ID is the central identification point
+/// for the hooking library, LLVM plugins as well as internal data structures of
+/// llcap-server
+///
+/// It is usually used along with the IntegralModuleId as a unique function idefntifier
 pub struct IntegralFnId(pub u32);
 
 impl From<u32> for IntegralFnId {
@@ -186,7 +200,7 @@ impl IntegralFnId {
     u32_to_hex_string(self.0)
   }
 
-  // a compile check for the size, if this one fails, also see Self::size
+  /// a compile check for the size, if this one fails, also see Self::size
   fn _helper_fn(x: Self) -> u32 {
     x.0
   }
@@ -197,6 +211,11 @@ impl IntegralFnId {
 }
 
 #[derive(Hash, Debug, PartialEq, Eq, Clone, Copy)]
+/// a binary identifier of an LLVM module - this ID is the central identification point
+/// for the hooking library, LLVM plugins as well as internal data structures of
+/// llcap-server
+///
+/// It is usually used along with the IntegralFnId as a unique function idefntifier
 pub struct IntegralModId(pub u32);
 
 impl From<u32> for IntegralModId {
@@ -210,7 +229,7 @@ impl IntegralModId {
     u32_to_hex_string(self.0)
   }
 
-  // a compile check for the size, if this one fails, also see Self::size
+  /// a compile check for the size, if this one fails, also see Self::size
   fn _helper_fn(x: Self) -> u32 {
     x.0
   }
@@ -220,6 +239,7 @@ impl IntegralModId {
   }
 }
 
+/// tries to convert a hexadecimal string to a u32 (the underlying type of IntegralMod/FnId)
 fn try_from_hex_string<T: Num + std::ops::ShlAssign<u32> + std::ops::AddAssign<u32>>(
   value: &str,
 ) -> Result<T> {
@@ -245,6 +265,8 @@ fn try_from_hex_string<T: Num + std::ops::ShlAssign<u32> + std::ops::AddAssign<u
   }
   Ok(inner)
 }
+
+// convenience implementations of deref to permit simpler usage in the place of u32, ...
 
 impl Deref for IntegralModId {
   type Target = u32;
@@ -278,10 +300,15 @@ impl TryFrom<&str> for IntegralFnId {
   }
 }
 
-// URGENT TODO: document!
 #[derive(Debug)]
+/// "External Module Mapping" is a simple data structure where function data is stored in a
+/// Module -> Function hierarchy
+///
+/// This object holds function and module metadata that can be parsed from module maps as generated
+/// by the accompanying LLVM plugin
 pub struct ExtModuleMap {
   function_ids: HashMap<IntegralModId, FunctionMap>,
+  /// Identifiers of modules as exposed by LLVM (currently those are the paths of source files)
   module_paths: HashMap<IntegralModId, String>,
 }
 
@@ -310,14 +337,19 @@ impl ExtModuleMap {
     self.function_ids.get(&mod_id).map(|f| f.functions())
   }
 
+  /// performs masking (removal) of functions whose IDs are NOT included in the targets argument
+  ///
+  /// the postcondition of this function is that only the intersection of self and targets
+  /// is preserved in self while other functions (and modules, if they become empty / are not included in targets) are removed
   pub fn mask_include(&mut self, targets: &[LLVMFunId]) -> Result<()> {
     let lg = Log::get("mask_include");
     lg.info(format!("Masking {} values", targets.len()));
 
+    // map targets into hash map & sets of numerical IDs
     let mut allowlist_fn: HashMap<IntegralModId, HashSet<IntegralFnId>> = HashMap::new();
     for id in targets {
       let (m, f) = (&id.fn_module, &id.fn_name);
-      let mod_id = match self.find_module_hash_by_name(m) {
+      let mod_id = match self.get_module_hash_by_name(m) {
         Some(x) => x,
         None => {
           lg.warn(format!("Module hash for name {m} not found"));
@@ -337,6 +369,7 @@ impl ExtModuleMap {
       }
     }
 
+    // perform filtering for each module in targets
     for modid in self
       .module_paths
       .keys()
@@ -357,19 +390,28 @@ impl ExtModuleMap {
       ));
     }
 
+    // remove modules NOT included in targets
     let mods = self.function_ids.keys().cloned().collect::<Vec<_>>();
     for md in mods {
       let fun = &self.function_ids[&md];
       if fun.is_empty() || !allowlist_fn.contains_key(&md) {
         self.function_ids.remove(&md);
         self.module_paths.remove(&md);
-        lg.info(format!("Removed module {}", md.hex_string()));
+        lg.trace(format!("Removed module {}", md.hex_string()));
       }
     }
 
     Ok(())
   }
 
+  /// inserts a new LLVM module from a module-map file (as generated by the LLVM plugin)
+  ///
+  /// the path to the module file is expected to be in the hexadecimal IntegralModId form
+  /// each module map file is a newline-separated list:
+  ///
+  /// first line is reserved for module metadata (module path for now)
+  /// all other lines are function metadata lines (for futher format info,
+  /// see FunctionMap)
   pub fn add_module(&mut self, path_to_modfile: &PathBuf) -> Result<()> {
     let modhash = if let Some(hash_res) = path_to_modfile
       .file_name()
@@ -414,7 +456,8 @@ impl ExtModuleMap {
     Ok(())
   }
 
-  pub fn find_module_hash_by_name(&self, name: &String) -> Option<IntegralModId> {
+  /// module path (LLVM) -> IntegralModId
+  pub fn get_module_hash_by_name(&self, name: &String) -> Option<IntegralModId> {
     self
       .module_paths
       .iter()
@@ -459,6 +502,7 @@ impl ExtModuleMap {
 impl TryFrom<&PathBuf> for ExtModuleMap {
   type Error = anyhow::Error;
 
+  /// tries to parse module maps from a **directory**
   fn try_from(path: &PathBuf) -> Result<Self, Self::Error> {
     ensure!(
       path.exists() && path.is_dir(),
@@ -486,5 +530,201 @@ impl TryFrom<&PathBuf> for ExtModuleMap {
     }
 
     Ok(target)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn basic_fn_meta_line_parse() {
+    let fn_name = "somefn";
+    let fn_id = 0u32;
+    let arg_list = [1u16, 234u16, 44u16];
+    let underlying = format!(
+      "{}\0{}\0{}\0{}",
+      fn_name,
+      fn_id,
+      arg_list.len(),
+      arg_list.map(|x| x.to_string()).join("\0")
+    );
+    let data = underlying.as_bytes();
+    let split = data.split(|x| *x == b'\0').collect::<Vec<&[u8]>>();
+    let parsed = parse_fn_id_tuple(&split);
+    if parsed.is_err() {
+      println!("{}", parsed.unwrap_err());
+      assert!(false);
+      unreachable!()
+    }
+    let (pfid, pname, pargs) = parsed.unwrap();
+    assert!(*pfid == fn_id);
+    assert!(pname == fn_name);
+    assert!(pargs.len() == arg_list.len());
+    assert!(arg_list.iter().enumerate().all(|(i, v)| { pargs[i] == *v }));
+  }
+
+  fn setup_test_map() -> ExtModuleMap {
+    let function_ids = HashMap::from_iter(vec![
+      (
+        IntegralModId(1),
+        FunctionMap {
+          fnid_to_demangled_name: HashMap::from_iter(vec![
+            (IntegralFnId(1), "Name1".to_string()),
+            (IntegralFnId(2), "Name2".to_string()),
+          ]),
+          demangled_name_to_fnid: HashMap::from_iter(vec![
+            ("Name1".to_string(), IntegralFnId(1)),
+            ("Name2".to_string(), IntegralFnId(2)),
+          ]),
+          fnid_to_argument_sizes: HashMap::from_iter(vec![
+            (IntegralFnId(1), vec![]),
+            (IntegralFnId(2), vec![]),
+          ]),
+        },
+      ),
+      (
+        IntegralModId(2),
+        FunctionMap {
+          fnid_to_demangled_name: HashMap::from_iter(vec![
+            (IntegralFnId(1), "Name3".to_string()),
+            (IntegralFnId(2), "Name4".to_string()),
+          ]),
+          demangled_name_to_fnid: HashMap::from_iter(vec![
+            ("Name3".to_string(), IntegralFnId(1)),
+            ("Name4".to_string(), IntegralFnId(2)),
+          ]),
+          fnid_to_argument_sizes: HashMap::from_iter(vec![
+            (IntegralFnId(1), vec![]),
+            (IntegralFnId(2), vec![]),
+          ]),
+        },
+      ),
+    ]);
+
+    let module_paths = HashMap::from_iter(vec![
+      (IntegralModId(1), "path1".to_string()),
+      (IntegralModId(2), "path2".to_string()),
+    ]);
+
+    ExtModuleMap {
+      function_ids,
+      module_paths,
+    }
+  }
+
+  #[test]
+  fn mask_include_removes_fn() {
+    let mut map = setup_test_map();
+
+    assert!(
+      map
+        .mask_include(&[LLVMFunId {
+          fn_name: "Name1".to_string(),
+          fn_module: "path1".to_string()
+        }])
+        .is_ok()
+    );
+
+    assert!(
+      map
+        .get_function_id(IntegralModId(1), &"Name2".to_string())
+        .is_none()
+    );
+    assert!(
+      map
+        .get_function_arg_size_descriptors(IntegralModId(1), IntegralFnId(2))
+        .is_none()
+    );
+    assert!(
+      map
+        .get_function_name(IntegralModId(1), IntegralFnId(2))
+        .is_none()
+    );
+
+    assert!(
+      map
+        .get_function_id(IntegralModId(2), &"Name3".to_string())
+        .is_none()
+    );
+    assert!(
+      map
+        .get_function_arg_size_descriptors(IntegralModId(2), IntegralFnId(1))
+        .is_none()
+    );
+    assert!(
+      map
+        .get_function_name(IntegralModId(2), IntegralFnId(1))
+        .is_none()
+    );
+  }
+
+  #[test]
+  fn mask_include_removes_mod() {
+    let mut map = setup_test_map();
+
+    assert!(
+      map
+        .mask_include(&[LLVMFunId {
+          fn_name: "Name1".to_string(),
+          fn_module: "path1".to_string()
+        }])
+        .is_ok()
+    );
+
+    assert!(
+      map
+        .get_function_id(IntegralModId(2), &"Name3".to_string())
+        .is_none()
+    );
+    assert!(
+      map
+        .get_function_arg_size_descriptors(IntegralModId(2), IntegralFnId(1))
+        .is_none()
+    );
+    assert!(
+      map
+        .get_function_name(IntegralModId(2), IntegralFnId(1))
+        .is_none()
+    );
+
+    assert!(
+      map
+        .get_function_id(IntegralModId(2), &"Name4".to_string())
+        .is_none()
+    );
+    assert!(
+      map
+        .get_function_arg_size_descriptors(IntegralModId(2), IntegralFnId(2))
+        .is_none()
+    );
+    assert!(
+      map
+        .get_function_name(IntegralModId(2), IntegralFnId(2))
+        .is_none()
+    );
+
+    assert!(map.get_module_string_id(IntegralModId(2)).is_none());
+  }
+
+  #[test]
+  fn mask_include_keeps() {
+    let mut map = setup_test_map();
+    let _ = map.mask_include(&[LLVMFunId {
+      fn_name: "Name1".to_string(),
+      fn_module: "path1".to_string(),
+    }]);
+
+    assert!(
+      matches!(map.get_function_id(IntegralModId(1), &"Name1".to_string()), Some(v) if **v == 1)
+    );
+    assert!(
+      map
+        .get_function_arg_size_descriptors(IntegralModId(1), IntegralFnId(1))
+        .is_some()
+    );
+    assert!(
+      matches!(map.get_function_name(IntegralModId(1), IntegralFnId(1)), Some(v) if v == "Name1")
+    );
   }
 }

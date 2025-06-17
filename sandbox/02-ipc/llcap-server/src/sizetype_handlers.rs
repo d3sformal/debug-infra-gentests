@@ -1,14 +1,19 @@
+use anyhow::{Result, anyhow, ensure};
+
 #[derive(Debug)]
 pub enum ReadProgress {
+  /// reading of a value is done
   Done {
-    // reading of a value is done
-    payload: Vec<u8>,      // result to be saved
-    consumed_bytes: usize, // nr of bytes consumed from input
+    /// result to be saved
+    payload: Vec<u8>,
+    /// nr of bytes consumed from input
+    consumed_bytes: usize,
   },
-  NotYet, // all bytes from input consumed, result not complete yet, send another buffer
-  Nop,    // buffer left untouched, you should call reset()
+  /// all bytes from input consumed, result not complete yet, send another buffer
+  NotYet,
+  /// buffer left untouched, you should call reset()
+  Nop,
 }
-use anyhow::{Result, anyhow, ensure};
 
 #[derive(Debug, Copy, Clone)]
 pub enum ArgSizeTypeRef {
@@ -31,8 +36,15 @@ impl TryFrom<u16> for ArgSizeTypeRef {
 }
 
 pub trait SizeTypeReader {
+  /// resets the reader, acts as a noop if reader is not finished
+  ///
+  /// returns true when reader was reset
   fn read_reset(&mut self) -> bool;
+  /// consumes bytes from data
+  /// may consume any number of bytes (up to length), refer to ReadProgress
+  /// for return value information
   fn read(&mut self, data: &[u8]) -> Result<ReadProgress>;
+  /// indicates that reader has finished reading, data is ready
   fn done(&self) -> bool;
 }
 
@@ -481,6 +493,56 @@ mod tests {
   }
 
   #[test]
+  fn fix_r_nonzero_empty_reset() {
+    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 1 });
+    assert!(!reader.read_reset());
+  }
+
+  #[test]
+  fn fix_r_nonzero_nonnempty_reset() {
+    let data = [1u8, 2u8];
+    let data_smaller = [1u8];
+    let mut reader = FixedSizeTyReader::new(FixedSizeTyData {
+      required_size: data.len(),
+    });
+    let _ = reader.read(&data_smaller);
+    assert!(!reader.read_reset());
+  }
+
+  #[test]
+  fn fix_r_nonzero_read_after_reset() {
+    let data = [1u8, 2u8];
+    let mut reader = FixedSizeTyReader::new(FixedSizeTyData {
+      required_size: data.len(),
+    });
+    let _ = reader.read(&data);
+    reader.read_reset();
+    assert!(
+      matches!(reader.read(&data), Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() ==  data.len() && payload[0] == data[0] && payload[1] == data[1] && consumed_bytes == data.len() )
+    );
+  }
+
+  #[test]
+  fn fix_r_zero_empty_reset() {
+    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 0 });
+    assert!(!reader.read_reset());
+  }
+
+  #[test]
+  fn fix_r_zero_reset_after_empty_read() {
+    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 0 });
+    let _ = reader.read(&[]);
+    assert!(reader.read_reset());
+  }
+
+  #[test]
+  fn fix_r_zero_reset_after_nonempty_read() {
+    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 0 });
+    let _ = reader.read(&[1, 2]);
+    assert!(reader.read_reset());
+  }
+
+  #[test]
   fn cus_r_read_init_not_done() {
     let reader = CustomTypeReader::new();
     assert!(!reader.done());
@@ -655,6 +717,34 @@ mod tests {
   #[test]
   fn cus_r_read_payload_exact() {
     let mut reader = CustomTypeReader::new();
+    let num_data = 123098u32;
+    let pkt = make_packet(&num_data.to_le_bytes());
+    let res = reader.read(&pkt);
+    assert_reader_finished(res, reader, num_data, pkt.len());
+  }
+
+  #[test]
+  fn cus_r_read_payload_exact_reset() {
+    let mut reader = CustomTypeReader::new();
+    let num_data = 123098u32;
+    let pkt = make_packet(&num_data.to_le_bytes());
+    let _ = reader.read(&pkt);
+    assert!(reader.read_reset());
+  }
+
+  #[test]
+  fn cus_r_read_empty_reset() {
+    let mut reader = CustomTypeReader::new();
+    assert!(!reader.read_reset());
+  }
+
+  #[test]
+  fn cus_r_read_after_reset() {
+    let mut reader = CustomTypeReader::new();
+    let num_data = 123098u32;
+    let pkt = make_packet(&num_data.to_le_bytes());
+    let _ = reader.read(&pkt);
+    reader.read_reset();
     let num_data = 123098u32;
     let pkt = make_packet(&num_data.to_le_bytes());
     let res = reader.read(&pkt);

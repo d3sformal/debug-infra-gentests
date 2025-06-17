@@ -143,7 +143,7 @@ pub fn export_tracing_selection(selection: &[LLVMFunId], mapping: &ExtModuleMap)
 
   let mut file = File::create(&path).map_err(|e| anyhow!(e).context("export_tracing_seleciton"))?;
   for selected in selection {
-    let mod_hash = mapping.find_module_hash_by_name(&selected.fn_module);
+    let mod_hash = mapping.get_module_hash_by_name(&selected.fn_module);
     ensure!(
       mod_hash.is_some(),
       "Could not resolve module hash from {}",
