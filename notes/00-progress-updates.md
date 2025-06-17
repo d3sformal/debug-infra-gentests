@@ -5,6 +5,7 @@
 * [April 28](#april-28)
 * [May 19](#may-19)
 * [June](#june)
+* [End of June](#end-of-june)
 
 # End of March 2025
 
@@ -837,3 +838,56 @@ www x x
 www x x x
 www x x x x
 ```
+
+# End of June
+
+* refactoring, tests (and bug fixes), corrected example, made result reporting prettier
+
+```
+I | [main] ---------------------------------------------------------------
+I | [main] Test results (41): 
+I | [main] Module ID | Function ID |  Call  | Packet | Result
+I | [main]  F7DB0979 |  03000000   |   1    |   0    | Exit(63)
+I | [main]  F7DB0979 |  03000000   |   1    |   1    | Exit(12)
+I | [main]  F7DB0979 |  03000000   |   1    |   2    | Exit(88)
+I | [main]  F7DB0979 |  03000000   |   1    |   3    | Signal(11)
+I | [main]  F7DB0979 |  03000000   |   2    |   0    | Exit(63)
+I | [main]  F7DB0979 |  03000000   |   2    |   1    | Exit(63)
+I | [main]  F7DB0979 |  03000000   |   2    |   2    | Exit(63)
+I | [main]  F7DB0979 |  03000000   |   2    |   3    | Exit(63)
+I | [main]  F7DB0979 |  03000000   |   3    |   0    | Exit(63)
+I | [main]  F7DB0979 |  03000000   |   3    |   1    | Exit(63)
+I | [main]  F7DB0979 |  03000000   |   3    |   2    | Exit(63)
+I | [main]  F7DB0979 |  03000000   |   3    |   3    | Exit(63)
+I | [main]  F7DB0979 |  03000000   |   4    |   0    | Exit(63)
+I | [main]  F7DB0979 |  03000000   |   4    |   1    | Exit(63)
+I | [main]  F7DB0979 |  03000000   |   4    |   2    | Exit(63)
+I | [main]  F7DB0979 |  03000000   |   4    |   3    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   1    |   0    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   1    |   1    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   1    |   2    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   1    |   3    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   1    |   4    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   2    |   0    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   2    |   1    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   2    |   2    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   2    |   3    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   2    |   4    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   3    |   0    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   3    |   1    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   3    |   2    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   3    |   3    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   3    |   4    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   4    |   0    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   4    |   1    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   4    |   2    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   4    |   3    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   4    |   4    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   5    |   0    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   5    |   1    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   5    |   2    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   5    |   3    | Exit(63)
+I | [main]  F7DB0979 |  17000000   |   5    |   4    | Exit(63)
+I | [main] --------------------------------------------------------------
+```
+

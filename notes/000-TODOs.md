@@ -19,12 +19,22 @@
     * try link each other?
 * ~~move `Capturing function arguments` somewhere else... and document the status quo~~
 * establish terminology used *eveywhere* (but initial documents?)
-    * test driver == `llcap-server`
+    * test driver === `llcap-server`
+    * test coordinator === the parent of all forked test cases
+    * argument packet of a function `foo` === n-tuple of `foo`s arguments
+    * argument capture of a function `foo` === (process of obtaining of the **or** the) set of all recorded argument packets of a function `foo`
     * hooklib, hook library, ...
     * ... ?
-* add some tests for `llcap-server` and hooklib now that everything seems to be more or less stable?
-* proper automatic cleanup / overwrite policies for outputs
+* add some tests for `llcap-server` and hooklib now that everything seems to be more or less stable? [in progress]
+* proper automatic cleanup / overwrite policies for outputs [in progress - especially in arg capture]
 * try out various scenarios (timeouts of test cases, crashes) 
+* add a simple argument replacement example
+* add a guide for adding custom type support
+* try compilation from scratch in a new environment 
+* (optionally?) terminate program right after tested function returns
+    * exception handling???
+* investigate debug metadata usage instead of current approach
+* validate argument splitting works/is disallowed
 
 **List of topics:**
 
