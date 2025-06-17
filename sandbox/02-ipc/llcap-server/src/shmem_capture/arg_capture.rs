@@ -372,22 +372,7 @@ fn update_from_buffer(
         mut buff,
       } => {
         if let Some(dumper) = capture_target.get_packet_dumper(mod_id, fn_id) {
-          dumper
-            .write(&mut (buff.len() as u32).to_le_bytes())
-            .map_err(|e| {
-              e.context(format!(
-                "Packet len dumping failed for {} mod {}",
-                fn_id.hex_string(),
-                mod_id.hex_string()
-              ))
-            })?;
-          dumper.write(&mut buff).map_err(|e| {
-            e.context(format!(
-              "Packet content dumping failed for {} mod {}",
-              fn_id.hex_string(),
-              mod_id.hex_string()
-            ))
-          })?;
+          dumper.dump(&mut buff)?;
         }
         Log::get("AT update_from_buffer").trace(format!("{:?}", buff));
         state.payload.push((mod_id, fn_id, buff));

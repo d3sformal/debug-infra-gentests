@@ -13,6 +13,7 @@ use crate::{
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId},
 };
 
+/// dumps argument packet data into a file
 pub struct FunctionPacketDumper {
   _fnid: IntegralFnId,
   underlying_file: BufWriter<File>,
@@ -31,12 +32,23 @@ impl FunctionPacketDumper {
     })
   }
 
-  // Ok result returns the number of bytes written
-  pub fn write(&mut self, buff: &mut [u8]) -> Result<usize> {
-    self.underlying_file.write(buff).map_err(|e| anyhow!(e))
+  /// Dumps the raw packet
+  ///
+  /// Ok variant contains the total number of bytes written
+  pub fn dump(&mut self, packet_payload: &mut [u8]) -> Result<usize> {
+    let n = self
+      .underlying_file
+      .write(&(packet_payload.len() as u32).to_le_bytes())
+      .map_err(|e| anyhow!(e).context("Packet length dump failed"))?;
+    self
+      .underlying_file
+      .write(packet_payload)
+      .map_err(|e| anyhow!(e))
+      .map(|v| v + n)
   }
 }
 
+/// aggregates function packet dumpers associated with a module
 pub struct ModulePacketDumper {
   _mod_id: IntegralModId,
   func_dumpers: HashMap<IntegralFnId, FunctionPacketDumper>,
@@ -83,12 +95,14 @@ impl ModulePacketDumper {
   }
 }
 
+/// dumps argument packet data to a persistent (filesystem) structure
 pub struct ArgPacketDumper {
   dumpers: HashMap<IntegralModId, ModulePacketDumper>,
   _root: PathBuf,
 }
 
 impl ArgPacketDumper {
+  /// creates a dumper that writes data into the root_out_dir directory
   pub fn new(root_out_dir: &Path, module_maps: &ExtModuleMap, mem_limit: usize) -> Result<Self> {
     let mut result_map = HashMap::new();
 
@@ -128,14 +142,18 @@ impl ArgPacketDumper {
   }
 }
 
-struct CaptureRecord {
+/// facilitates read-only access to a single argument capture data stream
+/// (multiple packets inside a capture for a single function)
+struct CaptureReader {
   path: PathBuf,
   file: BufReader<File>,
-  tests: usize,
+  packets: usize,
   args: usize,
   idx: usize,
 }
 
+/// exposes iteration over individual argument packets on individual function basis
+/// and metadata (packet counts, ...)
 pub struct PacketReader {
   captures: HashMap<(IntegralModId, IntegralFnId), Arc<Mutex<dyn PacketIterator + Send>>>,
 }
@@ -176,14 +194,15 @@ impl PacketReader {
             function.hex_string()
           ));
           {
-            let mut record = CaptureRecord {
+            let mut record = CaptureReader {
               path: path.clone(),
               file: BufReader::with_capacity(capacity, File::open(path.clone())?),
-              tests: 0,
+              packets: 0,
               args: 0,
               idx: 0,
             };
 
+            // a single pass on all packets to count them (and validate them)
             while record.read_next_packet()?.is_some() {
               tests += 1;
             }
@@ -203,10 +222,10 @@ impl PacketReader {
           lg.info(format!("\targs {} ", args));
           captures.insert(
             (*module, *function),
-            Arc::new(Mutex::new(CaptureRecord {
+            Arc::new(Mutex::new(CaptureReader {
               path: path.clone(),
               file: BufReader::with_capacity(capacity, File::open(path)?),
-              tests,
+              packets: tests,
               args,
               idx: 0,
             })),
@@ -252,11 +271,11 @@ impl PacketReader {
     it.try_reset()
   }
 
-  pub fn get_test_count(&self, module: IntegralModId, fun: IntegralFnId) -> Option<u32> {
+  pub fn get_packet_count(&self, module: IntegralModId, fun: IntegralFnId) -> Option<u32> {
     self
       .captures
       .get(&(module, fun))
-      .map(|v| v.lock().unwrap().test_count())
+      .map(|v| v.lock().unwrap().packet_count())
   }
 
   pub fn get_arg_count(&self, module: IntegralModId, fun: IntegralFnId) -> Option<u32> {
@@ -274,18 +293,20 @@ impl PacketReader {
   }
 }
 
+/// represents a forward packet iterator that may be reset to the begining
 trait PacketIterator {
   fn read_next_packet(&mut self) -> Result<Option<Vec<u8>>>;
-  fn test_count(&self) -> u32;
+  fn packet_count(&self) -> u32;
   fn arg_count(&self) -> u32;
   fn try_reset(&mut self) -> Result<()>;
   fn upcoming_packet_idx(&mut self) -> usize;
 }
 
-impl PacketIterator for CaptureRecord {
+/// see [`FunctionPacketDumper::dump`]
+impl PacketIterator for CaptureReader {
   fn read_next_packet(&mut self) -> Result<Option<Vec<u8>>> {
     let mut buf = [0u8; std::mem::size_of::<u32>()];
-
+    // packet size
     match self.file.read_exact(&mut buf) {
       Ok(()) => (),
       Err(e) => {
@@ -312,8 +333,8 @@ impl PacketIterator for CaptureRecord {
     }
   }
 
-  fn test_count(&self) -> u32 {
-    self.tests as u32
+  fn packet_count(&self) -> u32 {
+    self.packets as u32
   }
 
   fn arg_count(&self) -> u32 {
@@ -338,7 +359,7 @@ impl PacketIterator for EmptyPacketIter {
     Ok(None)
   }
 
-  fn test_count(&self) -> u32 {
+  fn packet_count(&self) -> u32 {
     0
   }
 
@@ -361,7 +382,7 @@ pub trait PacketProvider {
 
 impl PacketProvider for PacketReader {
   fn get_packet(&mut self, m: IntegralModId, f: IntegralFnId, index: usize) -> Option<Vec<u8>> {
-    let tests = self.get_test_count(m, f)?;
+    let tests = self.get_packet_count(m, f)?;
     if tests == 0 {
       return None;
     } else if index as u32 >= tests {

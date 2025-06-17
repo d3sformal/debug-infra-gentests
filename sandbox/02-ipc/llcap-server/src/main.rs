@@ -232,7 +232,7 @@ async fn main() -> Result<()> {
       for module in modules.modules() {
         for function in modules.functions(*module).unwrap() {
           let test_count = packet_reader
-            .get_test_count(*module, *function)
+            .get_packet_count(*module, *function)
             .ok_or(anyhow!(
               "Not found tests: {} {}",
               module.hex_string(),
