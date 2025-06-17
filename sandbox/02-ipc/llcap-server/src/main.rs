@@ -32,7 +32,7 @@ use shmem_capture::{
 use stages::{
   arg_capture::{ArgPacketDumper, PacketReader},
   call_tracing::{
-    FunctionCallInfo, export_data, export_tracing_selection, import_data, import_tracing_selection,
+    export_data, export_tracing_selection, import_data, import_tracing_selection,
     obtain_function_id_selection, print_summary,
   },
   testing::test_server_job,
@@ -40,7 +40,7 @@ use stages::{
 use tokio::time::{sleep, timeout};
 
 use crate::{
-  modmap::{IntegralFnId, IntegralModId},
+  modmap::{IntegralFnId, IntegralModId, NumFunUid},
   shmem_capture::TracingInfra,
 };
 
@@ -144,7 +144,7 @@ async fn main() -> Result<()> {
         lg.info("Export done");
       }
 
-      let traces = pairs.iter().map(|x| x.0).collect::<Vec<FunctionCallInfo>>();
+      let traces = pairs.iter().map(|x| x.0).collect::<Vec<NumFunUid>>();
       let selected_fns = obtain_function_id_selection(&traces, &modules);
       export_tracing_selection(&selected_fns, &modules)?;
     }

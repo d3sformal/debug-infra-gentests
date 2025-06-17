@@ -9,36 +9,15 @@ use std::{
 use crate::{
   constants::Constants,
   log::Log,
-  modmap::{ExtModuleMap, IntegralFnId, IntegralModId},
+  modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid, TextFunUid},
 };
 
-#[derive(Hash, PartialEq, Eq, Debug, Copy, Clone)]
-pub struct FunctionCallInfo {
-  pub function_id: IntegralFnId,
-  pub module_id: IntegralModId,
-}
-
-impl FunctionCallInfo {
-  pub fn new(fn_id: IntegralFnId, mod_id: IntegralModId) -> Self {
-    Self {
-      function_id: fn_id,
-      module_id: mod_id,
-    }
-  }
-}
-
 pub enum Message {
-  Normal(FunctionCallInfo),
+  Normal(NumFunUid),
   ControlEnd,
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct LLVMFunId {
-  pub fn_name: String,
-  pub fn_module: String,
-}
-
-pub fn print_summary(sorted_pairs: &mut [(FunctionCallInfo, u64)], mods: &ExtModuleMap) {
+pub fn print_summary(sorted_pairs: &mut [(NumFunUid, u64)], mods: &ExtModuleMap) {
   let lg = Log::get("summary");
   let mut seen_modules: HashSet<IntegralModId> = HashSet::new();
 
@@ -75,9 +54,9 @@ fn get_line_input() -> Result<String> {
 }
 
 pub fn obtain_function_id_selection(
-  ordered_traces: &[FunctionCallInfo],
+  ordered_traces: &[NumFunUid],
   mapping: &ExtModuleMap,
-) -> Vec<LLVMFunId> {
+) -> Vec<TextFunUid> {
   let lg = Log::get("obtain_function_ids");
   println!("Enter indicies of function to test (single line, numbers separated by spaces):");
   let user_input = get_line_input().expect("Error collecting input");
@@ -88,7 +67,7 @@ pub fn obtain_function_id_selection(
     match inp.parse::<usize>() {
       Ok(i) => {
         if i < ordered_traces.len() {
-          let FunctionCallInfo {
+          let NumFunUid {
             function_id,
             module_id,
           } = ordered_traces[i];
@@ -99,7 +78,7 @@ pub fn obtain_function_id_selection(
             (None, _) | (_, None) => {
               lg.crit(format!("Skipping index {inp} - invalid fn-id or mod-id"));
             }
-            (Some(fs), Some(ms)) => result.push(LLVMFunId {
+            (Some(fs), Some(ms)) => result.push(TextFunUid {
               fn_name: fs.clone(),
               fn_module: ms.clone(),
             }),
@@ -119,7 +98,7 @@ pub fn obtain_function_id_selection(
   result
 }
 
-pub fn export_tracing_selection(selection: &[LLVMFunId], mapping: &ExtModuleMap) -> Result<()> {
+pub fn export_tracing_selection(selection: &[TextFunUid], mapping: &ExtModuleMap) -> Result<()> {
   let lg = Log::get("export_tracing_selection");
   let default_path = Constants::default_selected_functions_path();
   println!(
@@ -178,7 +157,7 @@ pub fn export_tracing_selection(selection: &[LLVMFunId], mapping: &ExtModuleMap)
   Ok(())
 }
 
-pub fn import_tracing_selection(path: &Path) -> Result<Vec<LLVMFunId>> {
+pub fn import_tracing_selection(path: &Path) -> Result<Vec<TextFunUid>> {
   let mut result = Vec::with_capacity(8);
 
   let mut f =
@@ -196,7 +175,7 @@ pub fn import_tracing_selection(path: &Path) -> Result<Vec<LLVMFunId>> {
     ensure!(module.is_some(), "Module name not found in {:?}", line);
     ensure!(function.is_some(), "Function name not found in {:?}", line);
 
-    result.push(LLVMFunId {
+    result.push(TextFunUid {
       fn_module: module.unwrap().to_string(),
       fn_name: function.unwrap().to_string(),
     });
@@ -207,7 +186,7 @@ pub fn import_tracing_selection(path: &Path) -> Result<Vec<LLVMFunId>> {
   Ok(result)
 }
 
-pub type ImportFormat = Vec<(FunctionCallInfo, u64)>;
+pub type ImportFormat = Vec<(NumFunUid, u64)>;
 pub type ExportFormat = ImportFormat;
 
 pub fn export_data(sorted_data: &ExportFormat, out_path: PathBuf) -> Result<()> {
@@ -266,7 +245,7 @@ pub fn import_data(in_path: PathBuf, modmap: &ExtModuleMap) -> Result<ImportForm
         *mod_id,
         *fnid
       );
-      result.push((FunctionCallInfo::new(fnid, mod_id), fr));
+      result.push((NumFunUid::new(fnid, mod_id), fr));
     } else {
       bail!(
         "Failed to parse import, invalid format in one of the numbers {:?}",

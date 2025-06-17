@@ -5,9 +5,159 @@ use std::{collections::HashMap, fs, path::PathBuf};
 use crate::Log;
 use crate::constants::Constants;
 use crate::sizetype_handlers::ArgSizeTypeRef;
-use crate::stages::call_tracing::LLVMFunId;
 use anyhow::{Result, anyhow, ensure};
 use num_traits::Num;
+
+// BEGIN SECTION function & module identifiers
+
+fn u32_to_hex_string(num: u32) -> String {
+  let [b1, b2, b3, b4] = num.to_le_bytes();
+  format!("{b1:02X}{b2:02X}{b3:02X}{b4:02X}")
+}
+
+#[derive(Hash, Debug, PartialEq, Eq, Clone, Copy)]
+/// a binary identifier of a function - this ID is the central identification point
+/// for the hooking library, LLVM plugins as well as internal data structures of
+/// llcap-server
+///
+/// It is usually used along with the IntegralModuleId as a unique function idefntifier
+pub struct IntegralFnId(pub u32);
+
+impl From<u32> for IntegralFnId {
+  fn from(value: u32) -> Self {
+    Self(value)
+  }
+}
+
+impl IntegralFnId {
+  pub fn hex_string(&self) -> String {
+    u32_to_hex_string(self.0)
+  }
+
+  /// a compile check for the size, if this one fails, also see Self::size
+  fn _helper_fn(x: Self) -> u32 {
+    x.0
+  }
+
+  pub const fn byte_size() -> usize {
+    std::mem::size_of::<u32>()
+  }
+}
+
+#[derive(Hash, Debug, PartialEq, Eq, Clone, Copy)]
+/// a binary identifier of an LLVM module - this ID is the central identification point
+/// for the hooking library, LLVM plugins as well as internal data structures of
+/// llcap-server
+///
+/// It is usually used along with the IntegralFnId as a unique function idefntifier
+pub struct IntegralModId(pub u32);
+
+impl From<u32> for IntegralModId {
+  fn from(value: u32) -> Self {
+    Self(value)
+  }
+}
+
+impl IntegralModId {
+  pub fn hex_string(&self) -> String {
+    u32_to_hex_string(self.0)
+  }
+
+  /// a compile check for the size, if this one fails, also see Self::size
+  fn _helper_fn(x: Self) -> u32 {
+    x.0
+  }
+
+  pub const fn byte_size() -> usize {
+    std::mem::size_of::<u32>()
+  }
+}
+
+/// tries to convert a hexadecimal string to a u32 (the underlying type of IntegralMod/FnId)
+fn try_from_hex_string<T: Num + std::ops::ShlAssign<u32> + std::ops::AddAssign<u32>>(
+  value: &str,
+) -> Result<T> {
+  ensure!(
+    value.chars().count() == std::mem::size_of::<T>() * 2,
+    "Invalid size"
+  );
+
+  let mut inner: T = T::zero();
+  for v in value.chars() {
+    inner <<= 4; // in order to not "over shift" in the last iteration
+
+    ensure!(v.is_ascii(), "Invalid module id (ascii): {value}");
+
+    let v = v.to_ascii_uppercase();
+    let num_val = match v {
+      '0'..='9' => v as u32 - '0' as u32,
+      'A'..='F' => v as u32 - 'A' as u32 + 10,
+      _ => return Err(anyhow!("Invalid module id (char): {value}")),
+    };
+
+    inner += num_val;
+  }
+  Ok(inner)
+}
+
+// convenience implementations of deref to permit simpler usage in the place of u32, ...
+
+impl Deref for IntegralModId {
+  type Target = u32;
+
+  fn deref(&self) -> &Self::Target {
+    &self.0
+  }
+}
+
+impl Deref for IntegralFnId {
+  type Target = u32;
+
+  fn deref(&self) -> &Self::Target {
+    &self.0
+  }
+}
+
+impl TryFrom<&str> for IntegralModId {
+  type Error = anyhow::Error;
+
+  fn try_from(value: &str) -> Result<Self, Self::Error> {
+    try_from_hex_string(value).map(Self)
+  }
+}
+
+impl TryFrom<&str> for IntegralFnId {
+  type Error = anyhow::Error;
+
+  fn try_from(value: &str) -> Result<Self, Self::Error> {
+    try_from_hex_string(value).map(Self)
+  }
+}
+
+#[derive(Hash, PartialEq, Eq, Debug, Copy, Clone)]
+/// numeric unique function identifier
+pub struct NumFunUid {
+  pub function_id: IntegralFnId,
+  pub module_id: IntegralModId,
+}
+
+impl NumFunUid {
+  pub fn new(fn_id: IntegralFnId, mod_id: IntegralModId) -> Self {
+    Self {
+      function_id: fn_id,
+      module_id: mod_id,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+/// textual unique function identifier
+pub struct TextFunUid {
+  pub fn_name: String,
+  pub fn_module: String,
+}
+
+// END SECTION function & module identifiers
 
 #[derive(Debug)]
 /// Contains information about functions (in a single module)
@@ -180,130 +330,6 @@ impl TryFrom<&[&[u8]]> for FunctionMap {
   }
 }
 
-fn u32_to_hex_string(num: u32) -> String {
-  let [b1, b2, b3, b4] = num.to_le_bytes();
-  format!("{b1:02X}{b2:02X}{b3:02X}{b4:02X}")
-}
-
-#[derive(Hash, Debug, PartialEq, Eq, Clone, Copy)]
-/// a binary identifier of a function - this ID is the central identification point
-/// for the hooking library, LLVM plugins as well as internal data structures of
-/// llcap-server
-///
-/// It is usually used along with the IntegralModuleId as a unique function idefntifier
-pub struct IntegralFnId(pub u32);
-
-impl From<u32> for IntegralFnId {
-  fn from(value: u32) -> Self {
-    Self(value)
-  }
-}
-
-impl IntegralFnId {
-  pub fn hex_string(&self) -> String {
-    u32_to_hex_string(self.0)
-  }
-
-  /// a compile check for the size, if this one fails, also see Self::size
-  fn _helper_fn(x: Self) -> u32 {
-    x.0
-  }
-
-  pub const fn byte_size() -> usize {
-    std::mem::size_of::<u32>()
-  }
-}
-
-#[derive(Hash, Debug, PartialEq, Eq, Clone, Copy)]
-/// a binary identifier of an LLVM module - this ID is the central identification point
-/// for the hooking library, LLVM plugins as well as internal data structures of
-/// llcap-server
-///
-/// It is usually used along with the IntegralFnId as a unique function idefntifier
-pub struct IntegralModId(pub u32);
-
-impl From<u32> for IntegralModId {
-  fn from(value: u32) -> Self {
-    Self(value)
-  }
-}
-
-impl IntegralModId {
-  pub fn hex_string(&self) -> String {
-    u32_to_hex_string(self.0)
-  }
-
-  /// a compile check for the size, if this one fails, also see Self::size
-  fn _helper_fn(x: Self) -> u32 {
-    x.0
-  }
-
-  pub const fn byte_size() -> usize {
-    std::mem::size_of::<u32>()
-  }
-}
-
-/// tries to convert a hexadecimal string to a u32 (the underlying type of IntegralMod/FnId)
-fn try_from_hex_string<T: Num + std::ops::ShlAssign<u32> + std::ops::AddAssign<u32>>(
-  value: &str,
-) -> Result<T> {
-  ensure!(
-    value.chars().count() == std::mem::size_of::<T>() * 2,
-    "Invalid size"
-  );
-
-  let mut inner: T = T::zero();
-  for v in value.chars() {
-    inner <<= 4; // in order to not "over shift" in the last iteration
-
-    ensure!(v.is_ascii(), "Invalid module id (ascii): {value}");
-
-    let v = v.to_ascii_uppercase();
-    let num_val = match v {
-      '0'..='9' => v as u32 - '0' as u32,
-      'A'..='F' => v as u32 - 'A' as u32 + 10,
-      _ => return Err(anyhow!("Invalid module id (char): {value}")),
-    };
-
-    inner += num_val;
-  }
-  Ok(inner)
-}
-
-// convenience implementations of deref to permit simpler usage in the place of u32, ...
-
-impl Deref for IntegralModId {
-  type Target = u32;
-
-  fn deref(&self) -> &Self::Target {
-    &self.0
-  }
-}
-
-impl Deref for IntegralFnId {
-  type Target = u32;
-
-  fn deref(&self) -> &Self::Target {
-    &self.0
-  }
-}
-
-impl TryFrom<&str> for IntegralModId {
-  type Error = anyhow::Error;
-
-  fn try_from(value: &str) -> Result<Self, Self::Error> {
-    try_from_hex_string(value).map(Self)
-  }
-}
-
-impl TryFrom<&str> for IntegralFnId {
-  type Error = anyhow::Error;
-
-  fn try_from(value: &str) -> Result<Self, Self::Error> {
-    try_from_hex_string(value).map(Self)
-  }
-}
-
 #[derive(Debug)]
 /// "External Module Mapping" is a simple data structure where function data is stored in a
 /// Module -> Function hierarchy
@@ -345,7 +371,7 @@ impl ExtModuleMap {
   ///
   /// the postcondition of this function is that only the intersection of self and targets
   /// is preserved in self while other functions (and modules, if they become empty / are not included in targets) are removed
-  pub fn mask_include(&mut self, targets: &[LLVMFunId]) -> Result<()> {
+  pub fn mask_include(&mut self, targets: &[TextFunUid]) -> Result<()> {
     let lg = Log::get("mask_include");
     lg.info(format!("Masking {} values", targets.len()));
 
@@ -624,7 +650,7 @@ mod tests {
 
     assert!(
       map
-        .mask_include(&[LLVMFunId {
+        .mask_include(&[TextFunUid {
           fn_name: "Name1".to_string(),
           fn_module: "path1".to_string()
         }])
@@ -670,7 +696,7 @@ mod tests {
 
     assert!(
       map
-        .mask_include(&[LLVMFunId {
+        .mask_include(&[TextFunUid {
           fn_name: "Name1".to_string(),
           fn_module: "path1".to_string()
         }])
@@ -715,7 +741,7 @@ mod tests {
   #[test]
   fn mask_include_keeps() {
     let mut map = setup_test_map();
-    let _ = map.mask_include(&[LLVMFunId {
+    let _ = map.mask_include(&[TextFunUid {
       fn_name: "Name1".to_string(),
       fn_module: "path1".to_string(),
     }]);

@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use crate::{
   log::Log,
-  modmap::{ExtModuleMap, IntegralFnId, IntegralModId},
+  modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
   shmem_capture::mem_utils::ptr_add_nowrap,
-  stages::call_tracing::{FunctionCallInfo, Message},
+  stages::call_tracing::Message,
 };
 
 use anyhow::{Result, bail, ensure};
@@ -91,10 +91,7 @@ fn update_from_buffer(
     lg.trace(format!("M {:02X}", *mod_id));
     lg.trace(format!("F {:02X}", fn_id));
 
-    state.add_message(Message::Normal(FunctionCallInfo::new(
-      IntegralFnId(fn_id),
-      mod_id,
-    )));
+    state.add_message(Message::Normal(NumFunUid::new(IntegralFnId(fn_id), mod_id)));
     raw_buff = ptr_add_nowrap(raw_buff, FUNC_ID_SIZE)?;
   }
   Ok(state)
@@ -123,7 +120,7 @@ fn receive_module_id(
 
 fn process_messages(
   messages: &Vec<Message>,
-  recorded_frequencies: &mut HashMap<FunctionCallInfo, u64>,
+  recorded_frequencies: &mut HashMap<NumFunUid, u64>,
 ) -> Result<()> {
   for m in messages {
     match m {
@@ -146,7 +143,7 @@ pub fn msg_handler(
   buff_size: usize,
   buff_num: usize,
   modules: &ExtModuleMap,
-) -> Result<HashMap<FunctionCallInfo, u64>> {
+) -> Result<HashMap<NumFunUid, u64>> {
   let lg = Log::get("msghandler");
   let mut buff_idx: usize = 0;
   let mut end_message_counter = 0;
