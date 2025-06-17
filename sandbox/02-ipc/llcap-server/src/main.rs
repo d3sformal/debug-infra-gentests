@@ -37,7 +37,7 @@ use stages::{
   },
   testing::test_server_job,
 };
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 
 use crate::{
   modmap::{IntegralFnId, IntegralModId},
@@ -216,14 +216,16 @@ async fn main() -> Result<()> {
         capture_dir,
         modules.clone(),
         mem_limit as usize,
-        end_rx,
-        ready_tx,
+        (ready_tx, end_rx),
         results.clone(),
       ));
       let output_gen = Arc::new(TestOutputPathGen::new(test_output));
-
       // wait for server to be ready
-      ready_rx.await?;
+      match timeout(Duration::from_secs(10), ready_rx).await {
+        Ok(Ok(())) => lg.trace("Server ready"),
+        Err(_) => bail!("server ready timeout"),
+        Ok(Err(e)) => bail!("server ready error: {}", e),
+      }
 
       let mut futs = vec![];
 
@@ -287,17 +289,18 @@ async fn main() -> Result<()> {
       lg.info("---------------------------------------------------------------");
       let mut results = results.lock().unwrap();
       lg.info(format!("Test results ({}): ", results.len()));
-      results.sort_by(|a, b| a.3.cmp(&b.3));
-      results.sort_by(|a, b| a.2.cmp(&b.2));
+      lg.info("Module ID | Function ID |  Call  | Packet | Result");
+      results.sort_by(|a, b| a.3.0.cmp(&b.3.0));
+      results.sort_by(|a, b| a.2.0.cmp(&b.2.0));
       results.sort_by(|a, b| a.1.cmp(&b.1));
       results.sort_by(|a, b| a.0.cmp(&b.0));
       for result in results.iter() {
         let s = format!(
-          "{} {} {} {} {:?}",
+          "{:^10}|{:^13}|{:^8}|{:^8}| {:?}",
           result.0.hex_string(),
           result.1.hex_string(),
-          result.2,
-          result.3,
+          result.2.0,
+          result.3.0,
           result.4
         );
         lg.info(s);
