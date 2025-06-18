@@ -307,13 +307,14 @@ async fn main() -> Result<()> {
       }
       lg.info("---------------------------------------------------------------");
       lg.trace("Cleaning up");
-      let metadata_svr = Arc::try_unwrap(metadata_svr)
-        .map_err(|_| anyhow!("Failed to unwrap from arc... this is not expected"))?;
-      metadata_svr.into_inner().unwrap().deinit()?;
       defer_res_end_svr?;
       defer_res_joins??;
     }
   }
+
+  let metadata_svr = Arc::try_unwrap(metadata_svr)
+        .map_err(|_| anyhow!("Failed to unwrap from arc... this is not expected"))?;
+      metadata_svr.into_inner().unwrap().deinit()?;
 
   lg.info("Exiting...");
   Ok(())
