@@ -20,7 +20,7 @@ pub struct ShmemHandle<'a> {
   _fd: i32,
   /// null-char-terminated string
   cname: String,
-  marker: PhantomData<&'a u8>,
+  marker: PhantomData<&'a [u8]>,
 }
 
 impl ShmemHandle<'_> {
