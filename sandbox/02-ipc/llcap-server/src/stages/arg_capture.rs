@@ -22,8 +22,13 @@ pub struct FunctionPacketDumper {
 impl FunctionPacketDumper {
   pub fn new(function_id: IntegralFnId, root: &Path, capacity: usize) -> Result<Self> {
     let name = function_id.hex_string();
-
-    let f = File::create_new(root.join(name))?;
+    let path = root.join(name);
+    let f = File::create_new(&path).map_err(|e| {
+      anyhow!(e).context(format!(
+        "New function capture file creation failed: {:?}",
+        &path
+      ))
+    })?;
     let b = BufWriter::with_capacity(capacity, f);
 
     Ok(Self {
@@ -64,8 +69,9 @@ impl ModulePacketDumper {
     capacity_hint: usize,
   ) -> Result<Self> {
     let dir_name = module_id.hex_string();
-    let module_root = packet_root.join(dir_name);
-    std::fs::create_dir_all(&module_root)?;
+    let module_root = packet_root.join(dir_name.clone());
+    std::fs::create_dir_all(&module_root)
+      .map_err(|e| anyhow!(e).context(format!("Folder creation: {}", dir_name)))?;
 
     let mut func_dumpers = HashMap::new();
 
