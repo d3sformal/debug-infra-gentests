@@ -1,5 +1,8 @@
 use std::{
-  ffi::{c_void, CStr}, io::Error, marker::PhantomData
+  cell::{Ref, RefCell, RefMut},
+  ffi::{CStr, c_void},
+  io::Error,
+  marker::PhantomData,
 };
 
 use anyhow::{Result, anyhow, ensure};
@@ -14,22 +17,30 @@ use super::{
 };
 
 #[derive(Debug)] // do not derive Clone or Copy!
-pub struct ShmemHandle<'a> {
-  mem: *mut c_void, // declare !Send, !Sync as we expose this pointer in assoc. fn ptr()
+pub struct ShmemHandle {
+  /// this field is the centerpiece of (shared xor mutable) enforcement, while not strictly
+  /// necessary (ensuring the exclusion via architectrue), it should detect gross misuse of shared
+  /// memory on the side of llcap-server (I hope...)
+  ///
+  /// Any borrow through this field shall respect the *constness of the pointer returned
+  /// (that is, it should not happen that an immutable borrow results in a *mut u8 created
+  /// somewhere down the call stack)
+  underlying_memory: RefCell<*mut u8>,
   len: u32,
   _fd: i32,
   /// null-char-terminated string
   cname: String,
-  marker: PhantomData<&'a [u8]>,
+  marker: PhantomData<[u8]>, // this type manages a shared memory buffer, it should act like it owns it
 }
 
-impl ShmemHandle<'_> {
-  fn new(mem_ptr: *mut c_void, len: u32, fd: i32, name: String) -> Self {
+impl ShmemHandle {
+  // safety: mem_ptr shall not be used again
+  unsafe fn new(mem_ptr: *mut c_void, len: u32, fd: i32, name: String) -> Self {
     assert!(!mem_ptr.is_null());
     assert!(mem_ptr != MAP_FAILED);
     assert!(fd != -1);
     Self {
-      mem: mem_ptr,
+      underlying_memory: RefCell::new(mem_ptr as *mut u8),
       len,
       _fd: fd,
       cname: format!("{}\x00", name),
@@ -41,8 +52,23 @@ impl ShmemHandle<'_> {
     self.len
   }
 
-  pub fn ptr(&mut self) -> *mut c_void {
-    self.mem
+  // TODO: create wrappers to ensure *const u8 cannot be casted to *mut u8
+  // so far enforced only by inspecting every cast "as *mut"
+  pub fn borrow_ptr_mut(&mut self) -> Result<RefMut<'_, *mut u8>> {
+    let borrow = self.underlying_memory.try_borrow_mut()?;
+    Ok(borrow)
+  }
+
+  pub fn borrow_ptr(&self) -> Result<Ref<'_, *const u8>> {
+    let borrow = self.underlying_memory.try_borrow()?;
+    // SAFETY: we obtained an immutable borrow -> we can interpret the pointer as a pointer to
+    // immutable data, regarding the transmute need - I honestly could not come up with why for
+    // *mut u8 -> *const u8 cannot be writen via "as", at the same time I could not find a
+    // reason why the transmute could be invalid (given we obtained the immutable borrow)
+    let borrow = Ref::map(borrow, |v| unsafe {
+      std::mem::transmute::<&*mut u8, &*const u8>(v)
+    });
+    Ok(borrow)
   }
 
   pub fn try_mmap(path: &CStr, len: u32) -> Result<Self> {
@@ -96,22 +122,18 @@ impl ShmemHandle<'_> {
       ))
     );
 
-    Ok(Self::new(
-      mmap_res,
-      len,
-      fd,
-      path.to_string_lossy().to_string(),
-    ))
+    // SAFETY: mmap_res is not used elsewhere
+    Ok(unsafe { Self::new(mmap_res, len, fd, path.to_string_lossy().to_string()) })
   }
 
-  pub fn try_unmap(self) -> Result<()> {
+  pub fn try_unmap(mut self) -> Result<()> {
     // SAFETY: syscall docs, ShmHandle's invariant
-    let unmap_res = unsafe { munmap(self.mem, self.len as usize) };
+    let len = self.len as usize;
+    let unmap_res = unsafe { munmap(*self.borrow_ptr_mut()? as *mut c_void, len) };
     ensure!(
       unmap_res == 0,
       format!(
-        "Failed to unmap memory @ {:?} of len {}: {}",
-        self.mem,
+        "Failed to unmap memory of len {}: {}",
         self.len,
         Error::last_os_error()
       )

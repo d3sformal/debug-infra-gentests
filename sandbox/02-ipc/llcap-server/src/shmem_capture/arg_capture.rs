@@ -3,7 +3,7 @@ use std::{mem::MaybeUninit, ptr::slice_from_raw_parts};
 use crate::{
   log::Log,
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId},
-  shmem_capture::mem_utils::{overread_check, ptr_add_nowrap},
+  shmem_capture::mem_utils::{overread_check, ptr_add_nowrap, ptr_add_nowrap_mut},
   sizetype_handlers::{
     ArgSizeTypeRef, CStringTypeReader, CustomTypeReader, FixedSizeTyData, FixedSizeTyReader,
     ReadProgress, SizeTypeReader,
@@ -402,20 +402,30 @@ pub fn perform_arg_capture(
 
     lg.trace(format!("Received buffer {}", buff_idx));
     let buff_offset = buff_idx * buff_size;
-    let buff_ptr = infra.get_buffer_start(buff_offset)?;
-    let st: ArgCaptureState = update_from_buffer(
-      buff_ptr as *const u8,
-      buff_size,
-      modules,
-      state,
-      &mut cache,
-      capture_target,
-    )?;
+    // TODO: make API more readable (the "check" must be done more elegantly, directly inside infra, ...)
+    let st: ArgCaptureState = {
+      let base_ptr = infra.get_checked_base_ptr(buff_offset)?;
+      let buff_ptr = ptr_add_nowrap(*base_ptr, buff_offset)?;
+      update_from_buffer(
+        buff_ptr,
+        buff_size,
+        modules,
+        state,
+        &mut cache,
+        capture_target,
+      )?
+      // drops the immutable borrow of the buffer pointer (and therefore the buffer)
+    };
 
-    // Protocol: Set buffer's length to zero
-    // SAFETY: get_buffer_start returns valid pointers to at least u32
-    unsafe {
-      (buff_ptr as *mut u32).write(0);
+    {
+      let borrow = infra.get_checked_base_ptr_mut(buff_offset)?;
+      let target = ptr_add_nowrap_mut(*borrow, buff_offset)?;
+      // Protocol: Set buffer's length to zero
+      // SAFETY: get_checked_base_ptr_mut returns valid pointer to at least u32
+      unsafe {
+        (target as *mut u32).write_unaligned(0);
+      }
+      // drops the mutable borrow of the buffer pointer
     }
     infra.post_free_buffer(buff_idx)?;
 

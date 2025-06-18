@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
   log::Log,
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
-  shmem_capture::mem_utils::ptr_add_nowrap,
+  shmem_capture::mem_utils::{ptr_add_nowrap, ptr_add_nowrap_mut},
   stages::call_tracing::Message,
 };
 
@@ -154,16 +154,25 @@ pub fn msg_handler(
 
     lg.trace(format!("Received buffer {}", buff_idx));
     let buff_offset = buff_idx * buff_size;
-    let buff_ptr = infra.get_buffer_start(buff_offset)?;
-    let mut st: CallTraceMessageState =
-      update_from_buffer(buff_ptr as *const u8, buff_size, modules, state)?;
+    let mut st: CallTraceMessageState = {
+      let base_ptr = infra.get_checked_base_ptr(buff_offset)?;
+      let buff_ptr = ptr_add_nowrap(*base_ptr, buff_offset)?;
+      update_from_buffer(buff_ptr, buff_size, modules, state)?
+      // drops the immutable borrow of the buffer pointer
+    };
 
-    // SAFETY: protocol, the way update_from_buffer interacts with buff_ptr ensures alignment,
-    // aliasing is ensured as this buffer should only be handled here, u32@buff_ptr does not need a drop
-    // Protocol: Set buffer's length to zero
-    unsafe {
-      (buff_ptr as *mut u32).write(0);
+    {
+      let borrow = infra.get_checked_base_ptr_mut(buff_offset)?;
+      let target = ptr_add_nowrap_mut(*borrow, buff_offset)?;
+      // SAFETY: protocol, aliasing is ensured by the borrow variable,
+      // u32@target does not need a drop
+      // Protocol: Set buffer's length to zero
+      unsafe {
+        (target as *mut u32).write_unaligned(0);
+      }
+      // drops the mutable borrow of the buffer pointer
     }
+
     infra.post_free_buffer(buff_idx)?;
 
     let messages = st.extract_messages();

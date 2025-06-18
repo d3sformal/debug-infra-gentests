@@ -321,7 +321,7 @@ async fn main() -> Result<()> {
 }
 
 async fn test_job(
-  metadata_svr: Arc<Mutex<MetadataPublisher<'_>>>,
+  metadata_svr: Arc<Mutex<MetadataPublisher>>,
   buff_count: u32,
   buff_size: u32,
   m: IntegralModId,

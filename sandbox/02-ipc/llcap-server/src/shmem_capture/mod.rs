@@ -13,17 +13,17 @@ use crate::libc_wrappers::shared_memory::ShmemHandle;
 use crate::libc_wrappers::wrappers::to_cstr;
 use crate::log::Log;
 use crate::modmap::{IntegralFnId, IntegralModId};
-use crate::shmem_capture::mem_utils::{ptr_add_nowrap, ptr_add_nowrap_mut};
+use crate::shmem_capture::mem_utils::ptr_add_nowrap;
 use crate::stages::testing::test_server_socket;
 use libc::O_CREAT;
 /// a handle to all shared memory infrastructure necessary for function tracing
-pub struct TracingInfra<'a> {
+pub struct TracingInfra {
   pub sem_free: Semaphore,
   pub sem_full: Semaphore,
-  pub backing_buffer: ShmemHandle<'a>,
+  pub backing_buffer: ShmemHandle,
 }
 
-impl<'a> TracingInfra<'a> {
+impl TracingInfra {
   pub fn wait_for_free_buffer(&mut self) -> Result<()> {
     let sem_res = self.sem_full.try_wait();
     sem_res.map_err(|e| e.context("wait_for_free_buffer"))
@@ -77,7 +77,7 @@ impl<'a> TracingInfra<'a> {
     }
   }
 
-  pub async fn try_new(resource_prefix: &'a str, buff_count: u32, buff_len: u32) -> Result<Self> {
+  pub async fn try_new(resource_prefix: &str, buff_count: u32, buff_len: u32) -> Result<Self> {
     let lg = Log::get("init_tracing");
     let (sem_free, sem_full) = Self::init_semaphores(resource_prefix, buff_count)?;
     lg.info("Initializing shmem");
@@ -96,24 +96,52 @@ impl<'a> TracingInfra<'a> {
     })
   }
 
-  // get the start of a buffer at an offset
-  pub fn get_buffer_start(&mut self, buff_offset: usize) -> Result<*mut u8> {
-    let buffers = &mut self.backing_buffer;
+  /// returns Ok variant if base pointer + buff_offset are valid
+  ///
+  /// the contents of the Ok variant is the base pointer, NOT the offseted pointer!
+  pub fn get_checked_base_ptr_mut(
+    &mut self,
+    buff_offset: usize,
+  ) -> Result<std::cell::RefMut<'_, *mut u8>> {
+    let buffers: &mut ShmemHandle = &mut self.backing_buffer;
     ensure!(
       buff_offset < buffers.len() as usize,
-      "Calculated offset too large: {}, compared to the buffers len {}",
+      "Offset too large: {}, compared to the (mut) buffers len {}",
       buff_offset,
       buffers.len()
     );
-    let base_mem = buffers.ptr();
-    let buff_ptr = ptr_add_nowrap_mut(base_mem as *mut u8, buff_offset)?;
+    let base_mem = buffers.borrow_ptr_mut()?;
+    let test_value = ptr_add_nowrap(*base_mem, buff_offset)?;
     ensure!(
-      !buff_ptr.is_null() && buff_ptr >= base_mem as *mut u8,
-      "Buffer pointer is invalid: {:?}, mem: {:?}",
-      buff_ptr,
-      buffers
+      !test_value.is_null() && test_value >= *base_mem,
+      "Buffer mut pointer is invalid: {:?}, offset: {}",
+      test_value,
+      buff_offset
     );
-    Ok(buff_ptr)
+    Ok(base_mem)
+  }
+
+  // TODO fix these two, improve API
+  /// returns Ok variant if base pointer + buff_offset are valid
+  ///
+  /// the contents of the Ok variant is the base pointer, NOT the offseted pointer!
+  pub fn get_checked_base_ptr(&self, buff_offset: usize) -> Result<std::cell::Ref<'_, *const u8>> {
+    let buffers: &ShmemHandle = &self.backing_buffer;
+    ensure!(
+      buff_offset < buffers.len() as usize,
+      "Offset too large: {}, compared to the buffers len {}",
+      buff_offset,
+      buffers.len()
+    );
+    let base_mem = buffers.borrow_ptr()?;
+    let test_value = ptr_add_nowrap(*base_mem, buff_offset)?;
+    ensure!(
+      !test_value.is_null() && test_value >= *base_mem,
+      "Buffer const pointer is invalid: {:?}, offset: {}",
+      test_value,
+      buff_offset
+    );
+    Ok(base_mem)
   }
 }
 
@@ -190,7 +218,7 @@ fn deinit_shmem(buffers_mem: ShmemHandle) -> Result<()> {
 }
 
 pub fn send_call_tracing_metadata(
-  chnl: &mut MetadataPublisher<'_>,
+  chnl: &mut MetadataPublisher,
   buff_count: u32,
   buff_len: u32,
 ) -> Result<()> {
@@ -212,7 +240,7 @@ pub fn send_call_tracing_metadata(
 }
 
 pub fn send_arg_capture_metadata(
-  chnl: &mut MetadataPublisher<'_>,
+  chnl: &mut MetadataPublisher,
   buff_count: u32,
   buff_len: u32,
 ) -> Result<()> {
@@ -234,7 +262,7 @@ pub fn send_arg_capture_metadata(
 }
 
 pub fn send_test_metadata(
-  chnl: &mut MetadataPublisher<'_>,
+  chnl: &mut MetadataPublisher,
   buff_count: u32,
   buff_len: u32,
   module: IntegralModId,
@@ -260,7 +288,7 @@ pub fn send_test_metadata(
   )
 }
 
-fn send_metadata(chnl: &mut MetadataPublisher<'_>, target_descriptor: ShmMeta) -> Result<()> {
+fn send_metadata(chnl: &mut MetadataPublisher, target_descriptor: ShmMeta) -> Result<()> {
   Log::get("init_tracing").info("Waiting for a cooperating program");
   chnl.publish(target_descriptor)
 }
@@ -284,13 +312,13 @@ fn buff_bounds_or_end(raw_buff: *const u8) -> Result<Either<(), (*const u8, *con
   Ok(Either::Right((start, buff_end)))
 }
 
-pub struct MetadataPublisher<'a> {
-  shm: ShmemHandle<'a>,
+pub struct MetadataPublisher {
+  shm: ShmemHandle,
   data_rdy_sem: Semaphore,
   data_ack_sem: Semaphore,
 }
 
-impl<'a> MetadataPublisher<'a> {
+impl MetadataPublisher {
   pub fn new(mem_path: &CStr, data_sem_path: &str, ack_sem_path: &str) -> Result<Self> {
     let data = Semaphore::try_open_exclusive(data_sem_path, 0)?;
     let ack = Semaphore::try_open_exclusive(ack_sem_path, 1)?;
@@ -305,10 +333,13 @@ impl<'a> MetadataPublisher<'a> {
   pub fn publish(&mut self, meta: ShmMeta) -> Result<()> {
     self.data_ack_sem.try_wait()?;
 
-    let mem = self.shm.ptr();
-    unsafe {
-      (mem as *mut ShmMeta).write(meta);
-    };
+    {
+      let mem = self.shm.borrow_ptr_mut()?;
+      unsafe {
+        // unaligned write just to be sure
+        (*mem as *mut ShmMeta).write_unaligned(meta);
+      }
+    }
 
     self.data_rdy_sem.try_post()
   }
@@ -325,4 +356,4 @@ impl<'a> MetadataPublisher<'a> {
 // and semaphores to the outside, furthermore, no suspension points
 // are present in associated functions & named
 // semaphores should be sharable between threads
-unsafe impl Send for MetadataPublisher<'_> {}
+unsafe impl Send for MetadataPublisher {}

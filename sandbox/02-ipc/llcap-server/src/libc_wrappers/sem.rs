@@ -117,10 +117,7 @@ impl Semaphore {
     if unsafe { libc::sem_unlink(to_cstr(cname).as_ptr()) } != 0 {
       Err((
         self,
-        format!(
-          "Failed to unlink semaphore: {}",
-          Error::last_os_error()
-        ),
+        format!("Failed to unlink semaphore: {}", Error::last_os_error()),
       ))
     } else {
       Ok(())
