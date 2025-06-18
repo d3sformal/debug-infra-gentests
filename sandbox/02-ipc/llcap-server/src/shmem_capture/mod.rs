@@ -121,7 +121,6 @@ impl TracingInfra {
     Ok(base_mem)
   }
 
-  // TODO fix these two, improve API
   /// returns Ok variant if base pointer + buff_offset are valid
   ///
   /// the contents of the Ok variant is the base pointer, NOT the offseted pointer!

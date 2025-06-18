@@ -26,7 +26,7 @@
     * hooklib, hook library, ...
     * ... ?
 * add some tests for `llcap-server` and hooklib now that everything seems to be more or less stable? [in progress]
-* proper automatic cleanup / overwrite policies for outputs [in progress - especially in arg capture]
+* ~~proper automatic cleanup / overwrite policies for outputs [in progress - especially in arg capture]~~
 * try out various scenarios (timeouts of test cases, crashes) 
 * add a simple argument replacement example
 * add a guide for adding custom type support
@@ -35,6 +35,7 @@
     * exception handling???
 * investigate debug metadata usage instead of current approach
 * validate argument splitting works/is disallowed
+* update `llcap-server` readme
 
 **List of topics:**
 
@@ -169,3 +170,91 @@
         // function body...
     }
 ```
+
+
+# Revamp of buffer reading and writng
+
+Currently the language rules around mutability and sharing when reading and writing shared
+memory buffers are enforced by `RefCell` and a check that "no raw pointer is ever casted from
+`*const` to `*mut`".
+
+The following snipped is a prototype of a checked and fully encapsulated "reader" from
+a pointer (to shared memory). It provides a restrictive interface that disallow the above-mentioned
+cast.
+
+```rust
+/// an object that represents reading permission on a given contiguous section of
+/// memory
+pub struct ByteReader<'a> {
+  borrow: Ref<'a, *const u8>,
+  /// the absolute limit of the contiguous section
+  raw_end: *const u8,
+  offset: usize
+  /// a custom limit of the contiguous section
+  limit: usize
+  // the combination of offset + limit allows to work within buffer chunks of the single
+  // large shared memory block
+}
+
+impl<'a> ByteReader<'a> {
+  /// Safety: caller must ensure that `borrowed_start` points to a delimited contiguous
+  /// block of memory ending at `raw_end`
+  pub unsafe fn new(borrowed_start: Ref<'a, *const u8>, raw_end: *const u8) -> Self {
+    Self {
+        borrow: borrowed_start,
+        raw_end,
+        offset: 0,
+        limit: 0
+    }
+  }
+
+  /// sets the offset for all subsequent read operations
+  pub fn set_offset(&mut self, offset: usize) -> Result<()> {
+    let _ = ptr_add_nowrap(*self.borrow, offset)?;
+    self.offset = offset;
+    Ok(())
+  }
+
+  /// sets the limit for all subsequent read operations
+  pub fn set_limit(&mut self, limit: usize) -> Result<()> {
+    ensure!(limit < self,offset, "Invalid limit - vs offset");
+    ensure!((*self.raw_end < (ptr_add_nowrap(*self.borrow, limit)?)), "Invalid limit - vs raw_end");
+    self.limit = limit;
+    Ok(())
+  }
+
+  /// reads n bytes
+  pub fn read_n(&self, nbytes: usize) -> Result<Vec<u8>> {
+    let ptr = ptr_add_nowrap(*self.borrow, self.offset)?;
+    let limit_end = ptr_add_nowrap(*self.borrow, self.limit)?;
+   
+    overread_check(ptr, self.raw_end, nbytes, "bytereader read_n end")?;
+    overread_check(ptr, limit_end, nbytes, "bytereader read_n limit")?;
+   
+    ensure!(!ptr.is_null(), "read_n null ptr");
+    ensure!((nbytes as isize) < isize::MAX, "read_n nbytes too large");
+    // SAFETY: check above + the `Self::new` guarantees about the pointer + Ref + alignment of a byte is always satisfied
+    let slice = unsafe { std::slice::from_raw_parts(ptr, nbytes) }; 
+    Ok(Vec::from(slice))
+  }
+
+  /// safety: T is "reasonable" (rule of thumb: primitive types)
+  /// reads T at the specified offset
+  pub unsafe fn read<T: Sized + Copy>(&self) -> Result<T> {
+    let ptr = ptr_add_nowrap(*self.borrow, self.offset)?;
+    let limit_end = ptr_add_nowrap(*self.borrow, self.limit)?;
+    let sz = std::mem::size_of::<T>();
+
+    overread_check(ptr, self.raw_end, sz, "bytereader read end")?;
+    overread_check(ptr, limit_end, sz, "bytereader read limit")?;
+
+    ensure!(!ptr.is_null(), "read_n null ptr");
+    // SAFETY: reasonable T
+    return Ok(unsafe { read_w_alignment_chk::<T>(ptr) }?)
+  }
+}
+```
+
+After I semi-completed this prototype, I realized that too much refactoring would be done
+threatening hours of debugging in case of oversight, thus I'm shelving the idea here. 
+To complete the abstraction, a **writer** interface would also be needed.

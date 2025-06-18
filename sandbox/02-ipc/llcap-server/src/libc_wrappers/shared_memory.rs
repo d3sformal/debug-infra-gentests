@@ -52,8 +52,6 @@ impl ShmemHandle {
     self.len
   }
 
-  // TODO: create wrappers to ensure *const u8 cannot be casted to *mut u8
-  // so far enforced only by inspecting every cast "as *mut"
   pub fn borrow_ptr_mut(&mut self) -> Result<RefMut<'_, *mut u8>> {
     let borrow = self.underlying_memory.try_borrow_mut()?;
     Ok(borrow)

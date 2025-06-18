@@ -402,7 +402,6 @@ pub fn perform_arg_capture(
 
     lg.trace(format!("Received buffer {}", buff_idx));
     let buff_offset = buff_idx * buff_size;
-    // TODO: make API more readable (the "check" must be done more elegantly, directly inside infra, ...)
     let st: ArgCaptureState = {
       let base_ptr = infra.get_checked_base_ptr(buff_offset)?;
       let buff_ptr = ptr_add_nowrap(*base_ptr, buff_offset)?;
