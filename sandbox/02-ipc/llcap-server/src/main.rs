@@ -33,7 +33,7 @@ use stages::{
   arg_capture::{ArgPacketDumper, PacketReader},
   call_tracing::{
     export_call_trace_data, export_tracing_selection, import_call_trace_data,
-    import_tracing_selection, obtain_function_id_selection, print_summary,
+    import_tracing_selection, obtain_function_id_selection, print_call_tracing_summary,
   },
   testing::test_server_job,
 };
@@ -133,7 +133,7 @@ async fn main() -> Result<()> {
       };
 
       pairs.sort_by(|a, b| b.1.cmp(&a.1));
-      print_summary(&mut pairs, &modules);
+      print_call_tracing_summary(&mut pairs, &modules);
 
       if let Some(out_path) = out_file {
         lg.trace("Exporting");

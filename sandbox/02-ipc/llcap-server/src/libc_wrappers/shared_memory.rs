@@ -1,6 +1,5 @@
 use std::{
-  ffi::{CStr, c_void},
-  marker::PhantomData,
+  ffi::{c_void, CStr}, io::Error, marker::PhantomData
 };
 
 use anyhow::{Result, anyhow, ensure};
@@ -11,7 +10,7 @@ use libc::{
 
 use super::{
   fd::try_shm_unlink_fd,
-  wrappers::{PERMS_PERMISSIVE, get_errno_string, to_cstr},
+  wrappers::{PERMS_PERMISSIVE, to_cstr},
 };
 
 #[derive(Debug)] // do not derive Clone or Copy!
@@ -61,7 +60,7 @@ impl ShmemHandle<'_> {
       fd != -1,
       "Failed to open FD for shmem {}: {}",
       path.to_string_lossy(),
-      get_errno_string()
+      Error::last_os_error().to_string()
     );
 
     // SAFETY: documentation of the syscall, fd obtained beforehand
@@ -72,7 +71,7 @@ impl ShmemHandle<'_> {
         "Failed to truncate FD for shmem {}, len: {}: {}",
         path.to_string_lossy(),
         len,
-        get_errno_string()
+        Error::last_os_error().to_string()
       ))
     );
 
@@ -93,7 +92,7 @@ impl ShmemHandle<'_> {
         "Failed to mmap {}, len: {}: {}",
         path.to_string_lossy(),
         len,
-        get_errno_string()
+        Error::last_os_error().to_string()
       ))
     );
 
@@ -114,7 +113,7 @@ impl ShmemHandle<'_> {
         "Failed to unmap memory @ {:?} of len {}: {}",
         self.mem,
         self.len,
-        get_errno_string()
+        Error::last_os_error().to_string()
       )
     );
     // SAFETY: cname from type's invariant

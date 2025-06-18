@@ -1,22 +1,22 @@
-use std::marker::PhantomData;
+use std::{io::Error, marker::PhantomData};
 
 use libc::{O_CREAT, O_EXCL, SEM_FAILED, c_int, mode_t, sem_open, sem_t};
 
 use crate::log::Log;
 use anyhow::{Result, bail, ensure};
 
-use super::wrappers::{PERMS_PERMISSIVE, get_errno_string, to_cstr};
+use super::wrappers::{PERMS_PERMISSIVE, to_cstr};
 
 /// a semaphore for IPC
-/// it is expected that it will be used only in single-threaded context (due to the use of errno)
 pub enum Semaphore {
   Open {
-    // SAFETY INVARIANT: sem is a valid pointer to an initialized semaphore obtained via correspodnging syscalls
-    sem: *mut sem_t, // marks !Send & !Sync
+    /// SAFETY INVARIANT: sem is a valid pointer to an initialized semaphore obtained via
+    ///the correspodnging syscalls
+    sem: *mut sem_t, // marks the type !Send & !Sync
     cname: String,
     marker: PhantomData<sem_t>,
   },
-  // this variant exists to disallow some interactions with semaphore after closing it
+  /// this variant exists to disallow some interactions with semaphore after closing it
   Closed {
     // for our API, the sem potiner is not needed anymore @ this point (can change anytime ofc)
     cname: String,
@@ -35,7 +35,7 @@ impl Semaphore {
         ensure!(
           unsafe { libc::sem_post(*sem) } != -1,
           "Failed to post semaphore: {}",
-          get_errno_string()
+          Error::last_os_error().to_string()
         );
         Ok(())
       }
@@ -55,7 +55,7 @@ impl Semaphore {
         ensure!(
           unsafe { libc::sem_wait(*sem) } != -1,
           "Failed to wait on semaphore: {}",
-          get_errno_string()
+          Error::last_os_error().to_string()
         );
         Ok(())
       }
@@ -63,6 +63,7 @@ impl Semaphore {
     }
   }
 
+  /// Consumes self. The error variant contains the un-closed `self` along with an error message
   pub fn try_close(self) -> Result<Semaphore, (Semaphore, String)> {
     match self {
       Semaphore::Open {
@@ -81,7 +82,7 @@ impl Semaphore {
             format!(
               "Failed to close semaphore {}: {}",
               cname,
-              get_errno_string()
+              Error::last_os_error().to_string()
             ),
           ))
         } else {
@@ -108,6 +109,7 @@ impl Semaphore {
     }
   }
 
+  /// Consumes self. The error variant contains the un-destroyed `self` along with an error message
   pub fn try_destroy(self) -> Result<(), (Self, String)> {
     let cname = self.cname();
 
@@ -115,14 +117,14 @@ impl Semaphore {
     if unsafe { libc::sem_unlink(to_cstr(cname).as_ptr()) } != 0 {
       Err((
         self,
-        format!("Failed to unlink semaphore: {}", get_errno_string()),
+        format!("Failed to unlink semaphore: {}", Error::last_os_error().to_string()),
       ))
     } else {
       Ok(())
     }
   }
 
-  // opens a semaphore and returns a valid Self object
+  /// opens a semaphore with the specified parameters
   pub fn try_open(
     name: &str,
     value: u32,
@@ -146,7 +148,7 @@ impl Semaphore {
       result != SEM_FAILED,
       "Failed to initialize semaphore {}: {}",
       name,
-      get_errno_string()
+      Error::last_os_error().to_string()
     );
 
     Log::get("try_open").info(format!("Opened semaphore {} with value {}", s_name, value));
@@ -162,13 +164,15 @@ impl Semaphore {
   }
 }
 
+/// a helper struct for the creation of semaphore pairs for
+/// shared memory management
 pub struct FreeFullSemNames {
   pub free: String,
   pub full: String,
 }
 
 impl FreeFullSemNames {
-  pub fn get(prefix: &str, category: &str, id: &str) -> Self {
+  pub fn new(prefix: &str, category: &str, id: &str) -> Self {
     Self {
       free: format!("{prefix}-{category}-{id}-semfree"),
       full: format!("{prefix}-{category}-{id}-semfull"),

@@ -12,12 +12,15 @@ use crate::{
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid, TextFunUid},
 };
 
+/// Call tracing message received from instrumented application
 pub enum Message {
+  /// A call "of interest" entered
   Normal(NumFunUid),
+  /// Termination message
   ControlEnd,
 }
 
-pub fn print_summary(frequencies: &mut [(NumFunUid, u64)], mods: &ExtModuleMap) {
+pub fn print_call_tracing_summary(frequencies: &mut [(NumFunUid, u64)], mods: &ExtModuleMap) {
   let lg = Log::get("summary");
   let mut seen_modules: HashSet<IntegralModId> = HashSet::new();
 

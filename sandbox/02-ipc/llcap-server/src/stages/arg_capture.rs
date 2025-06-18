@@ -20,7 +20,8 @@ pub struct FunctionPacketDumper {
 }
 
 impl FunctionPacketDumper {
-  pub fn new(function_id: IntegralFnId, root: &Path, capacity: usize) -> Result<Self> {
+  /// creates a packet dumper for a function, data is persisted into the `root` folder
+  pub fn new(function_id: IntegralFnId, root: &Path, buffer_capacity_hint: usize) -> Result<Self> {
     let name = function_id.hex_string();
     let path = root.join(name);
     let f = File::create_new(&path).map_err(|e| {
@@ -29,7 +30,7 @@ impl FunctionPacketDumper {
         &path
       ))
     })?;
-    let b = BufWriter::with_capacity(capacity, f);
+    let b = BufWriter::with_capacity(buffer_capacity_hint, f);
 
     Ok(Self {
       _fnid: function_id,
@@ -62,6 +63,11 @@ pub struct ModulePacketDumper {
 }
 
 impl ModulePacketDumper {
+  /// creates a function packet dumper within a module
+  ///
+  /// `capacity_hint` is propagated to each individual function's writer,
+  /// therefore the expected allocated buffers are of this size times the number
+  /// of functions within the module
   pub fn new(
     module_id: IntegralModId,
     packet_root: &Path,
@@ -147,6 +153,14 @@ impl ArgPacketDumper {
     }
   }
 }
+
+/*
+  technically, the following structs and functions (for reading packets out of the fs) are only
+  used in the `testing` phase
+
+  however, "packet writing" and "packet reading" are semantically coupled - their data formats
+  must be compatible - which is why the "readers" have been placed here
+*/
 
 /// facilitates read-only access to a single argument capture data stream
 /// (multiple packets inside a capture for a single function)
@@ -243,6 +257,7 @@ impl PacketReader {
     Ok(Self { captures })
   }
 
+  /// a helper that performs a locking extraction of the desired packet iterator
   fn get_locked_capture_iterator(
     &mut self,
     m: IntegralModId,
@@ -312,7 +327,7 @@ trait PacketIterator {
 impl PacketIterator for CaptureReader {
   fn read_next_packet(&mut self) -> Result<Option<Vec<u8>>> {
     let mut buf = [0u8; std::mem::size_of::<u32>()];
-    // packet size
+    // reads packet size - the initial 8B
     match self.file.read_exact(&mut buf) {
       Ok(()) => (),
       Err(e) => {
@@ -329,6 +344,7 @@ impl PacketIterator for CaptureReader {
       return Ok(None);
     }
 
+    // reads the packet payload
     let mut result = vec![0; len as usize];
     match self.file.read_exact(&mut result) {
       Ok(_) => {
@@ -383,18 +399,27 @@ impl PacketIterator for EmptyPacketIter {
 }
 
 pub trait PacketProvider {
+  /// returns the packet at a specific index
+  /// if `index` overflows, the first packet is returned (if exists)
   fn get_packet(&mut self, m: IntegralModId, f: IntegralFnId, index: usize) -> Option<Vec<u8>>;
 }
 
 impl PacketProvider for PacketReader {
   fn get_packet(&mut self, m: IntegralModId, f: IntegralFnId, index: usize) -> Option<Vec<u8>> {
-    let tests = self.get_packet_count(m, f)?;
-    if tests == 0 {
+    // we expect the packets will be accessed in sequential order as the test instance progresses
+    // through each packet in series (waiting for each test case to finish)
+
+    // still, in case of a non-sequential access, the reader should be able to fall back to
+    // an inefficient yet non-error path
+    let packets = self.get_packet_count(m, f)?;
+    if packets == 0 {
       return None;
-    } else if index as u32 >= tests {
+    } else if index as u32 >= packets {
       // tries to return the first packet
       self.try_reset(m, f).ok()?;
     } else if self.get_upcoming_pkt_idx(m, f)? != index {
+      // index is within packet count, the following should return the desired packet
+      // albeit with linear delay
       self.try_reset(m, f).ok()?;
       while self.get_upcoming_pkt_idx(m, f)? < index {
         self.read_next_packet(m, f).ok()?;

@@ -60,7 +60,7 @@ impl<'a> TracingInfra<'a> {
     let FreeFullSemNames {
       free: free_name,
       full: full_name,
-    } = FreeFullSemNames::get(prefix, "capture", "base");
+    } = FreeFullSemNames::new(prefix, "capture", "base");
 
     let free_sem = Semaphore::try_open_exclusive(&free_name, n_buffs)?;
     let full_sem = Semaphore::try_open_exclusive(&full_name, 0);
@@ -124,7 +124,7 @@ enum Either<T, S> {
 
 pub fn cleanup(prefix: &str) -> Result<()> {
   let lg = Log::get("cleanup");
-  let FreeFullSemNames { free, full } = FreeFullSemNames::get(prefix, "capture", "base");
+  let FreeFullSemNames { free, full } = FreeFullSemNames::new(prefix, "capture", "base");
   for name in &[
     free,
     full,
