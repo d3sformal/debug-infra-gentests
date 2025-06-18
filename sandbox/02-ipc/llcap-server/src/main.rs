@@ -313,8 +313,8 @@ async fn main() -> Result<()> {
   }
 
   let metadata_svr = Arc::try_unwrap(metadata_svr)
-        .map_err(|_| anyhow!("Failed to unwrap from arc... this is not expected"))?;
-      metadata_svr.into_inner().unwrap().deinit()?;
+    .map_err(|_| anyhow!("Failed to unwrap from arc... this is not expected"))?;
+  metadata_svr.into_inner().unwrap().deinit()?;
 
   lg.info("Exiting...");
   Ok(())
