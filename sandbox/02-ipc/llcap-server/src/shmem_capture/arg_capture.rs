@@ -129,7 +129,7 @@ impl PartialCaptureState {
       "Module ID {} is unknown",
       *rcvd_id
     );
-    lg.trace(format!("Mod Id: {}", *rcvd_id));
+    lg.trace(format!("Mod Id: 0x{:02X}", *rcvd_id));
     Ok(Self::GotModuleId { module_id: rcvd_id })
   }
 
@@ -147,11 +147,11 @@ impl PartialCaptureState {
 
     ensure!(
       mods.get_function_name(module_id, fn_id).is_some(),
-      "Function id not found @ module {:02X}: {:02X}",
+      "Function id not found @ module 0x{:02X}: 0x{:02X}",
       *module_id,
       *fn_id
     );
-    lg.trace(format!("Fnc Id: {}", *fn_id));
+    lg.trace(format!("Fnc Id: 0x{:02X}", *fn_id));
     Ok(Self::CapturingArgs {
       module_id,
       fn_id,

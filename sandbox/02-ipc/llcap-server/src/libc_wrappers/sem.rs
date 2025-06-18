@@ -35,7 +35,7 @@ impl Semaphore {
         ensure!(
           unsafe { libc::sem_post(*sem) } != -1,
           "Failed to post semaphore: {}",
-          Error::last_os_error().to_string()
+          Error::last_os_error()
         );
         Ok(())
       }
@@ -55,7 +55,7 @@ impl Semaphore {
         ensure!(
           unsafe { libc::sem_wait(*sem) } != -1,
           "Failed to wait on semaphore: {}",
-          Error::last_os_error().to_string()
+          Error::last_os_error()
         );
         Ok(())
       }
@@ -82,7 +82,7 @@ impl Semaphore {
             format!(
               "Failed to close semaphore {}: {}",
               cname,
-              Error::last_os_error().to_string()
+              Error::last_os_error()
             ),
           ))
         } else {
@@ -117,7 +117,10 @@ impl Semaphore {
     if unsafe { libc::sem_unlink(to_cstr(cname).as_ptr()) } != 0 {
       Err((
         self,
-        format!("Failed to unlink semaphore: {}", Error::last_os_error().to_string()),
+        format!(
+          "Failed to unlink semaphore: {}",
+          Error::last_os_error()
+        ),
       ))
     } else {
       Ok(())
@@ -148,7 +151,7 @@ impl Semaphore {
       result != SEM_FAILED,
       "Failed to initialize semaphore {}: {}",
       name,
-      Error::last_os_error().to_string()
+      Error::last_os_error()
     );
 
     Log::get("try_open").info(format!("Opened semaphore {} with value {}", s_name, value));

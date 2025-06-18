@@ -60,7 +60,7 @@ impl ShmemHandle<'_> {
       fd != -1,
       "Failed to open FD for shmem {}: {}",
       path.to_string_lossy(),
-      Error::last_os_error().to_string()
+      Error::last_os_error()
     );
 
     // SAFETY: documentation of the syscall, fd obtained beforehand
@@ -71,7 +71,7 @@ impl ShmemHandle<'_> {
         "Failed to truncate FD for shmem {}, len: {}: {}",
         path.to_string_lossy(),
         len,
-        Error::last_os_error().to_string()
+        Error::last_os_error()
       ))
     );
 
@@ -92,7 +92,7 @@ impl ShmemHandle<'_> {
         "Failed to mmap {}, len: {}: {}",
         path.to_string_lossy(),
         len,
-        Error::last_os_error().to_string()
+        Error::last_os_error()
       ))
     );
 
@@ -113,7 +113,7 @@ impl ShmemHandle<'_> {
         "Failed to unmap memory @ {:?} of len {}: {}",
         self.mem,
         self.len,
-        Error::last_os_error().to_string()
+        Error::last_os_error()
       )
     );
     // SAFETY: cname from type's invariant

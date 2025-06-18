@@ -69,7 +69,7 @@ fn update_from_buffer(
     ensure!(
       modules.get_module_string_id(mod_id).is_some(),
       "Unknown module ID: {}",
-      *mod_id
+      mod_id.hex_string()
     );
 
     const FUNC_ID_SIZE: usize = IntegralFnId::byte_size();
