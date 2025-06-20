@@ -266,8 +266,10 @@ async fn main() -> Result<()> {
             metadata_svr.clone(),
             buff_count,
             buff_size,
-            *module,
-            *function,
+            NumFunUid {
+              function_id: *function,
+              module_id: *module,
+            },
             arg_count,
             test_count,
             command.clone(),
@@ -323,13 +325,13 @@ async fn test_job(
   metadata_svr: Arc<Mutex<MetadataPublisher>>,
   buff_count: u32,
   buff_size: u32,
-  m: IntegralModId,
-  f: IntegralFnId,
+  fn_uid: NumFunUid,
   arg_count: u32,
   test_count: u32,
   command: Arc<Vec<String>>,
   output_gen: Arc<Option<TestOutputPathGen>>,
 ) -> Result<()> {
+  let (m, f) = (fn_uid.module_id, fn_uid.function_id);
   // let mut tests = vec![];
   for call_idx in 0..test_count {
     {
