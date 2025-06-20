@@ -41,7 +41,7 @@ use tokio::time::{sleep, timeout};
 
 use crate::{
   modmap::{IntegralFnId, IntegralModId, NumFunUid},
-  shmem_capture::TracingInfra,
+  shmem_capture::{TestParams, TracingInfra},
 };
 
 fn obtain_module_map(path: &std::path::PathBuf) -> Result<ExtModuleMap> {
@@ -106,8 +106,7 @@ async fn main() -> Result<()> {
         result
       } else {
         lg.info("Initializing tracing infrastructure");
-        let mut tracing_infra =
-          TracingInfra::try_new(&cli.fd_prefix, buff_count, buff_size)?;
+        let mut tracing_infra = TracingInfra::try_new(&cli.fd_prefix, buff_count, buff_size)?;
 
         let mut guard = metadata_svr.lock().unwrap();
         send_call_tracing_metadata(guard.deref_mut(), buff_count, buff_size)?;
@@ -339,11 +338,15 @@ async fn test_job(
         guard.deref_mut(),
         buff_count,
         buff_size,
-        m,
-        f,
-        arg_count,
-        test_count,
-        call_idx + 2,
+        NumFunUid {
+          function_id: f,
+          module_id: m,
+        },
+        TestParams {
+          arg_count,
+          test_count,
+          target_call_number: call_idx + 2,
+        },
       )?;
     }
     let mut cmd = cmd_from_args(&command)?;

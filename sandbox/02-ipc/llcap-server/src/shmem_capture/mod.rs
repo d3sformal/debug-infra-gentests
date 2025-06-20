@@ -12,7 +12,7 @@ use crate::libc_wrappers::sem::{FreeFullSemNames, Semaphore};
 use crate::libc_wrappers::shared_memory::ShmemHandle;
 use crate::libc_wrappers::wrappers::to_cstr;
 use crate::log::Log;
-use crate::modmap::{IntegralFnId, IntegralModId};
+use crate::modmap::NumFunUid;
 use crate::shmem_capture::mem_utils::ptr_add_nowrap;
 use crate::stages::testing::test_server_socket;
 use libc::O_CREAT;
@@ -80,7 +80,7 @@ impl TracingInfra {
     }
   }
 
-   pub fn try_new(resource_prefix: &str, buff_count: u32, buff_len: u32) -> Result<Self> {
+  pub fn try_new(resource_prefix: &str, buff_count: u32, buff_len: u32) -> Result<Self> {
     let lg = Log::get("init_tracing");
     let (sem_free, sem_full) = Self::init_semaphores(resource_prefix, buff_count)?;
     lg.info("Initializing shmem");
@@ -147,13 +147,15 @@ impl TracingInfra {
   }
 }
 
+// I just needd something that does not look like a Result and
+// "acts" like Haskell's either
 enum Either<T, S> {
   Left(T),
   Right(S),
 }
 
-pub fn cleanup(prefix: &str) -> Result<()> {
-  let lg = Log::get("cleanup");
+fn cleanup_sems(prefix: &str) {
+  let lg = Log::get("cleanup_sems");
   let FreeFullSemNames { free, full } = FreeFullSemNames::new(prefix, "capture", "base");
   for name in &[
     free,
@@ -170,23 +172,11 @@ pub fn cleanup(prefix: &str) -> Result<()> {
       lg.info(format!("Cleanup {}: {}", name, res.err().unwrap()));
     }
   }
+}
 
-  let metadata_shm_name = String::from_utf8(META_MEM_NAME.to_vec())?;
-  let buffs_shm_name = format!("{prefix}-capture-base-buffmem\x00");
-  // SAFETY: line above
-  for name in [unsafe { to_cstr(&metadata_shm_name) }, unsafe {
-    to_cstr(&buffs_shm_name)
-  }] {
-    lg.info(format!("Cleanup {:?}", name));
-    if let Err(e) = try_shm_unlink_fd(name) {
-      lg.info(format!("Cleanup error: {:?}: {e}", name));
-    }
-  }
-  let svr_sock_name = test_server_socket(prefix);
-  lg.info(format!("Cleanup {:?}", svr_sock_name));
-  let _ = std::fs::remove_file(svr_sock_name.clone())
-    .inspect_err(|e| lg.info(format!("Cleanup error: {}: {}", svr_sock_name, e)));
-  Ok(())
+pub fn cleanup(prefix: &str) -> Result<()> {
+  cleanup_sems(prefix);
+  cleanup_shared_mem(prefix)
 }
 
 fn deinit_semaphore_single(sem: Semaphore) -> Result<()> {
@@ -205,12 +195,34 @@ pub fn deinit_semaphores(free_handle: Semaphore, full_handle: Semaphore) -> Resu
     .map_err(|e| e.context("When closing full semaphore"))
 }
 
+fn get_shmem_name(prefix: &str) -> String {
+  format!("{prefix}-capture-base-buffmem\x00")
+}
+
 fn init_shmem(prefix: &str, buff_count: u32, buff_len: u32) -> Result<ShmemHandle> {
-  let buffs_tmp = format!("{prefix}-capture-base-buffmem\x00");
+  let buffs_tmp: String = get_shmem_name(prefix); // keep type annotation for safety
   // SAFETY: line above
   let buffscstr = unsafe { to_cstr(&buffs_tmp) };
 
   ShmemHandle::try_mmap(buffscstr, buff_count * buff_len)
+}
+
+fn cleanup_shared_mem(prefix: &str) -> Result<()> {
+  let lg = Log::get("cleanup_shared_mem");
+  let metadata_shm_name = String::from_utf8(META_MEM_NAME.to_vec())?;
+  let buffs_shm_name: String = get_shmem_name(prefix); // keep type annotation for safety
+  // SAFETY: line above
+  for name in unsafe { [to_cstr(&metadata_shm_name), to_cstr(&buffs_shm_name)] } {
+    lg.info(format!("Cleanup {:?}", name));
+    if let Err(e) = try_shm_unlink_fd(name) {
+      lg.info(format!("Cleanup error: {:?}: {e}", name));
+    }
+  }
+  let svr_sock_name = test_server_socket(prefix);
+  lg.info(format!("Cleanup {:?}", svr_sock_name));
+  let _ = std::fs::remove_file(svr_sock_name.clone())
+    .inspect_err(|e| lg.info(format!("Cleanup error: {}: {}", svr_sock_name, e)));
+  Ok(())
 }
 
 fn deinit_shmem(buffers_mem: ShmemHandle) -> Result<()> {
@@ -263,15 +275,18 @@ pub fn send_arg_capture_metadata(
   )
 }
 
+pub struct TestParams {
+  pub arg_count: u32,
+  pub test_count: u32,
+  pub target_call_number: u32,
+}
+
 pub fn send_test_metadata(
   chnl: &mut MetadataPublisher,
   buff_count: u32,
   buff_len: u32,
-  module: IntegralModId,
-  fn_id: IntegralFnId,
-  arg_count: u32,
-  test_count: u32,
-  target_call_number: u32,
+  fn_uid: NumFunUid,
+  params: TestParams,
 ) -> Result<()> {
   send_metadata(
     chnl,
@@ -280,27 +295,32 @@ pub fn send_test_metadata(
       buff_len,
       total_len: buff_count * buff_len,
       mode: 2,
-      target_fnid: *fn_id,
-      target_modid: *module,
+      target_fnid: *fn_uid.function_id,
+      target_modid: *fn_uid.module_id,
       forked: 0,
-      arg_count,
-      test_count,
-      target_call_number,
+      arg_count: params.arg_count,
+      test_count: params.test_count,
+      target_call_number: params.target_call_number,
     },
   )
 }
 
-fn send_metadata(chnl: &mut MetadataPublisher, target_descriptor: ShmMeta) -> Result<()> {
-  Log::get("init_tracing").info("Waiting for a cooperating program");
-  chnl.publish(target_descriptor)
+fn send_metadata(meta_pub: &mut MetadataPublisher, target_descriptor: ShmMeta) -> Result<()> {
+  Log::get("send_metadata").info("Waiting for a cooperating program");
+  meta_pub.publish(target_descriptor)
 }
 
-// raw_buff arg: poitner validity must be ensured by protocol, target type is copied, no allocation over the same memory region
-// Okay Left = ending (empty) message reached, no further processing needed
-// Okay Right = [start, end) buffer's data bounds
-fn buff_bounds_or_end(raw_buff: *const u8) -> Result<Either<(), (*const u8, *const u8)>> {
+/// safety: raw_buff must be the first byte of a buffer which is interpretable as a `*const u32`
+/// and dereferencable as u32, other pointer guarantees must also hold
+///
+/// determines the range of the buffer's data
+///  
+/// Return value (Ok variant):
+/// Left = ending message reached, no further processing needed
+/// Right = [start, end) buffer's data bounds
+unsafe fn buff_bounds_or_end(raw_buff: *const u8) -> Result<Either<(), (*const u8, *const u8)>> {
   ensure!(!raw_buff.is_null(), "Input is null");
-  // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
+  // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check, T is u32
   let valid_size: u32 = unsafe { read_w_alignment_chk(raw_buff) }?;
 
   if valid_size == 0 {
@@ -314,6 +334,7 @@ fn buff_bounds_or_end(raw_buff: *const u8) -> Result<Either<(), (*const u8, *con
   Ok(Either::Right((start, buff_end)))
 }
 
+// do not derive clone/copy or define functions with similar semantics
 pub struct MetadataPublisher {
   shm: ShmemHandle,
   data_rdy_sem: Semaphore,
@@ -321,8 +342,15 @@ pub struct MetadataPublisher {
 }
 
 impl MetadataPublisher {
+  // metadata is published via shared memory and 2 semaphores:
+  // a "data_rdy" semaphore that signals that the metadata is ready to be read
+  // a "data_ack" semaphore that indicates that the data has been read and can be rewritten/discarded
+
   pub fn new(mem_path: &CStr, data_sem_path: &str, ack_sem_path: &str) -> Result<Self> {
+    // initialize ready semaphore to zero as no data is ready
     let data = Semaphore::try_open_exclusive(data_sem_path, 0)?;
+    // !! ack semaphore is initialized to ONE - this will be waited on in the first call of
+    // Self::publish
     let ack = Semaphore::try_open_exclusive(ack_sem_path, 1)?;
     let shm = ShmemHandle::try_mmap(mem_path, std::mem::size_of::<ShmemHandle>() as u32)?;
     Ok(Self {
@@ -359,3 +387,7 @@ impl MetadataPublisher {
 // are present in associated functions & named
 // semaphores should be sharable between threads
 unsafe impl Send for MetadataPublisher {}
+// note: the type may never become Sync (deinit is not compatible) and
+// publish was designed around synchronization of 2 processes, so
+// multithreaded contention inside the function was not really considered
+// (the type is Arc-Mutexed anyway)

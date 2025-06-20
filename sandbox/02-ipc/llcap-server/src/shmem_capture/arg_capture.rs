@@ -97,7 +97,7 @@ unsafe fn read_integral_id_from_unaligned<T: From<u32>>(raw_buff: *const u8) -> 
 }
 
 impl PartialCaptureState {
-  // SAFETY of all non-pub progress_* functions is based on safety of fn progress
+  // SAFETY of all **non-pub** progress_* functions is based on safety of fn progress
 
   unsafe fn progress_helper_read_u32<T: From<u32>>(
     raw_buff: *const u8,
@@ -113,7 +113,8 @@ impl PartialCaptureState {
     unsafe { read_integral_id_from_unaligned(raw_buff) }
   }
 
-  fn progress_get_module_id(
+  /// reads module ID and advances raw_buff by the size of module ID
+  fn progress_read_mod_id(
     raw_buff: &mut *const u8,
     mods: &ExtModuleMap,
     buff_end: *const u8,
@@ -133,6 +134,7 @@ impl PartialCaptureState {
     Ok(Self::GotModuleId { module_id: rcvd_id })
   }
 
+  /// reads function ID and advances raw_buff by the size of function ID
   fn progress_read_fn_id(
     raw_buff: &mut *const u8,
     mods: &ExtModuleMap,
@@ -160,6 +162,8 @@ impl PartialCaptureState {
     })
   }
 
+  /// reads all arguments necessary/available and increments raw_buff
+  /// according to the argument types (could be determined dynamically)
   fn progress_read_args(
     raw_buff: &mut *const u8,
     mods: &ExtModuleMap,
@@ -171,7 +175,6 @@ impl PartialCaptureState {
     mut buff: Vec<u8>,
   ) -> Result<Self> {
     let lg = Log::get("progress_read_args");
-    lg.trace("Capturing arguments!");
     let size_refs = mods.get_function_arg_size_descriptors(module_id, fn_id);
     ensure!(
       size_refs.is_some(),
@@ -192,12 +195,6 @@ impl PartialCaptureState {
 
     for (i, desc) in size_refs.iter().enumerate().skip(arg_idx) {
       lg.trace(format!("Argument idx: {}, desc: {:?}", i, desc));
-      let reader = readers.get_reader(*desc);
-      ensure!(
-        reader.is_some(),
-        "Unexpected size type that is missing a reader {:?}",
-        desc
-      );
       ensure!(
         buff_end >= *raw_buff,
         "Buffer overflow at idx {i}, m/f id {} {}",
@@ -213,9 +210,16 @@ impl PartialCaptureState {
         });
       }
 
-      let len = buff_end as usize - ((*raw_buff) as usize);
+      let reader = readers.get_reader(*desc);
+      ensure!(
+        reader.is_some(),
+        "Unexpected size type that is missing a reader {:?}",
+        desc
+      );
       let reader = reader.unwrap();
-      // SAFETY: validity of len calculation guaranteed by ifs above, validity of ptrs themselves by the function SAFETY, calculation of lenght by ::<u8> whose size is 1
+
+      let len = buff_end as usize - ((*raw_buff) as usize);
+      // SAFETY: validity of len calculation guaranteed by ifs above, validity of ptrs themselves by the progress_* function SAFETY, calculation of length by ::<u8> whose size is 1
       let slice = unsafe { slice_from_raw_parts::<u8>(*raw_buff, len).as_ref() };
       ensure!(
         slice.is_some(),
@@ -229,6 +233,7 @@ impl PartialCaptureState {
           consumed_bytes,
         } => {
           buff.append(&mut payload);
+          // TODO ptr_add_nowrap
           *raw_buff = raw_buff.wrapping_add(consumed_bytes);
         }
         ReadProgress::NotYet => {
@@ -251,7 +256,7 @@ impl PartialCaptureState {
         }
       }
 
-      ensure!(reader.done(), "Sanity check failed");
+      ensure!(reader.done(), "Sanity check (reader done) failed");
       lg.trace(format!("Resetting reader {}", i));
       reader.read_reset();
     }
@@ -263,6 +268,8 @@ impl PartialCaptureState {
   }
 
   /// SAFETY: raw_buff and buff_end are not null & pointers to the same data buffer with raw_buff >= buff_end
+  ///
+  /// This function mutates (increments) the raw_buff within the bounds of buff_end
   pub unsafe fn progress(
     self,
     raw_buff: &mut *const u8,
@@ -274,7 +281,7 @@ impl PartialCaptureState {
     debug_assert!(!buff_end.is_null());
     debug_assert!(buff_end as usize >= *raw_buff as usize);
     match self {
-      Self::Empty => Self::progress_get_module_id(raw_buff, mods, buff_end),
+      Self::Empty => Self::progress_read_mod_id(raw_buff, mods, buff_end),
       Self::GotModuleId { module_id } => {
         Self::progress_read_fn_id(raw_buff, mods, buff_end, module_id)
       }
@@ -321,14 +328,17 @@ impl Default for ArgCaptureState {
 }
 
 impl ArgCaptureState {
-  fn extract_massages(mut self) -> (Vec<(IntegralModId, IntegralFnId, Vec<u8>)>, Self) {
+  fn extract_massages(&mut self) -> Vec<(IntegralModId, IntegralFnId, Vec<u8>)> {
     let mut res = vec![];
     std::mem::swap(&mut res, &mut self.payload);
-    (res, self)
+    res
   }
 }
 
-fn update_from_buffer(
+/// safety: apart from standard ptr guarantess, raw_buff must point to at least a 4-byte memory region that contains a valid u32 (size of the data)
+///
+/// Performs an argument capture on a received buffer
+unsafe fn update_from_buffer(
   mut raw_buff: *const u8,
   _max_size: usize,
   mods: &ExtModuleMap,
@@ -336,7 +346,8 @@ fn update_from_buffer(
   readers: &mut SizeTypeReaders,
   capture_target: &mut ArgPacketDumper,
 ) -> Result<ArgCaptureState> {
-  let (buff_start, buff_end) = match buff_bounds_or_end(raw_buff)? {
+  // SAFETY: delegated from the caller
+  let (buff_start, buff_end) = match unsafe { buff_bounds_or_end(raw_buff)? } {
     Either::Left(()) => {
       ensure!(
         state.partial_state == PartialCaptureState::Empty,
@@ -374,7 +385,7 @@ fn update_from_buffer(
         if let Some(dumper) = capture_target.get_packet_dumper(mod_id, fn_id) {
           dumper.dump(&mut buff)?;
         }
-        Log::get("AT update_from_buffer").trace(format!("{:?}", buff));
+        Log::get("argCap update_from_buffer").trace(format!("{:?}", buff));
         state.payload.push((mod_id, fn_id, buff));
         PartialCaptureState::Empty
       }
@@ -402,17 +413,20 @@ pub fn perform_arg_capture(
 
     lg.trace(format!("Received buffer {}", buff_idx));
     let buff_offset = buff_idx * buff_size;
-    let st: ArgCaptureState = {
+    let mut st: ArgCaptureState = {
       let base_ptr = infra.get_checked_base_ptr(buff_offset)?;
       let buff_ptr = ptr_add_nowrap(*base_ptr, buff_offset)?;
-      update_from_buffer(
-        buff_ptr,
-        buff_size,
-        modules,
-        state,
-        &mut cache,
-        capture_target,
-      )?
+      // SAFETY: get_checked_base_ptr guarantees buff_ptr is a valid buffer starting pointer (we also assume the cooperating application follows protocol)
+      unsafe {
+        update_from_buffer(
+          buff_ptr,
+          buff_size,
+          modules,
+          state,
+          &mut cache,
+          capture_target,
+        )?
+      }
       // drops the immutable borrow of the buffer pointer (and therefore the buffer)
     };
 
@@ -428,8 +442,8 @@ pub fn perform_arg_capture(
     }
     infra.post_free_buffer(buff_idx)?;
 
-    let (mut msgs, new_state) = st.extract_massages();
-    state = new_state;
+    let mut msgs = st.extract_massages();
+    state = st;
     results.append(&mut msgs);
 
     if state.endmessage_counter == buff_num {

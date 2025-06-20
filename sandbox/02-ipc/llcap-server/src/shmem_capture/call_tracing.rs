@@ -38,15 +38,20 @@ impl CallTraceMessageState {
   }
 }
 
-/// performs a read operation on a given buffer, after this function, no data inside a buffer is relevant to us anymore
-fn update_from_buffer(
+/// safety: apart from standard ptr guarantess, raw_buff must point to at least a 4-byte memory region that contains a valid u32 (size of the data)
+///
+/// Performs a read operation on a given buffer (call tracing data collection)
+///
+/// After this function, no data inside a buffer is relevant to us anymore
+unsafe fn update_from_buffer(
   mut raw_buff: *const u8,
   _max_size: usize,
   modules: &ExtModuleMap,
   mut state: CallTraceMessageState,
 ) -> Result<CallTraceMessageState> {
   let lg = Log::get("update_from_buffer");
-  let (buff_start, buff_end) = match buff_bounds_or_end(raw_buff)? {
+  // SAFETY: delegated from the caller
+  let (buff_start, buff_end) = match unsafe { buff_bounds_or_end(raw_buff)? } {
     Either::Left(()) => {
       if let Some(m_id) = state.mod_id_wip {
         bail!(
@@ -87,6 +92,7 @@ fn update_from_buffer(
     overread_check(raw_buff, buff_end, FUNC_ID_SIZE, "function ID")?;
 
     // SAFETY: read_w_alignment_chk + similar to buff_bounds_or_end's requirements, raw_buff within bounds as checked above
+    // (we also assume the cooperating application follows protocol)
     let fn_id: u32 = unsafe { read_w_alignment_chk(raw_buff) }?;
     lg.trace(format!("M {:02X}", *mod_id));
     lg.trace(format!("F {:02X}", fn_id));
@@ -157,7 +163,8 @@ pub fn msg_handler(
     let mut st: CallTraceMessageState = {
       let base_ptr = infra.get_checked_base_ptr(buff_offset)?;
       let buff_ptr = ptr_add_nowrap(*base_ptr, buff_offset)?;
-      update_from_buffer(buff_ptr, buff_size, modules, state)?
+      // SAFETY: get_checked_base_ptr ensures buff_ptr is valid
+      unsafe { update_from_buffer(buff_ptr, buff_size, modules, state)? }
       // drops the immutable borrow of the buffer pointer
     };
 
