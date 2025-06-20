@@ -200,7 +200,7 @@ static bool termination_sequence(WriteChannel *self) {
 
 static void *get_buffer(WriteChannel *self, size_t idx) {
   _Static_assert(sizeof(char) == 1, "Byte is a byte");
-  assert(idx < self->info.buff_len);
+  assert(idx < self->info.buff_count);
   return (void *)((char *)self->buffer_base + idx * self->info.buff_len);
 }
 
@@ -253,7 +253,7 @@ static int can_push_data_of_size(WriteChannel *self, size_t len,
   if (SIZE_MAX - len < get_buff_data_space(self)) {
     printf("Overflow on data size %lu\n", len);
     return -1;
-  } else if (len >= get_buff_data_space(self)) {
+  } else if (len > get_buff_data_space(self)) {
     printf("Request for data size %lu cannot be satisfied as buffer length is "
            "%u (%lu reserved)\n",
            len, self->info.buff_len, sizeof(self->bumper_offset));
