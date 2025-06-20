@@ -150,7 +150,7 @@ pub fn msg_handler(
   let mut state = CallTraceMessageState::new(None, vec![]);
   let mut recorded_frequencies = HashMap::new();
   loop {
-    infra.wait_for_free_buffer()?;
+    infra.wait_for_full_buffer()?;
 
     lg.trace(format!("Received buffer {}", buff_idx));
     let buff_offset = buff_idx * buff_size;

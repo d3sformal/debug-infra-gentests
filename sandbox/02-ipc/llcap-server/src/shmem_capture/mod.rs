@@ -16,7 +16,8 @@ use crate::modmap::{IntegralFnId, IntegralModId};
 use crate::shmem_capture::mem_utils::ptr_add_nowrap;
 use crate::stages::testing::test_server_socket;
 use libc::O_CREAT;
-/// a handle to all shared memory infrastructure necessary for function tracing
+
+/// a handle to all shared memory infrastructure necessary for function tracing (call tracing and argument capture)
 pub struct TracingInfra {
   pub sem_free: Semaphore,
   pub sem_full: Semaphore,
@@ -24,11 +25,13 @@ pub struct TracingInfra {
 }
 
 impl TracingInfra {
-  pub fn wait_for_free_buffer(&mut self) -> Result<()> {
+  /// blocks until a buffer has been filled by the instrumented applicaiton
+  pub fn wait_for_full_buffer(&mut self) -> Result<()> {
     let sem_res = self.sem_full.try_wait();
-    sem_res.map_err(|e| e.context("wait_for_free_buffer"))
+    sem_res.map_err(|e| e.context("wait_for_full_buffer"))
   }
 
+  /// signals to the application that "next" buffer is available for modification
   pub fn post_free_buffer(&mut self, dbg_buff_idx: usize) -> Result<()> {
     let sem_res = self.sem_free.try_post();
     sem_res.map_err(|e| e.context(format!("While posting a free buffer (idx {dbg_buff_idx}")))
