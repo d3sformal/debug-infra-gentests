@@ -26,6 +26,7 @@ pub struct ShmemHandle {
   /// (that is, it should not happen that an immutable borrow results in a *mut u8 created
   /// somewhere down the call stack)
   underlying_memory: RefCell<*mut u8>,
+  /// number of bytes valid, starting from underlying_memory and spannign the entire mapped length
   len: u32,
   _fd: i32,
   /// null-char-terminated string
@@ -48,6 +49,7 @@ impl ShmemHandle {
     }
   }
 
+  /// number of bytes allocated overall
   pub fn len(&self) -> u32 {
     self.len
   }
