@@ -4,8 +4,8 @@ pub mod hooklib_commons;
 pub mod mem_utils;
 use anyhow::{Result, anyhow, bail, ensure};
 use hooklib_commons::{META_MEM_NAME, META_SEM_ACK, META_SEM_DATA, ShmMeta};
-use mem_utils::read_w_alignment_chk;
 use std::ffi::CStr;
+use std::slice;
 
 use crate::libc_wrappers::fd::try_shm_unlink_fd;
 use crate::libc_wrappers::sem::{FreeFullSemNames, Semaphore};
@@ -22,6 +22,93 @@ pub struct TracingInfra {
   pub sem_free: Semaphore,
   pub sem_full: Semaphore,
   pub backing_buffer: ShmemHandle,
+}
+
+/// a uniquely-typed wrapper around a start pointer to a logical buffer
+/// which points to a valid size field
+pub struct BufferStartPtr<'a> {
+  ptr: ReadOnlyBufferPtr<'a>,
+}
+
+impl<'a> BufferStartPtr<'a> {
+  pub fn new(slice: &'a [u8]) -> Result<Self> {
+    ensure!(
+      slice.len() > std::mem::size_of::<u32>(),
+      "No space for length field"
+    );
+    Ok(Self {
+      ptr: ReadOnlyBufferPtr::new(slice),
+    })
+  }
+
+  /// read the size field and return a buffer that supports reading of data
+  pub fn shift_init_data(mut self) -> Result<ReadOnlyBufferPtr<'a>> {
+    let valid_size: u32 = self.ptr.unaligned_shift_num_read()?;
+
+    Ok(self.ptr.constrain(valid_size as usize))
+  }
+}
+
+/// a uniquely-typed wrapper around a logical buffer's inner data
+pub struct ReadOnlyBufferPtr<'a> {
+  slice: &'a [u8],
+}
+
+impl<'a> ReadOnlyBufferPtr<'a> {
+  fn len(&self) -> usize {
+    self.slice.len()
+  }
+
+  pub fn empty(&self) -> bool {
+    self.len() == 0
+  }
+
+  pub fn constrain(self, max_size: usize) -> Self {
+    Self::new(self.slice.split_at(max_size).0)
+  }
+
+  fn new(slice: &'a [u8]) -> Self {
+    Self { slice }
+  }
+
+  pub fn shift(&mut self, offset: usize) {
+    self.slice = self.slice.split_at(offset).1;
+  }
+
+  // splits the underlying slice at offset, returning the first part
+  // if successful (and shifting the underlying slice to the second part)
+  fn shift_split(&mut self, size: usize) -> Result<&[u8]> {
+    let (res, rest) = self.slice.split_at(size);
+    ensure!(res.len() == size, "Buff does not contain enough bytes");
+    self.slice = rest;
+    Ok(res)
+  }
+
+  // performs an unaligned read of bytes into a numerical value
+  pub fn unaligned_shift_num_read<S: num_traits::FromBytes>(&mut self) -> Result<S>
+  where
+    for<'x> &'x <S as num_traits::FromBytes>::Bytes: TryFrom<&'x [u8]>,
+    for<'y> <&'y <S as num_traits::FromBytes>::Bytes as TryFrom<&'y [u8]>>::Error:
+      Into<anyhow::Error>,
+  {
+    Ok(S::from_le_bytes(
+      self
+        .shift_split(std::mem::size_of::<S>())?
+        .try_into()
+        .map_err(|e: <&<S as num_traits::FromBytes>::Bytes as TryFrom<&[u8]>>::Error| anyhow!(e))?,
+    ))
+  }
+
+  // caller must ensure that the slice's pointer is never exposed or (worse) used as ptr to
+  // mutable
+  pub fn as_slice(&self) -> &[u8] {
+    self.slice
+  }
+}
+
+pub struct BorrowedReadBuffer<'a> {
+  _borrow_handle: std::cell::Ref<'a, *const u8>,
+  pub buffer: ReadOnlyBufferPtr<'a>,
 }
 
 impl TracingInfra {
@@ -124,10 +211,12 @@ impl TracingInfra {
     Ok(base_mem)
   }
 
-  /// returns Ok variant if base pointer + buff_offset are valid
-  ///
-  /// the contents of the Ok variant is the base pointer, NOT the offseted pointer!
-  pub fn get_checked_base_ptr(&self, buff_offset: usize) -> Result<std::cell::Ref<'_, *const u8>> {
+  /// returns Ok variant if base pointer + buff_offset are valid offset to a logical buffer
+  pub fn get_checked_base_ptr(
+    &self,
+    buff_offset: usize,
+    buffer_size: usize, // TODO: shouldnt tracinginfra know this?
+  ) -> Result<BorrowedReadBuffer<'_>> {
     let buffers: &ShmemHandle = &self.backing_buffer;
     ensure!(
       buff_offset < buffers.len() as usize,
@@ -136,22 +225,47 @@ impl TracingInfra {
       buffers.len()
     );
     let base_mem = buffers.borrow_ptr()?;
-    let test_value = ptr_add_nowrap(*base_mem, buff_offset)?;
-    ensure!(
-      !test_value.is_null() && test_value >= *base_mem,
-      "Buffer const pointer is invalid: {:?}, offset: {}",
-      test_value,
-      buff_offset
-    );
-    Ok(base_mem)
-  }
-}
+    {
+      // arithmetic operations on pointers that check we can do what follows after this block
+      // the pointers here carry no/incorrect provenance and are thus unreferencable
+      // even by the slice::from_raw_parts
 
-// I just needd something that does not look like a Result and
-// "acts" like Haskell's either
-enum Either<T, S> {
-  Left(T),
-  Right(S),
+      let test_value = ptr_add_nowrap(*base_mem, buff_offset)?;
+      ensure!(
+        !test_value.is_null() && test_value >= *base_mem,
+        "Buffer const pointer is invalid: {:?}, offset: {}",
+        test_value,
+        buff_offset
+      );
+      let test_value_end = ptr_add_nowrap(test_value, buffer_size)?;
+      ensure!(
+        !test_value_end.is_null()
+          && (test_value_end as usize) - (test_value as usize)
+            <= self.backing_buffer.len() as usize,
+        "Buffer const pointer is invalid: {:?}, {:?}, offset: {}, backing size: {}",
+        test_value_end,
+        test_value,
+        buff_offset,
+        self.backing_buffer.len()
+      );
+    }
+    // base_mem should carry no provenance as it originates from mmpaed memory
+
+    // by the following, I hope to introduce provenance to the pointer (slices) that follow
+
+    // this slice only says we can fit all previous buffer and the target buffer
+    // SAFETY: via refcell borrow checking and checks done above
+    let up_to_target_buff: &[u8] =
+      unsafe { slice::from_raw_parts(*base_mem, buff_offset + buffer_size) };
+    let target_buffer = up_to_target_buff.split_at(buff_offset).1;
+
+    let buffer = BufferStartPtr::new(target_buffer)?.shift_init_data()?;
+
+    Ok(BorrowedReadBuffer {
+      _borrow_handle: base_mem,
+      buffer,
+    })
+  }
 }
 
 fn cleanup_sems(prefix: &str) {
@@ -308,30 +422,6 @@ pub fn send_test_metadata(
 fn send_metadata(meta_pub: &mut MetadataPublisher, target_descriptor: ShmMeta) -> Result<()> {
   Log::get("send_metadata").info("Waiting for a cooperating program");
   meta_pub.publish(target_descriptor)
-}
-
-/// safety: raw_buff must be the first byte of a buffer which is interpretable as a `*const u32`
-/// and dereferencable as u32, other pointer guarantees must also hold
-///
-/// determines the range of the buffer's data
-///  
-/// Return value (Ok variant):
-/// Left = ending message reached, no further processing needed
-/// Right = [start, end) buffer's data bounds
-unsafe fn buff_bounds_or_end(raw_buff: *const u8) -> Result<Either<(), (*const u8, *const u8)>> {
-  ensure!(!raw_buff.is_null(), "Input is null");
-  // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check, T is u32
-  let valid_size: u32 = unsafe { read_w_alignment_chk(raw_buff) }?;
-
-  if valid_size == 0 {
-    return Ok(Either::Left(()));
-  }
-
-  let start = ptr_add_nowrap(raw_buff, std::mem::size_of_val(&valid_size))?;
-  let buff_end = ptr_add_nowrap(start, valid_size as usize)?;
-  ensure!(!buff_end.is_null(), "Buffer end is null");
-  // validity of buff_end depends on the protocol
-  Ok(Either::Right((start, buff_end)))
 }
 
 // do not derive clone/copy or define functions with similar semantics

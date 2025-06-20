@@ -1,9 +1,7 @@
-use std::{mem::MaybeUninit, ptr::slice_from_raw_parts};
-
 use crate::{
   log::Log,
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId},
-  shmem_capture::mem_utils::{overread_check, ptr_add_nowrap, ptr_add_nowrap_mut},
+  shmem_capture::{BorrowedReadBuffer, ReadOnlyBufferPtr, mem_utils::ptr_add_nowrap_mut},
   sizetype_handlers::{
     ArgSizeTypeRef, CStringTypeReader, CustomTypeReader, FixedSizeTyData, FixedSizeTyReader,
     ReadProgress, SizeTypeReader,
@@ -12,7 +10,7 @@ use crate::{
 };
 use anyhow::{Result, ensure};
 
-use super::{Either, TracingInfra, buff_bounds_or_end, mem_utils::read_w_alignment_chk};
+use super::TracingInfra;
 
 struct SizeTypeReaders {
   fixed: [Box<dyn SizeTypeReader>; 17],
@@ -83,48 +81,14 @@ enum PartialCaptureState {
   },
 }
 
-// SAFETY: raw_buff points to 4 bytes of valid data
-unsafe fn read_integral_id_from_unaligned<T: From<u32>>(raw_buff: *const u8) -> Result<T> {
-  let mut uninit_id = MaybeUninit::<u32>::uninit();
-  // SAFETY: from_le_bytes requrides [u8; N], so read will be align-valid
-  // as long as raw_buff is valid
-  uninit_id.write(u32::from_le_bytes(unsafe {
-    read_w_alignment_chk(raw_buff)?
-  }));
-  // SAFETY: read performed filled all the bytes of the MaybeUninit
-  let rcvd_id = T::from(unsafe { uninit_id.assume_init() });
-  Ok(rcvd_id)
-}
-
 impl PartialCaptureState {
-  // SAFETY of all **non-pub** progress_* functions is based on safety of fn progress
-
-  unsafe fn progress_helper_read_u32<T: From<u32>>(
-    raw_buff: *const u8,
-    buff_end: *const u8,
-  ) -> Result<T> {
-    overread_check(
-      raw_buff,
-      buff_end,
-      std::mem::size_of::<u32>(),
-      "read ID u32",
-    )?;
-    // SAFETY: line above
-    unsafe { read_integral_id_from_unaligned(raw_buff) }
-  }
-
-  /// reads module ID and advances raw_buff by the size of module ID
-  fn progress_read_mod_id(
-    raw_buff: &mut *const u8,
-    mods: &ExtModuleMap,
-    buff_end: *const u8,
-  ) -> Result<Self> {
+  /// reads module ID and shifts raw_buff by the size of module ID
+  fn progress_read_mod_id(raw_buff: &mut ReadOnlyBufferPtr, mods: &ExtModuleMap) -> Result<Self> {
     let lg = Log::get("progress_get_module_id");
     lg.trace("Start");
-    // SAFETY: progress-* above
-    let rcvd_id: IntegralModId = unsafe { Self::progress_helper_read_u32(*raw_buff, buff_end) }?;
-    *raw_buff = ptr_add_nowrap(*raw_buff, std::mem::size_of::<u32>())?;
-
+    // keep the type annotation to warn if implementing types change
+    let rcvd_id: u32 = raw_buff.unaligned_shift_num_read()?;
+    let rcvd_id = IntegralModId::from(rcvd_id);
     ensure!(
       mods.get_module_string_id(rcvd_id).is_some(),
       "Module ID {} is unknown",
@@ -134,18 +98,17 @@ impl PartialCaptureState {
     Ok(Self::GotModuleId { module_id: rcvd_id })
   }
 
-  /// reads function ID and advances raw_buff by the size of function ID
+  /// reads function ID and shifts raw_buff by the size of function ID
   fn progress_read_fn_id(
-    raw_buff: &mut *const u8,
+    raw_buff: &mut ReadOnlyBufferPtr,
     mods: &ExtModuleMap,
-    buff_end: *const u8,
     module_id: IntegralModId,
   ) -> Result<Self> {
     let lg = Log::get("progress::progress_read_fn_id");
     lg.trace("Reading fnid");
-    // SAFETY: progress-* above
-    let fn_id: IntegralFnId = unsafe { Self::progress_helper_read_u32(*raw_buff, buff_end) }?;
-    *raw_buff = ptr_add_nowrap(*raw_buff, std::mem::size_of::<u32>())?;
+    let fn_id: u32 = raw_buff.unaligned_shift_num_read()?;
+    // keep the type annotation to warn if implementing types change
+    let fn_id: IntegralFnId = IntegralFnId::from(fn_id);
 
     ensure!(
       mods.get_function_name(module_id, fn_id).is_some(),
@@ -162,12 +125,11 @@ impl PartialCaptureState {
     })
   }
 
-  /// reads all arguments necessary/available and increments raw_buff
+  /// reads all arguments necessary/available and shifts raw_buff
   /// according to the argument types (could be determined dynamically)
   fn progress_read_args(
-    raw_buff: &mut *const u8,
+    raw_buff: &mut ReadOnlyBufferPtr,
     mods: &ExtModuleMap,
-    buff_end: *const u8,
     readers: &mut SizeTypeReaders,
     module_id: IntegralModId,
     fn_id: IntegralFnId,
@@ -195,13 +157,7 @@ impl PartialCaptureState {
 
     for (i, desc) in size_refs.iter().enumerate().skip(arg_idx) {
       lg.trace(format!("Argument idx: {}, desc: {:?}", i, desc));
-      ensure!(
-        buff_end >= *raw_buff,
-        "Buffer overflow at idx {i}, m/f id {} {}",
-        *module_id,
-        *fn_id
-      );
-      if buff_end == *raw_buff {
+      if raw_buff.empty() {
         return Ok(Self::CapturingArgs {
           module_id,
           fn_id,
@@ -218,26 +174,17 @@ impl PartialCaptureState {
       );
       let reader = reader.unwrap();
 
-      let len = buff_end as usize - ((*raw_buff) as usize);
-      // SAFETY: validity of len calculation guaranteed by ifs above, validity of ptrs themselves by the progress_* function SAFETY, calculation of length by ::<u8> whose size is 1
-      let slice = unsafe { slice_from_raw_parts::<u8>(*raw_buff, len).as_ref() };
-      ensure!(
-        slice.is_some(),
-        "Safety invariant violated on ptr range [{:?} {:?}] len: {len}",
-        raw_buff,
-        buff_end
-      );
-      match reader.read(slice.unwrap())? {
+      let slice = raw_buff.as_slice();
+      match reader.read(slice)? {
         ReadProgress::Done {
           mut payload,
           consumed_bytes,
         } => {
           buff.append(&mut payload);
-          // TODO ptr_add_nowrap
-          *raw_buff = raw_buff.wrapping_add(consumed_bytes);
+          raw_buff.shift(consumed_bytes);
         }
         ReadProgress::NotYet => {
-          *raw_buff = buff_end;
+          raw_buff.shift(slice.len());
           return Ok(Self::CapturingArgs {
             module_id,
             fn_id,
@@ -246,7 +193,7 @@ impl PartialCaptureState {
           });
         }
         ReadProgress::Nop => {
-          *raw_buff = buff_end;
+          raw_buff.shift(slice.len());
           return Ok(Self::CapturingArgs {
             module_id,
             fn_id,
@@ -267,32 +214,22 @@ impl PartialCaptureState {
     })
   }
 
-  /// SAFETY: raw_buff and buff_end are not null & pointers to the same data buffer with raw_buff >= buff_end
-  ///
-  /// This function mutates (increments) the raw_buff within the bounds of buff_end
-  pub unsafe fn progress(
+  /// This function mutates (shifts) the raw_buff within the bounds of buff_end
+  pub fn progress(
     self,
-    raw_buff: &mut *const u8,
+    raw_buff: &mut ReadOnlyBufferPtr,
     mods: &ExtModuleMap,
-    buff_end: *const u8,
     readers: &mut SizeTypeReaders,
   ) -> Result<Self> {
-    debug_assert!(!raw_buff.is_null());
-    debug_assert!(!buff_end.is_null());
-    debug_assert!(buff_end as usize >= *raw_buff as usize);
     match self {
-      Self::Empty => Self::progress_read_mod_id(raw_buff, mods, buff_end),
-      Self::GotModuleId { module_id } => {
-        Self::progress_read_fn_id(raw_buff, mods, buff_end, module_id)
-      }
+      Self::Empty => Self::progress_read_mod_id(raw_buff, mods),
+      Self::GotModuleId { module_id } => Self::progress_read_fn_id(raw_buff, mods, module_id),
       Self::CapturingArgs {
         module_id,
         fn_id,
         arg_idx,
         buff,
-      } => Self::progress_read_args(
-        raw_buff, mods, buff_end, readers, module_id, fn_id, arg_idx, buff,
-      ),
+      } => Self::progress_read_args(raw_buff, mods, readers, module_id, fn_id, arg_idx, buff),
       Self::Done {
         module_id,
         fn_id,
@@ -335,46 +272,27 @@ impl ArgCaptureState {
   }
 }
 
-/// safety: apart from standard ptr guarantess, raw_buff must point to at least a 4-byte memory region that contains a valid u32 (size of the data)
-///
 /// Performs an argument capture on a received buffer
-unsafe fn update_from_buffer(
-  mut raw_buff: *const u8,
+fn update_from_buffer(
+  mut raw_buff: BorrowedReadBuffer<'_>,
   _max_size: usize,
   mods: &ExtModuleMap,
   mut state: ArgCaptureState,
   readers: &mut SizeTypeReaders,
   capture_target: &mut ArgPacketDumper,
 ) -> Result<ArgCaptureState> {
-  // SAFETY: delegated from the caller
-  let (buff_start, buff_end) = match unsafe { buff_bounds_or_end(raw_buff)? } {
-    Either::Left(()) => {
-      ensure!(
-        state.partial_state == PartialCaptureState::Empty,
-        "Comms corruption - partial state with empty message following it! Partial state: {:?}",
-        state.partial_state
-      );
-      state.endmessage_counter += 1;
-      return Ok(state);
-    }
-    Either::Right(v) => v,
-  };
-
-  raw_buff = buff_start;
-  while raw_buff < buff_end {
+  let buff = &mut raw_buff.buffer;
+  if buff.empty() {
     ensure!(
-      !raw_buff.is_null(),
-      "Null pointer when iterating a received buffer"
+      state.partial_state == PartialCaptureState::Empty,
+      "Comms corruption - partial state with empty message following it! Partial state: {:?}",
+      state.partial_state
     );
-
-    // SAFETY: buff_bounds_or_end returns valid pointers + check above
-    // + protocol ensures that once acquired, buffer is not changed
-    // until "freed" by code running on this very path
-    let partial_state = unsafe {
-      state
-        .partial_state
-        .progress(&mut raw_buff, mods, buff_end, readers)?
-    };
+    state.endmessage_counter += 1;
+    return Ok(state);
+  }
+  while !buff.empty() {
+    let partial_state = state.partial_state.progress(buff, mods, readers)?;
 
     state.partial_state = match partial_state {
       PartialCaptureState::Done {
@@ -387,11 +305,13 @@ unsafe fn update_from_buffer(
         }
         Log::get("argCap update_from_buffer").trace(format!("{:?}", buff));
         state.payload.push((mod_id, fn_id, buff));
+        // start from an empty state
         PartialCaptureState::Empty
       }
-      st => st,
+      st => st, // continue from the non-Done state
     };
   }
+
   Ok(state)
 }
 
@@ -414,23 +334,20 @@ pub fn perform_arg_capture(
     lg.trace(format!("Received buffer {}", buff_idx));
     let buff_offset = buff_idx * buff_size;
     let mut st: ArgCaptureState = {
-      let base_ptr = infra.get_checked_base_ptr(buff_offset)?;
-      let buff_ptr = ptr_add_nowrap(*base_ptr, buff_offset)?;
-      // SAFETY: get_checked_base_ptr guarantees buff_ptr is a valid buffer starting pointer (we also assume the cooperating application follows protocol)
-      unsafe {
-        update_from_buffer(
-          buff_ptr,
-          buff_size,
-          modules,
-          state,
-          &mut cache,
-          capture_target,
-        )?
-      }
+      let buffer_ptr = infra.get_checked_base_ptr(buff_offset, buff_size)?;
+      update_from_buffer(
+        buffer_ptr,
+        buff_size,
+        modules,
+        state,
+        &mut cache,
+        capture_target,
+      )?
       // drops the immutable borrow of the buffer pointer (and therefore the buffer)
     };
 
     {
+      // TODO replace 2x
       let borrow = infra.get_checked_base_ptr_mut(buff_offset)?;
       let target = ptr_add_nowrap_mut(*borrow, buff_offset)?;
       // Protocol: Set buffer's length to zero

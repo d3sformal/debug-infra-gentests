@@ -3,16 +3,13 @@ use std::collections::HashMap;
 use crate::{
   log::Log,
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
-  shmem_capture::mem_utils::{ptr_add_nowrap, ptr_add_nowrap_mut},
+  shmem_capture::{BorrowedReadBuffer, ReadOnlyBufferPtr, mem_utils::ptr_add_nowrap_mut},
   stages::call_tracing::Message,
 };
 
 use anyhow::{Result, bail, ensure};
 
-use super::{
-  Either, TracingInfra, buff_bounds_or_end,
-  mem_utils::{overread_check, read_w_alignment_chk},
-};
+use super::TracingInfra;
 
 pub struct CallTraceMessageState {
   mod_id_wip: Option<IntegralModId>,
@@ -38,89 +35,76 @@ impl CallTraceMessageState {
   }
 }
 
-/// safety: apart from standard ptr guarantess, raw_buff must point to at least a 4-byte memory region that contains a valid u32 (size of the data)
-///
 /// Performs a read operation on a given buffer (call tracing data collection)
 ///
 /// After this function, no data inside a buffer is relevant to us anymore
-unsafe fn update_from_buffer(
-  mut raw_buff: *const u8,
+fn update_from_buffer(
+  mut raw_buff: BorrowedReadBuffer<'_>,
   _max_size: usize,
   modules: &ExtModuleMap,
   mut state: CallTraceMessageState,
 ) -> Result<CallTraceMessageState> {
   let lg = Log::get("update_from_buffer");
-  // SAFETY: delegated from the caller
-  let (buff_start, buff_end) = match unsafe { buff_bounds_or_end(raw_buff)? } {
-    Either::Left(()) => {
-      if let Some(m_id) = state.mod_id_wip {
-        bail!(
-          "Comms corruption - partial state with empty message following it! Module id {}",
-          *m_id
-        );
-      }
-
-      state.add_message(Message::ControlEnd);
-      return Ok(state);
+  let buff = &mut raw_buff.buffer;
+  if buff.empty() {
+    if let Some(m_id) = state.mod_id_wip {
+      bail!(
+        "Comms corruption - partial state with empty message following it! Module id {}",
+        *m_id
+      );
     }
-    Either::Right(v) => v,
-  };
 
-  raw_buff = buff_start;
-  while raw_buff < buff_end {
-    ensure!(!raw_buff.is_null(), "Null pointer when iterating buffer...");
+    state.add_message(Message::ControlEnd);
+    return Ok(state);
+  }
 
-    let mod_id = receive_module_id(&mut raw_buff, &mut state, buff_end)?;
+  while !buff.empty() {
+    let mod_id = receive_module_id(buff, &mut state)?;
     ensure!(
       modules.get_module_string_id(mod_id).is_some(),
       "Unknown module ID: {}",
       mod_id.hex_string()
     );
 
-    const FUNC_ID_SIZE: usize = IntegralFnId::byte_size();
-    if raw_buff >= buff_end {
-      if raw_buff > buff_end {
-        lg.warn(format!(
-          "Buffer weirdly overflown buff: {:?} end: {:?}",
-          raw_buff, buff_end
-        ));
-      }
+    if buff.empty() {
       lg.trace("Partial message");
       state.mod_id_wip = Some(mod_id);
       return Ok(state);
     }
-    overread_check(raw_buff, buff_end, FUNC_ID_SIZE, "function ID")?;
-
-    // SAFETY: read_w_alignment_chk + similar to buff_bounds_or_end's requirements, raw_buff within bounds as checked above
+    ensure!(
+      std::mem::size_of::<u32>() == IntegralFnId::byte_size(),
+      "Sanity check on function ID size"
+    );
     // (we also assume the cooperating application follows protocol)
-    let fn_id: u32 = unsafe { read_w_alignment_chk(raw_buff) }?;
+    let fn_id: u32 = buff
+      .unaligned_shift_num_read()
+      .map_err(|e| e.context("funciton id"))?;
     lg.trace(format!("M {:02X}", *mod_id));
     lg.trace(format!("F {:02X}", fn_id));
 
     state.add_message(Message::Normal(NumFunUid::new(IntegralFnId(fn_id), mod_id)));
-    raw_buff = ptr_add_nowrap(raw_buff, FUNC_ID_SIZE)?;
   }
   Ok(state)
 }
 
 // obtains the "next" module id to process
 fn receive_module_id(
-  raw_buff: &mut *const u8,
+  raw_buff: &mut ReadOnlyBufferPtr,
   state: &mut CallTraceMessageState,
-  buff_end: *const u8,
 ) -> Result<IntegralModId> {
   Ok(if let Some(mod_id) = state.mod_id_wip {
     // module id from a previous buffer -> skip readnig for module id and instead read function id corresponding to the module id from a previous bufer
     state.mod_id_wip = None;
     mod_id
   } else {
-    const MODID_SIZE: usize = IntegralModId::byte_size();
-    overread_check(*raw_buff, buff_end, MODID_SIZE, "module ID")?;
-    // SAFETY: read_w_alignment_chk performs *const dereference & null/alignment check
-    // poitner validity ensured by protocol, target type is copied, no allocation over the same memory region
-    let mod_id = IntegralModId(unsafe { read_w_alignment_chk(*raw_buff)? });
-    *raw_buff = ptr_add_nowrap(*raw_buff, MODID_SIZE)?;
-    mod_id
+    ensure!(
+      std::mem::size_of::<u32>() == IntegralModId::byte_size(),
+      "Sanity check on module ID size"
+    );
+    let mod_id: u32 = raw_buff
+      .unaligned_shift_num_read()
+      .map_err(|e| e.context("module ID"))?;
+    IntegralModId(mod_id)
   })
 }
 
@@ -161,10 +145,8 @@ pub fn msg_handler(
     lg.trace(format!("Received buffer {}", buff_idx));
     let buff_offset = buff_idx * buff_size;
     let mut st: CallTraceMessageState = {
-      let base_ptr = infra.get_checked_base_ptr(buff_offset)?;
-      let buff_ptr = ptr_add_nowrap(*base_ptr, buff_offset)?;
-      // SAFETY: get_checked_base_ptr ensures buff_ptr is valid
-      unsafe { update_from_buffer(buff_ptr, buff_size, modules, state)? }
+      let base_ptr = infra.get_checked_base_ptr(buff_offset, buff_size)?;
+      update_from_buffer(base_ptr, buff_size, modules, state)?
       // drops the immutable borrow of the buffer pointer
     };
 
