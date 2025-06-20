@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
       } else {
         lg.info("Initializing tracing infrastructure");
         let mut tracing_infra =
-          TracingInfra::try_new(&cli.fd_prefix, buff_count, buff_size).await?;
+          TracingInfra::try_new(&cli.fd_prefix, buff_count, buff_size)?;
 
         let mut guard = metadata_svr.lock().unwrap();
         send_call_tracing_metadata(guard.deref_mut(), buff_count, buff_size)?;
@@ -164,7 +164,7 @@ async fn main() -> Result<()> {
       let mut dumper = ArgPacketDumper::new(&out_dir, &modules, mem_limit as usize)?;
 
       lg.info("Initializing tracing infrastructure");
-      let mut tracing_infra = TracingInfra::try_new(&cli.fd_prefix, buff_count, buff_size).await?;
+      let mut tracing_infra = TracingInfra::try_new(&cli.fd_prefix, buff_count, buff_size)?;
 
       let mut cmd = cmd_from_args(&command)?;
       let mut guard = metadata_svr.lock().unwrap();

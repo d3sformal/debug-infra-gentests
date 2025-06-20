@@ -77,7 +77,7 @@ impl TracingInfra {
     }
   }
 
-  pub async fn try_new(resource_prefix: &str, buff_count: u32, buff_len: u32) -> Result<Self> {
+   pub fn try_new(resource_prefix: &str, buff_count: u32, buff_len: u32) -> Result<Self> {
     let lg = Log::get("init_tracing");
     let (sem_free, sem_full) = Self::init_semaphores(resource_prefix, buff_count)?;
     lg.info("Initializing shmem");
