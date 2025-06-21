@@ -1,7 +1,9 @@
+use std::ops::ControlFlow;
+
 use crate::{
   log::Log,
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId},
-  shmem_capture::{BorrowedReadBuffer, ReadOnlyBufferPtr, mem_utils::ptr_add_nowrap_mut},
+  shmem_capture::{BorrowedReadBuffer, CaptureLoop, ReadOnlyBufferPtr, run_capture},
   sizetype_handlers::{
     ArgSizeTypeRef, CStringTypeReader, CustomTypeReader, FixedSizeTyData, FixedSizeTyReader,
     ReadProgress, SizeTypeReader,
@@ -275,7 +277,6 @@ impl ArgCaptureState {
 /// Performs an argument capture on a received buffer
 fn update_from_buffer(
   mut raw_buff: BorrowedReadBuffer<'_>,
-  _max_size: usize,
   mods: &ExtModuleMap,
   mut state: ArgCaptureState,
   readers: &mut SizeTypeReaders,
@@ -317,58 +318,46 @@ fn update_from_buffer(
 
 pub fn perform_arg_capture(
   infra: &mut TracingInfra,
-  buff_size: usize,
-  buff_num: usize,
   modules: &ExtModuleMap,
   capture_target: &mut ArgPacketDumper,
 ) -> Result<Vec<(IntegralModId, IntegralFnId, Vec<u8>)>> {
-  let lg = Log::get("arg_capture");
-  let mut cache = create_sizetype_cache();
+  let capture = ArgCapture {
+    cache: create_sizetype_cache(),
+    results: vec![],
+    capture_target,
+    end_count: infra.buffer_count(),
+  };
 
-  let mut buff_idx: usize = 0;
-  let mut state = ArgCaptureState::default();
-  let mut results = vec![];
-  loop {
-    infra.wait_for_full_buffer()?;
+  let finished = run_capture(capture, infra, modules).map_err(|e| e.context("arg_capture"))?;
+  Ok(finished.results)
+}
 
-    lg.trace(format!("Received buffer {}", buff_idx));
-    let buff_offset = buff_idx * buff_size;
-    let mut st: ArgCaptureState = {
-      let buffer_ptr = infra.get_checked_base_ptr(buff_offset, buff_size)?;
-      update_from_buffer(
-        buffer_ptr,
-        buff_size,
-        modules,
-        state,
-        &mut cache,
-        capture_target,
-      )?
-      // drops the immutable borrow of the buffer pointer (and therefore the buffer)
-    };
+struct ArgCapture<'a> {
+  cache: SizeTypeReaders,
+  results: Vec<(IntegralModId, IntegralFnId, Vec<u8>)>,
+  capture_target: &'a mut ArgPacketDumper,
+  end_count: usize,
+}
 
-    {
-      // TODO replace 2x
-      let borrow = infra.get_checked_base_ptr_mut(buff_offset)?;
-      let target = ptr_add_nowrap_mut(*borrow, buff_offset)?;
-      // Protocol: Set buffer's length to zero
-      // SAFETY: get_checked_base_ptr_mut returns valid pointer to at least u32
-      unsafe {
-        (target as *mut u32).write_unaligned(0);
-      }
-      // drops the mutable borrow of the buffer pointer
+impl<'a> CaptureLoop for ArgCapture<'a> {
+  type State = ArgCaptureState;
+
+  fn update_from_buffer<'b>(
+    &mut self,
+    state: Self::State,
+    buffer: BorrowedReadBuffer<'b>,
+    modules: &ExtModuleMap,
+  ) -> Result<Self::State> {
+    update_from_buffer(buffer, modules, state, &mut self.cache, self.capture_target)
+  }
+
+  fn process_state(&mut self, mut state: Self::State) -> std::ops::ControlFlow<(), Self::State> {
+    let mut msgs = state.extract_massages();
+    self.results.append(&mut msgs);
+    if state.endmessage_counter == self.end_count {
+      ControlFlow::Break(())
+    } else {
+      ControlFlow::Continue(state)
     }
-    infra.post_free_buffer(buff_idx)?;
-
-    let mut msgs = st.extract_massages();
-    state = st;
-    results.append(&mut msgs);
-
-    if state.endmessage_counter == buff_num {
-      lg.trace("End condition");
-      return Ok(results);
-    }
-
-    buff_idx += 1;
-    buff_idx %= buff_num;
   }
 }

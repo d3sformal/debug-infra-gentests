@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
   log::Log,
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
-  shmem_capture::{BorrowedReadBuffer, ReadOnlyBufferPtr, mem_utils::ptr_add_nowrap_mut},
+  shmem_capture::{BorrowedReadBuffer, ReadOnlyBufferPtr},
   stages::call_tracing::Message,
 };
 
@@ -40,7 +40,6 @@ impl CallTraceMessageState {
 /// After this function, no data inside a buffer is relevant to us anymore
 fn update_from_buffer(
   mut raw_buff: BorrowedReadBuffer<'_>,
-  _max_size: usize,
   modules: &ExtModuleMap,
   mut state: CallTraceMessageState,
 ) -> Result<CallTraceMessageState> {
@@ -130,39 +129,18 @@ fn process_messages(
 
 pub fn msg_handler(
   infra: &mut TracingInfra,
-  buff_size: usize,
-  buff_num: usize,
   modules: &ExtModuleMap,
 ) -> Result<HashMap<NumFunUid, u64>> {
   let lg = Log::get("msghandler");
-  let mut buff_idx: usize = 0;
   let mut end_message_counter = 0;
   let mut state = CallTraceMessageState::new(None, vec![]);
   let mut recorded_frequencies = HashMap::new();
   loop {
-    infra.wait_for_full_buffer()?;
+    let base_ptr = infra.wait_for_full_buffer()?;
+    lg.trace("Received buffer");
+    let mut st = update_from_buffer(base_ptr, modules, state)?;
 
-    lg.trace(format!("Received buffer {}", buff_idx));
-    let buff_offset = buff_idx * buff_size;
-    let mut st: CallTraceMessageState = {
-      let base_ptr = infra.get_checked_base_ptr(buff_offset, buff_size)?;
-      update_from_buffer(base_ptr, buff_size, modules, state)?
-      // drops the immutable borrow of the buffer pointer
-    };
-
-    {
-      let borrow = infra.get_checked_base_ptr_mut(buff_offset)?;
-      let target = ptr_add_nowrap_mut(*borrow, buff_offset)?;
-      // SAFETY: protocol, aliasing is ensured by the borrow variable,
-      // u32@target does not need a drop
-      // Protocol: Set buffer's length to zero
-      unsafe {
-        (target as *mut u32).write_unaligned(0);
-      }
-      // drops the mutable borrow of the buffer pointer
-    }
-
-    infra.post_free_buffer(buff_idx)?;
+    infra.finish_buffer()?;
 
     let messages = st.extract_messages();
     state = st; // copy st into state (discards st and makes state ready for another iteration)
@@ -175,7 +153,7 @@ pub fn msg_handler(
       // ending message part of an end sequence should always "be alone" in a message pack
       // (checking only the first is not wrong either)
       end_message_counter += 1;
-      if end_message_counter == buff_num {
+      if end_message_counter == infra.buffer_count() {
         lg.trace("End condition");
         return Ok(recorded_frequencies);
       }
@@ -183,8 +161,5 @@ pub fn msg_handler(
       end_message_counter = 0;
       process_messages(&messages, &mut recorded_frequencies)?;
     }
-
-    buff_idx += 1;
-    buff_idx %= buff_num;
   }
 }

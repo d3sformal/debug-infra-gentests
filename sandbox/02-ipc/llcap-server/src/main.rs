@@ -113,12 +113,7 @@ async fn main() -> Result<()> {
 
         lg.info("Listening!");
 
-        let pairs = match msg_handler(
-          &mut tracing_infra,
-          buff_size as usize,
-          buff_count as usize,
-          &modules,
-        ) {
+        let pairs = match msg_handler(&mut tracing_infra, &modules) {
           Ok(freqs) => Ok(freqs.into_iter().collect::<Vec<(_, _)>>()),
           Err(e) => {
             lg.crit(e.to_string());
@@ -176,13 +171,7 @@ async fn main() -> Result<()> {
 
       lg.info("Listening!");
 
-      perform_arg_capture(
-        &mut tracing_infra,
-        buff_size as usize,
-        buff_count as usize,
-        &modules,
-        &mut dumper,
-      )?;
+      perform_arg_capture(&mut tracing_infra, &modules, &mut dumper)?;
 
       lg.info("Shutting down tracing infrastructure...");
       tracing_infra.deinit()?;
