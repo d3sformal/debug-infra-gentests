@@ -6,6 +6,7 @@
     * ~~do we permit relying on function call determinism?~~
 * ~~think about C++ objects - capturing inside of them, this, ...~~
 * better source organisation, READMEs where possible
+    * a link tree in the root README
 * ~~move `llvm-project` somewhere more sensible~~
 * add links to commits/READMEs/other files for every "DONE" item in this file
 * ~~unify SOLVED vs DONE items~~
@@ -25,17 +26,20 @@
     * argument capture of a function `foo` === (process of obtaining of the **or** the) set of all recorded argument packets of a function `foo`
     * hooklib, hook library, ...
     * ... ?
-* add some tests for `llcap-server` and hooklib now that everything seems to be more or less stable? [in progress]
+* add some tests for `llcap-server` and hooklib now that everything seems to be more or less stable? [in progress - TODO: hooklib tests]
 * ~~proper automatic cleanup / overwrite policies for outputs [in progress - especially in arg capture]~~
-* try out various scenarios (timeouts of test cases, crashes) 
-* add a simple argument replacement example
+* try out various scenarios (timeouts of test cases, crashes)
+* add a simple argument replacement example [in progress]
 * add a guide for adding custom type support
 * try compilation from scratch in a new environment 
 * (optionally?) terminate program right after tested function returns
     * exception handling???
 * investigate debug metadata usage instead of current approach
 * validate argument splitting works/is disallowed
-* update `llcap-server` readme
+* complete `llcap-server` readme 
+    * ~~structure~~
+    * build reqs (bindgen, header file)
+    * update cmdline options
 
 **List of topics:**
 
@@ -51,6 +55,7 @@
 # TOPIC: Data Capture Library
 
 * thoroughly check for alignment issues and other UB
+    * check for alignment on llcap-server side [in progress]
 
 ## Capturing funciton arguments
 
@@ -172,7 +177,9 @@
 ```
 
 
-# Revamp of buffer reading and writng
+# **[DONE]** Revamp of buffer reading and writng
+
+* implemented via `BorrowedReadBuffer` and `BorrowedOneshotWritePtr`
 
 Currently the language rules around mutability and sharing when reading and writing shared
 memory buffers are enforced by `RefCell` and a check that "no raw pointer is ever casted from
@@ -181,6 +188,10 @@ memory buffers are enforced by `RefCell` and a check that "no raw pointer is eve
 The following snipped is a prototype of a checked and fully encapsulated "reader" from
 a pointer (to shared memory). It provides a restrictive interface that disallow the above-mentioned
 cast.
+
+
+<details>
+<summary>Old snipped, click to expand</summary>
 
 ```rust
 /// an object that represents reading permission on a given contiguous section of
@@ -254,6 +265,9 @@ impl<'a> ByteReader<'a> {
   }
 }
 ```
+
+
+</details>
 
 After I semi-completed this prototype, I realized that too much refactoring would be done
 threatening hours of debugging in case of oversight, thus I'm shelving the idea here. 
