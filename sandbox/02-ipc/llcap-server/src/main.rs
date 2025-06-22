@@ -24,7 +24,7 @@ mod stages;
 use shmem_capture::{
   MetadataPublisher,
   arg_capture::perform_arg_capture,
-  call_tracing::msg_handler,
+  call_tracing::perfrom_call_tracing,
   cleanup,
   hooklib_commons::{META_MEM_NAME, META_SEM_ACK, META_SEM_DATA},
   send_arg_capture_metadata, send_call_tracing_metadata, send_test_metadata,
@@ -113,7 +113,7 @@ async fn main() -> Result<()> {
 
         lg.info("Listening!");
 
-        let pairs = match msg_handler(&mut tracing_infra, &modules) {
+        let pairs = match perfrom_call_tracing(&mut tracing_infra, &modules) {
           Ok(freqs) => Ok(freqs.into_iter().collect::<Vec<(_, _)>>()),
           Err(e) => {
             lg.crit(e.to_string());

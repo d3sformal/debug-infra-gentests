@@ -13,12 +13,7 @@ use crate::{
 };
 
 /// Call tracing message received from instrumented application
-pub enum Message {
-  /// A call "of interest" entered
-  Normal(NumFunUid),
-  /// Termination message
-  ControlEnd,
-}
+pub struct Message(pub NumFunUid);
 
 pub fn print_call_tracing_summary(frequencies: &mut [(NumFunUid, u64)], mods: &ExtModuleMap) {
   let lg = Log::get("summary");

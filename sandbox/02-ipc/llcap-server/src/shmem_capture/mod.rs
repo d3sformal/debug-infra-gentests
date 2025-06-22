@@ -5,7 +5,6 @@ pub mod mem_utils;
 use anyhow::{Result, anyhow, bail, ensure};
 use hooklib_commons::{META_MEM_NAME, META_SEM_ACK, META_SEM_DATA, ShmMeta};
 use std::ffi::CStr;
-use std::ops::ControlFlow;
 use std::slice;
 
 use crate::libc_wrappers::fd::try_shm_unlink_fd;
@@ -14,7 +13,7 @@ use crate::libc_wrappers::shared_memory::ShmemHandle;
 use crate::libc_wrappers::wrappers::to_cstr;
 use crate::log::Log;
 use crate::modmap::{ExtModuleMap, NumFunUid};
-use crate::shmem_capture::mem_utils::ptr_add_nowrap;
+use crate::shmem_capture::mem_utils::{ptr_add_nowrap, ptr_add_nowrap_mut};
 use crate::stages::testing::test_server_socket;
 use libc::O_CREAT;
 
@@ -49,7 +48,7 @@ impl<'a> BufferStartPtr<'a> {
   /// read the size field and return a buffer that supports reading of data
   pub fn shift_init_data(mut self) -> Result<ReadOnlyBufferPtr<'a>> {
     let valid_size: u32 = self.ptr.unaligned_shift_num_read()?;
-
+    Log::get("shift_init").trace(format!("Buffer payload size: {}", valid_size));
     Ok(self.ptr.constrain(valid_size as usize))
   }
 }
@@ -116,24 +115,50 @@ pub struct BorrowedReadBuffer<'a> {
   pub buffer: ReadOnlyBufferPtr<'a>,
 }
 
+pub struct BorrowedOneshotWritePtr<'a, T> {
+  _borrow_handle: std::cell::RefMut<'a, *mut u8>,
+  data: *mut T,
+}
+
+impl<'a, T> BorrowedOneshotWritePtr<'a, T> {
+  /// safety: ptr + offset must be a valid, unaliased pointer to T, caller also ensures T is
+  /// trivial (as in a memcpy to size of T is a valid representation of T)
+  pub unsafe fn new(ptr: std::cell::RefMut<'a, *mut u8>, offset: usize) -> Self {
+    // safety: caller
+    let data_ptr = unsafe { ptr.add(offset) };
+    Self {
+      _borrow_handle: ptr,
+      data: data_ptr as *mut T,
+    }
+  }
+
+  pub fn write(self, value: T) {
+    // safety: construction
+    unsafe { *self.data = value };
+  }
+}
+
 impl TracingInfra {
   /// blocks until a buffer has been filled by the instrumented applicaiton
   pub fn wait_for_full_buffer(&mut self) -> Result<BorrowedReadBuffer<'_>> {
     let sem_res = self.sem_full.try_wait();
     sem_res.map_err(|e| e.context("wait_for_full_buffer"))?;
     self.got_buff_flag = true;
+    Log::get("get_buff").trace(format!("get @ index {}", self.current_index));
     self.get_checked_base_ptr()
   }
 
   pub fn finish_buffer(&mut self) -> Result<()> {
     {
       let buffer = self.get_checked_base_ptr_mut()?;
-
-      // SAFETY: RefMut succeeded, construction
-      unsafe {
-        *(*buffer as *mut u32) = 0;
-      };
+      buffer.write(0);
     }
+
+    Log::get("finish_buffer").trace(format!(
+      "cleared {}/{}",
+      self.current_index,
+      self.buffer_count()
+    ));
     let sem_res = self.sem_free.try_post();
     sem_res.map_err(|e| {
       e.context(format!(
@@ -227,23 +252,37 @@ impl TracingInfra {
   }
 
   /// returns a buffer pointing tho the base of a logical buffer (incl. length field)
-  fn get_checked_base_ptr_mut(&mut self) -> Result<std::cell::RefMut<'_, *mut u8>> {
+  fn get_checked_base_ptr_mut(&mut self) -> Result<BorrowedOneshotWritePtr<'_, u32>> {
     let buff_offset = self.buffer_offset(self.current_index)?;
+    let backing_mem_len = self.backing_buffer.len() as usize;
     ensure!(
-      buff_offset < self.backing_buffer.len() as usize,
+      buff_offset < backing_mem_len,
       "Offset too large: {}, compared to the (mut) buffers len {}",
       buff_offset,
-      self.backing_buffer.len()
+      backing_mem_len
     );
     let base_mem = self.backing_buffer.borrow_ptr_mut()?;
-    let test_value = ptr_add_nowrap(*base_mem, buff_offset)?;
+    let buffer_start = ptr_add_nowrap_mut(*base_mem, buff_offset)?;
     ensure!(
-      !test_value.is_null() && test_value >= *base_mem,
+      !buffer_start.is_null() && buffer_start >= *base_mem,
       "Buffer mut pointer is invalid: {:?}, offset: {}",
-      test_value,
+      buffer_start,
       buff_offset
     );
-    Ok(base_mem)
+    {
+      let test_value_len = ptr_add_nowrap(buffer_start, std::mem::size_of::<u32>())?;
+      ensure!(
+        !test_value_len.is_null()
+          && test_value_len >= *base_mem
+          && test_value_len < ptr_add_nowrap(*base_mem, backing_mem_len)?,
+        "Buffer mut pointer is invalid (u32 test): {:?}, offset: {}",
+        test_value_len,
+        buff_offset
+      );
+    }
+    Log::get("writerptr").trace(format!("Ptr {:?}", buffer_start));
+    // safety: base_mem RefMut, above checks, T is u32
+    Ok(unsafe { BorrowedOneshotWritePtr::new(base_mem, buff_offset) })
   }
 
   /// returns Ok variant if base pointer + buff_offset are valid offset to a logical buffer
@@ -290,7 +329,8 @@ impl TracingInfra {
     let up_to_target_buff: &[u8] =
       unsafe { slice::from_raw_parts(*base_mem, buff_offset + self.logical_buffer_size) };
     let target_buffer = up_to_target_buff.split_at(buff_offset).1;
-
+    Log::get("readptr").trace(format!("Ptr {:?}", (*base_mem).wrapping_add(buff_offset)));
+    assert!(target_buffer.len() == self.logical_buffer_size);
     let buffer = BufferStartPtr::new(target_buffer)?.shift_init_data()?;
 
     Ok(BorrowedReadBuffer {
@@ -514,9 +554,21 @@ unsafe impl Send for MetadataPublisher {}
 // multithreaded contention inside the function was not really considered
 // (the type is Arc-Mutexed anyway)
 
-trait CaptureLoop {
-  type State: Default;
+trait CaptureLoopState: Default {
+  /// returns the number of empty buffers
+  fn get_end_message_count(&self) -> usize;
 
+  /// resets the number of empty buffers to zero
+  fn reset_end_message_count(&mut self);
+}
+
+trait CaptureLoop {
+  type State: CaptureLoopState;
+  /// updates the incoming state according to the buffer contents, consumes all the buffer contents
+  ///
+  /// the function is also responsible for incrementing a State-internal end-message counter
+  /// which is used to detect the capture loop's termination sequence
+  /// (see the implementation of [`Self::State::get_end_message_count`] for reference
   fn update_from_buffer<'b>(
     &mut self,
     state: Self::State,
@@ -524,26 +576,37 @@ trait CaptureLoop {
     modules: &ExtModuleMap,
   ) -> Result<Self::State>;
 
-  fn process_state(&mut self, state: Self::State) -> ControlFlow<(), Self::State>;
+  /// performs data processing on intermediate data that may be present in the current state
+  ///
+  /// returns state that may be used for another [`Self::update_from_buffer`] iteration  
+  fn process_state(&mut self, state: Self::State) -> Result<Self::State>;
 }
 
-fn run_capture<S: Default, C: CaptureLoop<State = S>>(
+fn run_capture<S: CaptureLoopState, C: CaptureLoop<State = S>>(
   mut capture: C,
   infra: &mut TracingInfra,
   modules: &ExtModuleMap,
 ) -> Result<C> {
   let lg = Log::get("run_capture");
   let mut state = S::default();
+  let mut last_end_msg_count = 0;
   loop {
+    lg.trace(format!("Waiting for free buff: {}", last_end_msg_count));
     let base_ptr: BorrowedReadBuffer<'_> = infra.wait_for_full_buffer()?;
     lg.trace("Received buffer");
     let st = capture.update_from_buffer(state, base_ptr, modules)?;
     infra.finish_buffer()?;
 
-    if let ControlFlow::Continue(st) = capture.process_state(st) {
-      state = st;
-    } else {
+    let mut st: S = capture.process_state(st)?;
+    if st.get_end_message_count() == infra.buffer_count() {
       return Ok(capture);
+    } else if last_end_msg_count == st.get_end_message_count() {
+      // only count consecutive messages
+      st.reset_end_message_count();
+      last_end_msg_count = 0;
+    } else {
+      last_end_msg_count = st.get_end_message_count()
     }
+    state = st;
   }
 }

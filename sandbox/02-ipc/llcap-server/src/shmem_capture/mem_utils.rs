@@ -7,6 +7,18 @@ pub fn ptr_add_nowrap(ptr: *const u8, sz: usize) -> Result<*const u8> {
   Ok(mb_wrapped)
 }
 
+/// adds an offset to pointer, prohibiting overflow
+pub fn ptr_add_nowrap_mut(ptr: *mut u8, sz: usize) -> Result<*mut u8> {
+  let mb_wrapped = ptr.wrapping_add(sz);
+  ensure!(
+    mb_wrapped >= ptr,
+    "Wraparound for mut ptr {:?} len {}",
+    ptr,
+    sz
+  );
+  Ok(mb_wrapped)
+}
+
 // bunch of sanity-check tests, nothing complex to see here
 #[cfg(test)]
 mod tests {

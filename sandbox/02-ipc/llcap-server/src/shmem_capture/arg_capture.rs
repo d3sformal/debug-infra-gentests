@@ -1,9 +1,9 @@
-use std::ops::ControlFlow;
-
 use crate::{
   log::Log,
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId},
-  shmem_capture::{BorrowedReadBuffer, CaptureLoop, ReadOnlyBufferPtr, run_capture},
+  shmem_capture::{
+    BorrowedReadBuffer, CaptureLoop, CaptureLoopState, ReadOnlyBufferPtr, run_capture,
+  },
   sizetype_handlers::{
     ArgSizeTypeRef, CStringTypeReader, CustomTypeReader, FixedSizeTyData, FixedSizeTyReader,
     ReadProgress, SizeTypeReader,
@@ -267,53 +267,11 @@ impl Default for ArgCaptureState {
 }
 
 impl ArgCaptureState {
-  fn extract_massages(&mut self) -> Vec<(IntegralModId, IntegralFnId, Vec<u8>)> {
+  fn extract_messages(&mut self) -> Vec<(IntegralModId, IntegralFnId, Vec<u8>)> {
     let mut res = vec![];
     std::mem::swap(&mut res, &mut self.payload);
     res
   }
-}
-
-/// Performs an argument capture on a received buffer
-fn update_from_buffer(
-  mut raw_buff: BorrowedReadBuffer<'_>,
-  mods: &ExtModuleMap,
-  mut state: ArgCaptureState,
-  readers: &mut SizeTypeReaders,
-  capture_target: &mut ArgPacketDumper,
-) -> Result<ArgCaptureState> {
-  let buff = &mut raw_buff.buffer;
-  if buff.empty() {
-    ensure!(
-      state.partial_state == PartialCaptureState::Empty,
-      "Comms corruption - partial state with empty message following it! Partial state: {:?}",
-      state.partial_state
-    );
-    state.endmessage_counter += 1;
-    return Ok(state);
-  }
-  while !buff.empty() {
-    let partial_state = state.partial_state.progress(buff, mods, readers)?;
-
-    state.partial_state = match partial_state {
-      PartialCaptureState::Done {
-        module_id: mod_id,
-        fn_id,
-        mut buff,
-      } => {
-        if let Some(dumper) = capture_target.get_packet_dumper(mod_id, fn_id) {
-          dumper.dump(&mut buff)?;
-        }
-        Log::get("argCap update_from_buffer").trace(format!("{:?}", buff));
-        state.payload.push((mod_id, fn_id, buff));
-        // start from an empty state
-        PartialCaptureState::Empty
-      }
-      st => st, // continue from the non-Done state
-    };
-  }
-
-  Ok(state)
 }
 
 pub fn perform_arg_capture(
@@ -325,7 +283,6 @@ pub fn perform_arg_capture(
     cache: create_sizetype_cache(),
     results: vec![],
     capture_target,
-    end_count: infra.buffer_count(),
   };
 
   let finished = run_capture(capture, infra, modules).map_err(|e| e.context("arg_capture"))?;
@@ -336,7 +293,16 @@ struct ArgCapture<'a> {
   cache: SizeTypeReaders,
   results: Vec<(IntegralModId, IntegralFnId, Vec<u8>)>,
   capture_target: &'a mut ArgPacketDumper,
-  end_count: usize,
+}
+
+impl CaptureLoopState for ArgCaptureState {
+  fn get_end_message_count(&self) -> usize {
+    self.endmessage_counter
+  }
+
+  fn reset_end_message_count(&mut self) {
+    self.endmessage_counter = 0;
+  }
 }
 
 impl<'a> CaptureLoop for ArgCapture<'a> {
@@ -344,20 +310,49 @@ impl<'a> CaptureLoop for ArgCapture<'a> {
 
   fn update_from_buffer<'b>(
     &mut self,
-    state: Self::State,
-    buffer: BorrowedReadBuffer<'b>,
+    mut state: Self::State,
+    mut buffer: BorrowedReadBuffer<'b>,
     modules: &ExtModuleMap,
   ) -> Result<Self::State> {
-    update_from_buffer(buffer, modules, state, &mut self.cache, self.capture_target)
+    let buff = &mut buffer.buffer;
+    if buff.empty() {
+      ensure!(
+        state.partial_state == PartialCaptureState::Empty,
+        "Comms corruption - partial state with empty message following it! Partial state: {:?}",
+        state.partial_state
+      );
+      state.endmessage_counter += 1;
+      return Ok(state);
+    }
+    while !buff.empty() {
+      let partial_state = state
+        .partial_state
+        .progress(buff, modules, &mut self.cache)?;
+
+      state.partial_state = match partial_state {
+        PartialCaptureState::Done {
+          module_id: mod_id,
+          fn_id,
+          mut buff,
+        } => {
+          if let Some(dumper) = self.capture_target.get_packet_dumper(mod_id, fn_id) {
+            dumper.dump(&mut buff)?;
+          }
+          Log::get("argCap update_from_buffer").trace(format!("{:?}", buff));
+          state.payload.push((mod_id, fn_id, buff));
+          // start from an empty state
+          PartialCaptureState::Empty
+        }
+        st => st, // continue from the non-Done state
+      };
+    }
+
+    Ok(state)
   }
 
-  fn process_state(&mut self, mut state: Self::State) -> std::ops::ControlFlow<(), Self::State> {
-    let mut msgs = state.extract_massages();
+  fn process_state(&mut self, mut state: Self::State) -> Result<Self::State> {
+    let mut msgs = state.extract_messages();
     self.results.append(&mut msgs);
-    if state.endmessage_counter == self.end_count {
-      ControlFlow::Break(())
-    } else {
-      ControlFlow::Continue(state)
-    }
+    Ok(state)
   }
 }
