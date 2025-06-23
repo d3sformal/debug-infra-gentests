@@ -6,8 +6,6 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
-
-#ifdef __cplusplus
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -16,20 +14,6 @@
 #include <cstring>
 #include <ctime>
 #include <string>
-#else
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
-#include <unistd.h>
-#endif
-
-#ifdef __cplusplus
-static_assert(sizeof(int) == 4, "Expecting int to be 4 bytes");
-static_assert(sizeof(long long) == 8, "Expecting long long to be 8 bytes");
-#endif
 
 #define GENFN_TEST_PRIMITIVE(name, argt, argvar)                               \
   GENFNDECLTEST(name, argt, argvar) {                                          \
@@ -390,9 +374,8 @@ GENFN_TEST_PRIMITIVE(hook_uint32, UINT, i)
 GENFN_TEST_PRIMITIVE(hook_int64, LLONG, d)
 GENFN_TEST_PRIMITIVE(hook_uint64, ULLONG, d)
 
-#ifdef __cplusplus
 
-void vstr_extra_cxx__string(std::string *str, std::string **target,
+void llcap_hooklib_extra_cxx_string(std::string *str, std::string **target,
                             uint32_t module, uint32_t function) {
   if (in_testing_mode()) {
     if (!is_fn_under_test(module, function) || !should_hijack_arg()) {
@@ -436,4 +419,3 @@ void vstr_extra_cxx__string(std::string *str, std::string **target,
 move_string_to_target:
   *target = str;
 }
-#endif

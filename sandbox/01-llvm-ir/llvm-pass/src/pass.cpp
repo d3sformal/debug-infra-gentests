@@ -341,6 +341,7 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
     }
   }
 
+  // TODO make this more customizable
   if (Mapping.llvmArgNoMatches(ArgNum, VSTR_LLVM_CXX_DUMP_STDSTRING)) {
     if (!ArgT->isPointerTy()) {
       errs() << "std::string hooks cannot handle non-pointer argument of this "
@@ -349,7 +350,7 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
     }
 
     IF_VERBOSE errs() << "Inserting call std::string\n";
-    auto CallCxxString = GetOrInsertHookFn("vstr_extra_cxx__string", ArgT);
+    auto CallCxxString = GetOrInsertHookFn("llcap_hooklib_extra_cxx_string", ArgT);
     instrumentArgHijack(Builder, M, Arg, ArgT, CallCxxString, ModIdConstant,
                         FnIdConstant);
     return;

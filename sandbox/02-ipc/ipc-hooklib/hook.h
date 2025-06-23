@@ -1,15 +1,14 @@
 #ifndef VSTR_HOOK_LIB
 #define VSTR_HOOK_LIB
 
-#include <assert.h>
+#ifdef __cplusplus
 #include <cstdint>
-
-#ifdef __cplusplus
 #include <string>
-#endif
 
-#ifdef __cplusplus
+// makes the library's linkage simpler in the LLVM IR modification phase (in the LLVM plugin)
+// however, I am not sure how exactly the C++ function llcap_hooklib_extra_cxx_string compiles agains C code (technically a call to this function should be impossible in a correct instrumentation, but I am unsure)
 extern "C" {
+
 static_assert(sizeof(long long) == 8, "Expecting long long to be 8 bytes");
 static_assert(sizeof(int) == 4, "Expecting int to be 4 bytes");
 #endif
@@ -43,7 +42,7 @@ GENFNDECLTEST(hook_uint64, ULLONG, a);
 
 // C++ types
 #ifdef __cplusplus
-void vstr_extra_cxx__string(std::string *str, std::string **target,
+void llcap_hooklib_extra_cxx_string(std::string *str, std::string **target,
                             uint32_t module, uint32_t function);
 }
 #endif
