@@ -26,10 +26,16 @@
     * argument capture of a function `foo` === (process of obtaining of the **or** the) set of all recorded argument packets of a function `foo`
     * hooklib, hook library, ...
     * ... ?
+## Final polishing
+
 * add some tests for `llcap-server` and hooklib now that everything seems to be more or less stable? [in progress - TODO: hooklib tests]
 * ~~proper automatic cleanup / overwrite policies for outputs [in progress - especially in arg capture]~~
+* make call-tracing stage require arguments and make it run the binary itself
+    * adjust readmes of examples (2)
+* make call-tracing and arg-capture stages launch the ipc-finalizer after the program crashes
+    * update readmes of examples (2)
 * try out various scenarios (timeouts of test cases, crashes)
-* add a simple argument replacement example [in progress]
+* ~~ add a simple argument replacement example [in progress]~~
 * add a guide for adding custom type support
 * try compilation from scratch in a new environment 
 * (optionally?) terminate program right after tested function returns
@@ -40,6 +46,10 @@
     * ~~structure~~
     * build reqs (bindgen, header file)
     * update cmdline options
+* document debugging/development techniques
+    * verbosity of llcap server
+    * passing arguments to the llvm plugins
+
 
 **List of topics:**
 
