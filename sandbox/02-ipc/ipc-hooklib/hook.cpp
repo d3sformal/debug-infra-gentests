@@ -8,6 +8,7 @@
 #include <sys/wait.h>
 
 #ifdef __cplusplus
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -212,35 +213,47 @@ static bool try_wait_pid(pid_t pid, int32_t *status, EMsgEnd *result) {
   return false;
 }
 
-static bool do_poll(int fd, short int events, int timeout_ms, int *result) {
-  events = events | POLLERR | POLLRDHUP;
+enum class PollResult : std::uint8_t {
+  ResultFDReady,
+  ResultTimeout,
+  ResultFail
+};
+
+static PollResult do_poll(int fd, short events, int timeout_ms, int *result) {
+  events = POLLERR | POLLRDHUP | events;
   pollfd pollfd = {.fd = fd, .events = events, .revents = 0};
 
   int rv = poll(&pollfd, 1, timeout_ms);
   if (rv == 0) {
     // timeout
-    return true;
+    return PollResult::ResultTimeout;
   } else if (rv < 0) {
     perror("Failed to poll test rq sock");
-    return false;
+    return PollResult::ResultFail;
   }
-
   if ((rv & POLLERR) || (rv & POLLRDHUP)) {
     printf("FD error %d\n", rv);
-    return false;
+    return PollResult::ResultFail;
   }
 
   *result = rv;
-  return true;
+  return PollResult::ResultFDReady;
 }
 
 static bool handle_requests(int rq_sock) {
   int poll_rv;
-  if (!do_poll(rq_sock, POLLIN, 50, &poll_rv)) {
+  PollResult poll_res = do_poll(rq_sock, POLLIN, 50, &poll_rv);
+  if (poll_res == PollResult::ResultFail) {
     return false;
   }
+  if (poll_res == PollResult::ResultTimeout) {
+    return true;
+  }
+  if (poll_res != PollResult::ResultFDReady) {
+    assert(false && "Invalid value");
+  }
 
-  if (!(poll_rv & POLLIN)) {
+  if ((poll_rv & POLLIN) == 0) {
     return true;
   }
 
