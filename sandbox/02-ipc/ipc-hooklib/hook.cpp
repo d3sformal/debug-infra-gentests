@@ -285,7 +285,7 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
 
     if (time(NULL) - seconds >= timeout_s) {
       printf("\tTEST Timeout (%d s)", timeout_s);
-      return MSG_END_FATAL;
+      return MSG_END_TIMEOUT;
     }
 
     if (!handle_requests(test_requests_socket)) {
