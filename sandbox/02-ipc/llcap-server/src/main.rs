@@ -345,10 +345,10 @@ async fn test_job(
       let out_path = output_gen.get_out_path(m, f, call_idx + 1);
       let err_path = output_gen.get_err_path(m, f, call_idx + 1);
       cmd.stdout(Stdio::from(
-        File::create(out_path).map_err(|e| anyhow!(e).context("Stdout file creation failed"))?,
+        File::create(out_path.clone()).map_err(|e| anyhow!(e).context(format!("Stdout file creation failed: {:?}", out_path)))?,
       ));
       cmd.stderr(Stdio::from(
-        File::create(err_path).map_err(|e| anyhow!(e).context("Stderr file creation failed"))?,
+        File::create(err_path).map_err(|e| anyhow!(e).context(format!("Stderr file creation failed {:?}", out_path)))?,
       ));
     }
     let mut test = cmd

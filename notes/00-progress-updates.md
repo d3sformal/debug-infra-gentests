@@ -841,53 +841,48 @@ www x x x x
 
 # End of June
 
-* refactoring, tests (and bug fixes), corrected example, made result reporting prettier
+## Refactoring of the `llcap-server`
 
-```
-I | [main] ---------------------------------------------------------------
-I | [main] Test results (41): 
-I | [main] Module ID | Function ID |  Call  | Packet | Result
-I | [main]  F7DB0979 |  03000000   |   1    |   0    | Exit(63)
-I | [main]  F7DB0979 |  03000000   |   1    |   1    | Exit(12)
-I | [main]  F7DB0979 |  03000000   |   1    |   2    | Exit(88)
-I | [main]  F7DB0979 |  03000000   |   1    |   3    | Signal(11)
-I | [main]  F7DB0979 |  03000000   |   2    |   0    | Exit(63)
-I | [main]  F7DB0979 |  03000000   |   2    |   1    | Exit(63)
-I | [main]  F7DB0979 |  03000000   |   2    |   2    | Exit(63)
-I | [main]  F7DB0979 |  03000000   |   2    |   3    | Exit(63)
-I | [main]  F7DB0979 |  03000000   |   3    |   0    | Exit(63)
-I | [main]  F7DB0979 |  03000000   |   3    |   1    | Exit(63)
-I | [main]  F7DB0979 |  03000000   |   3    |   2    | Exit(63)
-I | [main]  F7DB0979 |  03000000   |   3    |   3    | Exit(63)
-I | [main]  F7DB0979 |  03000000   |   4    |   0    | Exit(63)
-I | [main]  F7DB0979 |  03000000   |   4    |   1    | Exit(63)
-I | [main]  F7DB0979 |  03000000   |   4    |   2    | Exit(63)
-I | [main]  F7DB0979 |  03000000   |   4    |   3    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   1    |   0    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   1    |   1    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   1    |   2    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   1    |   3    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   1    |   4    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   2    |   0    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   2    |   1    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   2    |   2    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   2    |   3    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   2    |   4    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   3    |   0    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   3    |   1    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   3    |   2    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   3    |   3    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   3    |   4    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   4    |   0    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   4    |   1    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   4    |   2    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   4    |   3    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   4    |   4    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   5    |   0    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   5    |   1    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   5    |   2    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   5    |   3    | Exit(63)
-I | [main]  F7DB0979 |  17000000   |   5    |   4    | Exit(63)
-I | [main] --------------------------------------------------------------
-```
+* safer abstractions
+    * possible research project micro output? wrapping stuff safely in Rust is nice as long as you do not have to touch raw shared memory
+* code more readable
+    * concise, abstractions, deduplication
+    * docstrings & comments
+* added tests where possible (and discovered & fixed bug)
+    * raw byte parsers
+    * helper functions for "raw" memory manipulation
 
+## Started refactoring `hooklib`
+
+* current outline of final version: C++ library we can link to C binaries
+    * other parts in C... originally written as a C library (due to past incompatibility concerns)
+* only started now fixed a bug, added `.clang-tidy`
+* todo: the rest (tests, documentation)
+
+## Others
+
+Smaller & detailed demo of functionality (primitive types and `std::string`): [root folder](../sandbox/02-ipc/example-arg-replacement/)
+
+Separated "finalizing" TODOs, added a bunch of them: [TODOs Final polishing](./000-TODOs.md#final-polishing)
+
+## Plan / priorities
+
+1. `hooklib` finalization, some tests
+    * terminate when function call finishes (instrumentation + detection in `hooklib`) 
+2. `llcap-server` polish - auto-run binary in call tracing stage, auto-run `ipc-finalizer` when crash is detected
+3. `llvm` plugin tidying
+    * especially making custom type support easier to work with (not ideal in the current implementation)
+4. `AST` plugin tidying
+    * custom type support
+5. **if** time permits: usage of debug information to get rid of the LLVM patch
+6. in the meantime setup another VM to test the compilation process from scratch
+    * and redo / add all missing steps
+7. "code freeze" + documentation phase
+    * document everything in a structured way in a single document
+        * ready for final report
+    * technical: high-level to low-level architecture / communication
+        * precise data formats, correspondence with docstrings and comments
+    * how to add custom type support 
+* final report construction?
+
+Expecting a lot of work...
