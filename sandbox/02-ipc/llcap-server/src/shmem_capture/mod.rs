@@ -28,6 +28,34 @@ pub struct TracingInfra {
   got_buff_flag: bool,
 }
 
+pub struct FinalizerInfraInfo {
+  name: String,
+  logical_buffer_count: usize,
+}
+
+impl FinalizerInfraInfo {
+  pub fn try_open(self) -> Result<CrashFinalizerInfra> {
+    Ok(CrashFinalizerInfra {
+      sem_full: Semaphore::try_open(&self.name, 0, O_CREAT.into(), None)?,
+      logical_buffer_count: self.logical_buffer_count,
+    })
+  }
+}
+
+pub struct CrashFinalizerInfra {
+  sem_full: Semaphore,
+  logical_buffer_count: usize,
+}
+
+impl CrashFinalizerInfra {
+  pub fn finalization_flush(mut self) -> Result<()> {
+    for _ in 0..self.logical_buffer_count * 2 {
+      self.sem_full.try_post()?;
+    }
+    Ok(())
+  }
+}
+
 /// a uniquely-typed wrapper around a start pointer to a logical buffer
 /// which points to a valid size field
 pub struct BufferStartPtr<'a> {
@@ -194,14 +222,13 @@ impl TracingInfra {
     Ok(())
   }
 
-  fn init_semaphores(prefix: &str, n_buffs: u32) -> Result<(Semaphore, Semaphore)> {
-    let FreeFullSemNames {
-      free: free_name,
-      full: full_name,
-    } = FreeFullSemNames::new(prefix, "capture", "base");
-
-    let free_sem = Semaphore::try_open_exclusive(&free_name, n_buffs)?;
-    let full_sem = Semaphore::try_open_exclusive(&full_name, 0);
+  fn init_semaphores(
+    n_buffs: u32,
+    free_name: &str,
+    full_name: &str,
+  ) -> Result<(Semaphore, Semaphore)> {
+    let free_sem = Semaphore::try_open_exclusive(free_name, n_buffs)?;
+    let full_sem = Semaphore::try_open_exclusive(full_name, 0);
 
     if let Err(e) = full_sem {
       match deinit_semaphore_single(free_sem) {
@@ -215,9 +242,18 @@ impl TracingInfra {
     }
   }
 
-  pub fn try_new(resource_prefix: &str, buff_count: u32, buff_len: u32) -> Result<Self> {
+  pub fn try_new(
+    resource_prefix: &str,
+    buff_count: u32,
+    buff_len: u32,
+  ) -> Result<(Self, FinalizerInfraInfo)> {
     let lg = Log::get("init_tracing");
-    let (sem_free, sem_full) = Self::init_semaphores(resource_prefix, buff_count)?;
+    let FreeFullSemNames {
+      free: free_name,
+      full: full_name,
+    } = FreeFullSemNames::new(resource_prefix, "capture", "base");
+
+    let (sem_free, sem_full) = Self::init_semaphores(buff_count, &free_name, &full_name)?;
     lg.info("Initializing shmem");
     lg.warn(format!(
       "Cleanup arguments for finalizer: {} {}",
@@ -227,15 +263,22 @@ impl TracingInfra {
 
     let backing_buffer = init_shmem(resource_prefix, buff_count, buff_len)?;
 
-    Ok(Self {
+    let logical_buffer_count = buff_count as usize;
+    let tracing_infra = Self {
       sem_free,
       sem_full,
       backing_buffer,
       logical_buffer_size: buff_len as usize,
-      logical_buffer_count: buff_count as usize,
+      logical_buffer_count,
       current_index: 0,
       got_buff_flag: false,
-    })
+    };
+
+    let finalizing_infra = FinalizerInfraInfo {
+      name: full_name,
+      logical_buffer_count,
+    };
+    Ok((tracing_infra, finalizing_infra))
   }
 
   fn buffer_offset(&self, idx: usize) -> Result<usize> {
@@ -247,8 +290,11 @@ impl TracingInfra {
     Ok(idx * self.logical_buffer_size)
   }
 
-  fn buffer_count(&self) -> usize {
+  pub fn buffer_count(&self) -> usize {
     self.logical_buffer_count
+  }
+  pub fn buffer_size(&self) -> usize {
+    self.logical_buffer_size
   }
 
   /// returns a buffer pointing tho the base of a logical buffer (incl. length field)
@@ -417,17 +463,19 @@ fn deinit_shmem(buffers_mem: ShmemHandle) -> Result<()> {
     .map_err(|e| e.context("deinit_shmem"))
 }
 
-pub fn send_call_tracing_metadata(
-  chnl: &mut MetadataPublisher,
-  buff_count: u32,
-  buff_len: u32,
-) -> Result<()> {
+#[derive(Clone)]
+pub struct InfraParams {
+  pub buff_count: u32,
+  pub buff_len: u32,
+}
+
+pub fn send_call_tracing_metadata(chnl: &mut MetadataPublisher, infra: InfraParams) -> Result<()> {
   send_metadata(
     chnl,
     ShmMeta {
-      buff_count,
-      buff_len,
-      total_len: buff_count * buff_len,
+      buff_count: infra.buff_count,
+      buff_len: infra.buff_len,
+      total_len: infra.buff_count * infra.buff_len,
       mode: 0,
       target_fnid: 0,
       target_modid: 0,
@@ -439,17 +487,13 @@ pub fn send_call_tracing_metadata(
   )
 }
 
-pub fn send_arg_capture_metadata(
-  chnl: &mut MetadataPublisher,
-  buff_count: u32,
-  buff_len: u32,
-) -> Result<()> {
+pub fn send_arg_capture_metadata(chnl: &mut MetadataPublisher, infra: InfraParams) -> Result<()> {
   send_metadata(
     chnl,
     ShmMeta {
-      buff_count,
-      buff_len,
-      total_len: buff_count * buff_len,
+      buff_count: infra.buff_count,
+      buff_len: infra.buff_len,
+      total_len: infra.buff_count * infra.buff_len,
       mode: 1,
       target_fnid: 0,
       target_modid: 0,
@@ -469,17 +513,16 @@ pub struct TestParams {
 
 pub fn send_test_metadata(
   chnl: &mut MetadataPublisher,
-  buff_count: u32,
-  buff_len: u32,
+  infra: InfraParams,
   fn_uid: NumFunUid,
   params: TestParams,
 ) -> Result<()> {
   send_metadata(
     chnl,
     ShmMeta {
-      buff_count,
-      buff_len,
-      total_len: buff_count * buff_len,
+      buff_count: infra.buff_count,
+      buff_len: infra.buff_len,
+      total_len: infra.buff_count * infra.buff_len,
       mode: 2,
       target_fnid: *fn_uid.function_id,
       target_modid: *fn_uid.module_id,

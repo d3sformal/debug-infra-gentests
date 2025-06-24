@@ -55,6 +55,10 @@ pub enum Stage {
     /// imports an export file, export file will not be created
     #[arg(short, long)]
     import_path: Option<PathBuf>,
+
+    /// Command to execute the binary whose calls we want to trace
+    #[arg(trailing_var_arg(true))]
+    command: Option<Vec<String>>,
   },
 
   CaptureArgs {
@@ -70,7 +74,7 @@ pub enum Stage {
     #[arg(short = 'l', long, default_value = "0")]
     mem_limit: u32,
 
-    /// Command to execute tested binary
+    /// Command to execute the binary whose arguments we want to trace
     #[arg(trailing_var_arg(true))]
     command: Vec<String>,
   },
