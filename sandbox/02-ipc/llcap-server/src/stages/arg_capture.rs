@@ -118,7 +118,7 @@ impl ArgPacketDumper {
   pub fn new(root_out_dir: &Path, module_maps: &ExtModuleMap, mem_limit: usize) -> Result<Self> {
     let mut result_map = HashMap::new();
 
-    let capacity = (mem_limit / module_maps.modules().count()).max(4096 * 2);
+    let capacity = (mem_limit / module_maps.modules().count().max(1)).max(4096 * 2);
 
     for module in module_maps.modules() {
       let functions = module_maps.functions(*module);
