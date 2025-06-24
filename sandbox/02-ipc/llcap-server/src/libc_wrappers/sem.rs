@@ -138,6 +138,7 @@ impl Semaphore {
     let result = unsafe {
       sem_open(
         cstr_name.as_ptr(),
+        // the default here is kept exclusive - it's better to crash & specify "a connection to an existing semaphore" than possible bugs later
         flags.unwrap_or(O_CREAT | O_EXCL),
         mode.unwrap_or(PERMS_PERMISSIVE),
         value,
@@ -151,7 +152,7 @@ impl Semaphore {
       Error::last_os_error()
     );
 
-    Log::get("try_open").info(format!("Opened semaphore {} with value {}", s_name, value));
+    Log::get("try_open").trace(format!("Opened semaphore {} with value {}", s_name, value));
     Ok(Self::Open {
       sem: result,
       cname: s_name,
