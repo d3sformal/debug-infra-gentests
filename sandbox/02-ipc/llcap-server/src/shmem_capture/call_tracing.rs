@@ -53,7 +53,7 @@ fn receive_module_id(
   })
 }
 
-pub fn perfrom_call_tracing(
+pub fn perform_call_tracing(
   infra: &mut TracingInfra,
   modules: &ExtModuleMap,
 ) -> Result<HashMap<NumFunUid, u64>> {
