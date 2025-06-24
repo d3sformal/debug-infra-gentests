@@ -267,6 +267,7 @@ impl Default for ArgCaptureState {
 }
 
 impl ArgCaptureState {
+  #[allow(dead_code)]
   fn extract_messages(&mut self) -> Vec<(IntegralModId, IntegralFnId, Vec<u8>)> {
     let mut res = vec![];
     std::mem::swap(&mut res, &mut self.payload);
@@ -278,20 +279,18 @@ pub fn perform_arg_capture(
   infra: &mut TracingInfra,
   modules: &ExtModuleMap,
   capture_target: &mut ArgPacketDumper,
-) -> Result<Vec<(IntegralModId, IntegralFnId, Vec<u8>)>> {
+) -> Result<()> {
   let capture = ArgCapture {
     cache: create_sizetype_cache(),
-    results: vec![],
     capture_target,
   };
 
-  let finished = run_capture(capture, infra, modules).map_err(|e| e.context("arg_capture"))?;
-  Ok(finished.results)
+  run_capture(capture, infra, modules).map_err(|e| e.context("arg_capture"))?;
+  Ok(())
 }
 
 struct ArgCapture<'a> {
   cache: SizeTypeReaders,
-  results: Vec<(IntegralModId, IntegralFnId, Vec<u8>)>,
   capture_target: &'a mut ArgPacketDumper,
 }
 
@@ -350,9 +349,9 @@ impl<'a> CaptureLoop for ArgCapture<'a> {
     Ok(state)
   }
 
-  fn process_state(&mut self, mut state: Self::State) -> Result<Self::State> {
-    let mut msgs = state.extract_messages();
-    self.results.append(&mut msgs);
+  fn process_state(&mut self, state: Self::State) -> Result<Self::State> {
+    // let mut msgs = state.extract_messages();
+    // can be useful for debugging
     Ok(state)
   }
 }
