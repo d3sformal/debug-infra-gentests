@@ -94,6 +94,11 @@ impl Logger {
       .inner_log
       .log(LogLevel::Trace, &self.formatted(msg.as_ref()));
   }
+
+  // an unconditional log
+  pub fn progress<T: AsRef<str>>(&self, msg: T) {
+    self.inner_log.log_progress(&self.formatted(msg.as_ref()))
+  }
 }
 
 impl Log {
@@ -119,5 +124,9 @@ impl Log {
       return;
     }
     eprintln!("{} {}", Log::log_level_preamble(lvl), msg);
+  }
+
+  fn log_progress(&self, msg: &str) {
+    println!("P | {}", msg);
   }
 }

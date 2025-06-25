@@ -106,13 +106,13 @@ async fn spawn_process_monitor(
       match child.try_wait() {
         Ok(Some(code)) => {
           if let Some(sig) = code.signal() {
-            lg.info(format!("App terminated by signal {}", sig));
+            lg.progress(format!("App terminated by signal {}", sig));
             // wait just to be absolutely sure
             std::thread::sleep(Duration::from_millis(300));
             let _ = fnlzr_infra.finalization_flush().inspect_err(|e| lg.crit(format!("Failed to finalize comms... manual cleanup most likely required, please terminate llcap-server and perform cleanup (--cleanup)\nError: {}", e)));
             break;
           } else {
-            lg.info(format!("App terminated with exit code {:?}", code.code()));
+            lg.progress(format!("App terminated with exit code {:?}", code.code()));
             break;
           }
         }
@@ -171,7 +171,7 @@ where
     Ok(Err(e)) => bail!("monitor ready error: {}", e),
   }
 
-  lg.info("Monitor ready, listening!");
+  lg.progress("Monitor ready, listening!");
 
   let res = capture()?;
 
@@ -202,14 +202,13 @@ fn try_meta_svr_arc_deinit(metadata_svr: Arc<Mutex<MetadataPublisher>>) -> Resul
 
 #[tokio::main()]
 async fn main() -> Result<()> {
-  Log::set_verbosity(255);
   let lg = Log::get("main");
   let cli = Cli::try_parse()?;
   Log::set_verbosity(cli.verbose);
-  lg.info(format!("Verbosity: {}", cli.verbose));
+  lg.progress(format!("Verbosity: {}", cli.verbose));
 
   if cli.cleanup {
-    lg.info("Cleanup");
+    lg.progress("Cleanup");
     return cleanup(&cli.fd_prefix);
   }
 
@@ -234,14 +233,14 @@ async fn main() -> Result<()> {
       let mut pairs = if let Some(in_path) = import_path {
         lg.trace("Importing");
         let result = import_call_trace_data(in_path, &modules)?;
-        lg.info("Import done");
+        lg.progress("Import done");
         result
       } else {
         let command = command.ok_or(anyhow!(
           "command must be present if import_path is not specified"
         ))?;
 
-        lg.info("Initializing tracing infrastructure");
+        lg.progress("Initializing tracing infrastructure");
         let (mut tracing_infra, finalizer_info) =
           TracingInfra::try_new(&cli.fd_prefix, buff_count, buff_size)?;
         let metadata_svr = create_meta_svr(mem_cstr, sem_str, ack_str)?;
@@ -261,7 +260,7 @@ async fn main() -> Result<()> {
         .await
         .map(|freqs| freqs.into_iter().collect::<Vec<(_, _)>>());
 
-        lg.info("Shutting down tracing infrastructure...");
+        lg.progress("Shutting down tracing infrastructure...");
         // we simply chain Results together to perform cleanup, in edge cases, even despite this effort, --cleanup is still requried
         let real_result = tracing_infra
           .deinit()
@@ -282,7 +281,7 @@ async fn main() -> Result<()> {
         let _ = export_call_trace_data(&pairs, out_path)
           .inspect_err(|e| lg.crit(format!("Export failed: {e}")));
 
-        lg.info("Export done");
+        lg.progress("Export done");
       }
 
       let traces = pairs.iter().map(|x| x.0).collect::<Vec<NumFunUid>>();
@@ -302,15 +301,15 @@ async fn main() -> Result<()> {
       mem_limit,
       command,
     } => {
-      lg.info("Reading function selection");
+      lg.progress("Reading function selection");
       let selection = import_tracing_selection(&selection_file)?;
 
-      lg.info("Masking");
+      lg.progress("Masking");
       modules.mask_include(&selection)?;
 
-      lg.info("Setting up function packet dumping");
+      lg.progress("Setting up function packet dumping");
       let mut dumper = ArgPacketDumper::new(&out_dir, &modules, mem_limit as usize)?;
-      lg.info("Initializing tracing infrastructure");
+      lg.progress("Initializing tracing infrastructure");
       let (mut tracing_infra, finalizer_info) =
         TracingInfra::try_new(&cli.fd_prefix, buff_count, buff_size)?;
       let metadata_svr = create_meta_svr(mem_cstr, sem_str, ack_str)?;
@@ -330,7 +329,7 @@ async fn main() -> Result<()> {
       )
       .await;
 
-      lg.info("Shutting down tracing infrastructure...");
+      lg.progress("Shutting down tracing infrastructure...");
       let real_result = tracing_infra
         .deinit()
         .inspect_err(|e| lg.crit(format!("You might need to perform cleanup: {e}")))
@@ -346,18 +345,18 @@ async fn main() -> Result<()> {
       command,
     } => {
       let command = Arc::new(command);
-      lg.info("Reading function selection");
+      lg.progress("Reading function selection");
       let selection = import_tracing_selection(&selection_file)?;
-      lg.info("Masking");
+      lg.progress("Masking");
       modules.mask_include(&selection)?;
 
       let modules = Arc::new(modules);
-      lg.info("Setting up function packet reader");
+      lg.progress("Setting up function packet reader");
 
       let packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
         .map_err(|e| anyhow!(e).context("Packet reader setup failed"))?;
 
-      lg.info("Setting up function packet server");
+      lg.progress("Setting up function packet server");
       let (end_tx, end_rx) = tokio::sync::oneshot::channel::<()>();
       let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
       let results = Arc::new(Mutex::new(Vec::with_capacity(500)));
@@ -408,7 +407,7 @@ async fn main() -> Result<()> {
             continue;
           }
 
-          lg.info(format!(
+          lg.progress(format!(
             "Run program for fn m: {} f: {}",
             module.hex_string(),
             function.hex_string()
@@ -433,18 +432,18 @@ async fn main() -> Result<()> {
           futs.push(test_job);
         }
       }
-      lg.info("Waiting for jobs to finish...");
+      lg.progress("Waiting for jobs to finish...");
       for fut in futs {
         fut.await??;
       }
-      lg.info("Waiting for server to exit...");
+      lg.progress("Waiting for server to exit...");
       let defer_res_end_svr = end_tx.send(()).map_err(|_| anyhow!("failed to end server"));
       let defer_res_joins = svr.await.map_err(|e| anyhow!(e).context("joins"));
 
-      lg.info("---------------------------------------------------------------");
+      lg.progress("---------------------------------------------------------------");
       let mut results = results.lock().unwrap();
-      lg.info(format!("Test results ({}): ", results.len()));
-      lg.info("Module ID | Function ID |  Call  | Packet | Result");
+      lg.progress(format!("Test results ({}): ", results.len()));
+      lg.progress("Module ID | Function ID |  Call  | Packet | Result");
       results.sort_by(|a, b| a.3.0.cmp(&b.3.0));
       results.sort_by(|a, b| a.2.0.cmp(&b.2.0));
       results.sort_by(|a, b| a.1.cmp(&b.1));
@@ -458,16 +457,16 @@ async fn main() -> Result<()> {
           result.3.0,
           result.4
         );
-        lg.info(s);
+        lg.progress(s);
       }
-      lg.info("---------------------------------------------------------------");
+      lg.progress("---------------------------------------------------------------");
       lg.trace("Cleaning up");
       defer_res_end_svr?;
       defer_res_joins??;
       try_meta_svr_arc_deinit(metadata_svr)?;
     }
   }
-  lg.info("Exiting...");
+  lg.progress("Exiting...");
   Ok(())
 }
 
