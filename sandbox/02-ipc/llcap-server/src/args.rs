@@ -97,7 +97,7 @@ pub enum Stage {
     mem_limit: u32,
 
     /// Redirects output to a file or a directory instead of the standard output (target directory must exist beforehand otherwise the path is treated as a file path)
-    #[arg(short, long)]
+    #[arg(short = 'o', long)]
     test_output: Option<PathBuf>,
 
     /// Command to execute tested binary
