@@ -2,7 +2,7 @@
 
 ## Demo without build artifacts
 
-Estimated size: 750MB
+Estimated size: 2.2GB
 
 To build: `podman build ./ -f ./Containerfile -t llcap-env`
 
@@ -11,7 +11,7 @@ To run: `podman run -it llcap-env`
 
 ## Development version
 
-Estimated size: 18.5GB
+Estimated size: 18.3GB
 
 To build: `podman build ./ -f ./Containerfile-dev -t llcap-devenv`
 

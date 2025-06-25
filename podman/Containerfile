@@ -37,6 +37,7 @@ WORKDIR /opt/llcap/research-project/sandbox/build
 RUN ninja -j $(nproc)
 
 RUN ninja install
+RUN mkdir -p /opt/manifest/ && cp install_manifest.txt /opt/manifest/install_manifest.txt
 RUN ninja clean
 WORKDIR /opt/llcap/research-project/sandbox
 RUN rm -rf ./llvm-project/*
@@ -57,11 +58,20 @@ RUN cargo b
 RUN cargo b --release
 RUN cargo install --root ./ --path ./
 RUN cargo clean
+# Remove redundancies
+RUN rm -rf /opt/llcap/research-project/.git/
+# (tested with the example-arg-replacement demo)
+RUN find /usr/local/bin/* -not -name 'clang' -not -name 'clang++' -not -name 'clang-21' -delete
+
 
 FROM fedora:42
-COPY --from=BUILD /opt/llcap/* /opt/llcap/research-project
+# installing from install_manifest.txt (https://github.com/docker/for-linux/issues/1060) also yields multi-GB image, therefore copying it all
+COPY --from=BUILD /usr/local/ /usr/local/
+
 WORKDIR /opt/llcap/research-project
-RUN dnf install -y make cmake
+# clang, etc for C & C++ standard library
+RUN dnf install -y make cmake clang clang++ && dnf clean all -y
+COPY --from=BUILD /opt/llcap/* /opt/llcap/research-project
 
 WORKDIR /opt/llcap/research-project/sandbox/02-ipc/example-arg-replacement
 CMD bash
