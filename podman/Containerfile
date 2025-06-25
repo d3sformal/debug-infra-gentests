@@ -1,0 +1,67 @@
+FROM fedora:42 as BUILD
+
+# dependencies for LLVM
+RUN dnf install -y git make cmake ninja xargs clang clang++ @development-tools
+
+# research project repo location
+WORKDIR /opt/llcap
+
+# to allow invalidation of cache
+ARG BUILDCLONE=cached
+RUN git clone "https://gitlab.mff.cuni.cz/vasutro/research-project.git"
+WORKDIR /opt/llcap/research-project
+RUN git submodule update --init --depth=1 ./sandbox/llvm-project
+
+# apply our LLVM patch
+WORKDIR /opt/llcap/research-project/sandbox/llvm-project
+RUN git apply ../01-llvm-ir/clang-ir-mapping-llvm.diff
+
+# build
+WORKDIR /opt/llcap/research-project/sandbox
+RUN ./setup-llvm-build.sh
+WORKDIR /opt/llcap/research-project/sandbox/build
+RUN ninja -j $(nproc)
+
+RUN ninja install
+
+# to allow cachec invalidation for non-llvm changes (use on your own risk)
+ARG NONLLVMUPDATE=cached
+WORKDIR /opt/llcap/research-project
+RUN git pull
+
+# AST plugin
+WORKDIR /opt/llcap/research-project/sandbox/01-llvm-ir/custom-metadata-pass
+RUN ./setup-tool.sh
+
+WORKDIR /opt/llcap/research-project/sandbox/build
+RUN ninja -j $(nproc)
+
+RUN ninja install
+RUN ninja clean
+WORKDIR /opt/llcap/research-project/sandbox
+RUN rm -rf ./llvm-project/*
+
+# IR plugin
+WORKDIR /opt/llcap/research-project/sandbox/01-llvm-ir/llvm-pass
+RUN cmake ./
+RUN make -j $(nproc)
+
+# Hook library
+WORKDIR /opt/llcap/research-project/sandbox/02-ipc/ipc-hooklib
+RUN cmake ./
+RUN make -j $(nproc)
+
+RUN dnf install -y cargo
+WORKDIR /opt/llcap/research-project/sandbox/02-ipc/llcap-server
+RUN cargo b
+RUN cargo b --release
+RUN cargo install --root ./ --path ./
+RUN cargo clean
+
+FROM fedora:42
+COPY --from=BUILD /opt/llcap/* /opt/llcap/research-project
+WORKDIR /opt/llcap/research-project
+RUN dnf install -y make cmake
+
+WORKDIR /opt/llcap/research-project/sandbox/02-ipc/example-arg-replacement
+CMD bash
