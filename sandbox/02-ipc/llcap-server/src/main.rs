@@ -224,6 +224,7 @@ async fn main() -> Result<()> {
     args::Stage::TraceCalls {
       mut out_file,
       import_path,
+      selection_path,
       command,
     } => {
       if import_path.is_some() {
@@ -285,8 +286,15 @@ async fn main() -> Result<()> {
       }
 
       let traces = pairs.iter().map(|x| x.0).collect::<Vec<NumFunUid>>();
-      let selected_fns = obtain_function_id_selection(&traces, &modules);
-      export_tracing_selection(&selected_fns, &modules)?;
+      let selected_fns = loop {
+        let sel = obtain_function_id_selection(&traces, &modules);
+        if let Ok(selection) = sel {
+          break selection;
+        } else {
+          lg.crit(sel.unwrap_err().to_string());
+        }
+      };
+      export_tracing_selection(&selected_fns, &modules, selection_path)?;
     }
     args::Stage::CaptureArgs {
       selection_file,

@@ -55,7 +55,7 @@ fn get_line_input() -> Result<String> {
 pub fn obtain_function_id_selection(
   ordered_traces: &[NumFunUid],
   mapping: &ExtModuleMap,
-) -> Vec<TextFunUid> {
+) -> Result<Vec<TextFunUid>> {
   let lg = Log::get("obtain_function_ids");
   println!("Enter indicies of function to test (single line, numbers separated by spaces):");
   let user_input = get_line_input().expect("Error collecting input");
@@ -63,55 +63,62 @@ pub fn obtain_function_id_selection(
   let mut result = vec![];
 
   for inp in user_input.trim().split(' ').map(|v| v.trim()) {
-    match inp.parse::<usize>() {
-      Ok(i) => {
-        if i < ordered_traces.len() {
-          let NumFunUid {
-            function_id,
-            module_id,
-          } = ordered_traces[i];
-          let fn_str = mapping.get_function_name(module_id, function_id);
-          let mod_str = mapping.get_module_string_id(module_id);
+    let i = inp.parse::<usize>()?;
 
-          match (fn_str, mod_str) {
-            (None, _) | (_, None) => {
-              lg.crit(format!("Skipping index {inp} - invalid fn-id or mod-id"));
-            }
-            (Some(fs), Some(ms)) => result.push(TextFunUid {
-              fn_name: fs.clone(),
-              fn_module: ms.clone(),
-            }),
-          }
-        } else {
-          lg.crit(format!("Skipping index {inp} - out of range"));
+    if i < ordered_traces.len() {
+      let NumFunUid {
+        function_id,
+        module_id,
+      } = ordered_traces[i];
+      let fn_str = mapping.get_function_name(module_id, function_id);
+      let mod_str = mapping.get_module_string_id(module_id);
+
+      match (fn_str, mod_str) {
+        (None, _) | (_, None) => {
+          lg.crit(format!("Skipping index {inp} - invalid fn-id or mod-id"));
         }
+        (Some(fs), Some(ms)) => result.push(TextFunUid {
+          fn_name: fs.clone(),
+          fn_module: ms.clone(),
+        }),
       }
-
-      Err(e) => {
-        lg.crit(format!("Could not parse the input: {}", e));
-        return vec![];
-      }
+    } else {
+      lg.crit(format!("Skipping index {inp} - out of range"));
     }
   }
 
-  result
+  Ok(result)
+}
+
+fn user_input_or_default(default: &str, prompt: &str) -> Result<PathBuf> {
+  println!("{prompt}: ({default} is default)");
+
+  let inp = get_line_input()?;
+  let inp = inp.trim();
+
+  Ok(if inp.is_empty() {
+    Log::get("user_input").info("Using default path");
+    PathBuf::from(default)
+  } else {
+    PathBuf::from(inp)
+  })
 }
 
 /// exports function identifiers for later reuse (in instrumentation, re-importing between llcap-server re-executions)
-pub fn export_tracing_selection(selection: &[TextFunUid], mapping: &ExtModuleMap) -> Result<()> {
+pub fn export_tracing_selection(
+  selection: &[TextFunUid],
+  mapping: &ExtModuleMap,
+  output: Option<PathBuf>,
+) -> Result<()> {
   let lg = Log::get("export_tracing_selection");
   let default_path = Constants::default_selected_functions_path();
-  println!(
-    "Enter path (relative to working directory) where selected traces should be saved: ({default_path} is default)"
-  );
-  let user_input = get_line_input().expect("Error collecting input");
-  let user_input = user_input.trim();
-
-  let path = if user_input.is_empty() {
-    lg.info("Using default path");
-    PathBuf::from(default_path)
+  let path = if let Some(out_path) = output {
+    out_path
   } else {
-    PathBuf::from(user_input)
+    user_input_or_default(
+      default_path,
+      "Enter path (relative to working directory) where selected traces should be saved",
+    )?
   };
 
   ensure!(

@@ -49,12 +49,16 @@ pub enum Stage {
   /// Set up a function tracing server
   TraceCalls {
     /// produce an export file
-    #[arg(short, long, default_value = Constants::default_trace_out_path())]
+    #[arg(short = 'e', long, default_value = Constants::default_trace_out_path())]
     out_file: Option<PathBuf>,
 
     /// imports an export file, export file will not be created
     #[arg(short, long)]
     import_path: Option<PathBuf>,
+
+    /// path where the function selection will be saved
+    #[arg(short = 'o', long)]
+    selection_path: Option<PathBuf>,
 
     /// Command to execute the binary whose calls we want to trace
     #[arg(trailing_var_arg(true))]
