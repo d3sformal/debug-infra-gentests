@@ -26,17 +26,18 @@
     * argument capture of a function `foo` === (process of obtaining of the **or** the) set of all recorded argument packets of a function `foo`
     * hooklib, hook library, ...
     * ... ?
+
 ## Final polishing
 
 * add some tests for `llcap-server` and hooklib now that everything seems to be more or less stable? [in progress - TODO: hooklib tests]
     * first C++-ify the `hook.cpp` file... [in progress]
 * ~~proper automatic cleanup / overwrite policies for outputs [in progress - especially in arg capture]~~
-* make call-tracing stage require arguments and make it run the binary itself
-    * adjust readmes of examples (2)
-* make call-tracing and arg-capture stages launch the ipc-finalizer after the program crashes
-    * update readmes of examples (2)
+* ~~make call-tracing stage require arguments and make it run the binary itself~~
+    * ~~adjust readmes of examples (2)~~
+* ~~make call-tracing and arg-capture stages launch the ipc-finalizer after the program crashes~~
+    * ~~update readmes of examples (2)~~
 * try out various scenarios (timeouts of test cases, crashes)
-* ~~ add a simple argument replacement example [in progress]~~
+* ~~add a simple argument replacement example~~
     * add a replicated C example (also serves as verification that we can also link/build with C programs)
 * add a guide for adding custom type support
     * make the UX of this in the LLVM plugin better  
@@ -49,6 +50,7 @@
     * ~~structure~~
     * build reqs (bindgen, header file)
     * update cmdline options
+    * link examples
 * document debugging/development techniques
     * verbosity of llcap server
     * passing arguments to the llvm plugins
