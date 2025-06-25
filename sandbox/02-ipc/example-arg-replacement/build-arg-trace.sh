@@ -9,7 +9,6 @@ fi
 SELECTION=$1; shift
 
 cp ../../01-llvm-ir/llvm-pass/libfn-pass.so ./
-cp ../../build/lib/AstMetaAdd.so ./
 cd ../ipc-hooklib
 cmake ./ -DCFG_MANUAL=OFF
 make
@@ -23,7 +22,7 @@ cmake -D CMAKE_C_COMPILER=clang \
 
 cmake   -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_COMPILER=clang++ \
-  -DCMAKE_CXX_FLAGS="-mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SELECTION -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=./AstMetaAdd.so"  \
+  -DCMAKE_CXX_FLAGS="-mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SELECTION -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
   ./
 
 make clean

@@ -8,5 +8,5 @@ PLUGIN_OPTS="$@"
 
 cp ../"$TARGET" ./
 mkdir -p ./build
-$CLANG_COMPILER -Xclang -load -Xclang ../../llvm-pass/libfn-pass.so -Xclang -fpass-plugin=../../llvm-pass/libfn-pass.so -fplugin=../../../build/lib/AstMetaAdd.so "$TARGET" -S -emit-llvm -o ./build/bitcode.ll $PLUGIN_OPTS
+$CLANG_COMPILER -Xclang -load -Xclang ../../llvm-pass/libfn-pass.so -Xclang -fpass-plugin=../../llvm-pass/libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so "$TARGET" -S -emit-llvm -o ./build/bitcode.ll $PLUGIN_OPTS
 
