@@ -1,14 +1,10 @@
 # Research Project: Locating Bugs in C/C++ Programs by Generating Directed Unit Tests 
 
 > [!note]
-> This repo requires up to 2 (**large**) LLVM submodules. To perform a shallow clone, run:
-
-    git clone --recurse-submodules --shallow-submodules
-
-> [!tip]
-> Currently, the `llvm-project-cir` submodule is **not** required, you can pull even less data by:
+> This repo requires a (**large**) LLVM submodule. To perform a shallow clone, run:
 
     git submodule update --depth=1 ./sandbox/llvm-project
+
 
 ## Setup & Build
 
@@ -36,7 +32,7 @@ ninja
 To install:
 
 > [!Warning]
-> I have no robust idea how or if the `ninja install` (installation step) is reversible. I recommend setting up a VM for your testing & development environment. (possible "uninstallation" step is running `xargs rm -rf < install_manifest.txt` in the corresponding build directory)
+> I have no robust idea how or if the `ninja install` (installation step) is reversible. I recommend setting up a VM for your testing & development environment.
 
 
 ```sh
@@ -48,6 +44,20 @@ To uninstall:
 ```sh
 xargs rm -rf < install_manifest.txt
 ```
+
+## Containers
+
+Demo container is available on [Docker Hub](https://https://hub.docker.com/r/vasutro/llcap-demo-env) (est. 650MB download):
+
+        podman run -it docker.io/vasutro/llcap-demo-env:1.0.0
+
+Last commit of this repository used to build the container and test the demo: 
+
+`aa850775eeb16675653958e6ae1162660658f95b`
+
+For usage, refer to the [example-arg-replacement](./sandbox/02-ipc/example-arg-replacement) directory.
+
+For container internals & development container information, see [podman](./podman/) directory.
 
 ## Organization
 

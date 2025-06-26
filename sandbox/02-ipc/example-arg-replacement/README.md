@@ -342,3 +342,32 @@ The number of buffers is also exposed by the `llcap-server` when running with th
 The default number of buffers can be found in [llcap-server's](../llcap-server/) `--help` message:
 
     cargo r --release -- --help
+
+# Full demo command sequence
+
+<details>
+<summary>Podman</summary>
+
+```bash
+# to run the container:
+podman run -it docker.io/vasutro/llcap-demo-env:1.0.0
+
+# inside the container
+./build-call-trace.sh
+mv ./arg-replacement ./arg-replacement-tracecalls
+cd ../llcap-server/
+./bin/llcap-server --modmap ../example-arg-replacement/module-maps/         trace-calls -o ./selected-fns.bin         ../example-arg-replacement/arg-replacement-tracecalls
+# you will be prompted for input here
+```
+
+
+```bash
+cd ../example-arg-replacement/
+./build-arg-trace.sh ../llcap-server/selected-fns.bin
+cd ../llcap-server/
+./bin/llcap-server --modmap ../example-arg-replacement/module-maps/     capture-args -s ./selected-fns.bin     -o ./arg-traces-dir     ../example-arg-replacement/arg-replacement
+mkdir ./arg-trace-outputs
+./bin/llcap-server --modmap ../example-arg-replacement/module-maps/        test -s ./selected-fns.bin -c ./arg-traces-dir        -o ./arg-trace-outputs/ ../example-arg-replacement/arg-replacement
+```
+
+</details>

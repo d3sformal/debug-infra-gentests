@@ -41,7 +41,7 @@
     * add a replicated C example (also serves as verification that we can also link/build with C programs)
 * add a guide for adding custom type support
     * make the UX of this in the LLVM plugin better  
-* try compilation from scratch in a new environment 
+* ~~try compilation from scratch in a new environment~~ 
 * (optionally?) terminate program right after tested function returns
     * exception handling???
 * investigate debug metadata usage instead of current approach
@@ -50,9 +50,9 @@
     * ~~structure~~
     * build reqs (bindgen, header file)
     * update cmdline options
-    * link examples
+    * ~~link examples~~
 * document debugging/development techniques
-    * verbosity of llcap server
+    * ~~verbosity of llcap server~~
     * passing arguments to the llvm plugins
 
 
