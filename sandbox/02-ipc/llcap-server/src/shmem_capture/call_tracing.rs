@@ -125,7 +125,7 @@ impl CaptureLoop for CallTracing {
         .unaligned_shift_num_read()
         .map_err(|e| e.context("funciton id"))?;
       lg.trace(format!("M {:02X}", *mod_id));
-      lg.trace(format!("F {:02X}", fn_id));
+      lg.trace(format!("F {fn_id:02X}"));
 
       state.add_message(Message(NumFunUid::new(IntegralFnId(fn_id), mod_id)));
     }

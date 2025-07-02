@@ -77,7 +77,7 @@ impl ModulePacketDumper {
     let dir_name = module_id.hex_string();
     let module_root = packet_root.join(dir_name.clone());
     std::fs::create_dir_all(&module_root)
-      .map_err(|e| anyhow!(e).context(format!("Folder creation: {}", dir_name)))?;
+      .map_err(|e| anyhow!(e).context(format!("Folder creation: {dir_name}")))?;
 
     let mut func_dumpers = HashMap::new();
 
@@ -227,7 +227,7 @@ impl PacketReader {
               tests += 1;
             }
           }
-          lg.info(format!("\ttests {} ", tests));
+          lg.info(format!("\ttests {tests} "));
 
           let args =
             if let Some(v) = module_maps.get_function_arg_size_descriptors(*module, *function) {
@@ -239,7 +239,7 @@ impl PacketReader {
             } else {
               Err(anyhow!("Failed look up function argument types"))
             }?;
-          lg.info(format!("\targs {} ", args));
+          lg.info(format!("\targs {args} "));
           captures.insert(
             (*module, *function),
             Arc::new(Mutex::new(CaptureReader {

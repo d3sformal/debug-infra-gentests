@@ -44,7 +44,7 @@ impl ShmemHandle {
       underlying_memory: RefCell::new(mem_ptr as *mut u8),
       len,
       _fd: fd,
-      cname: format!("{}\x00", name),
+      cname: format!("{name}\x00"),
       marker: PhantomData,
     }
   }

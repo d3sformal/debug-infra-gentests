@@ -158,7 +158,7 @@ impl PartialCaptureState {
     }
 
     for (i, desc) in size_refs.iter().enumerate().skip(arg_idx) {
-      lg.trace(format!("Argument idx: {}, desc: {:?}", i, desc));
+      lg.trace(format!("Argument idx: {i}, desc: {desc:?}"));
       if raw_buff.empty() {
         return Ok(Self::CapturingArgs {
           module_id,
@@ -206,7 +206,7 @@ impl PartialCaptureState {
       }
 
       ensure!(reader.done(), "Sanity check (reader done) failed");
-      lg.trace(format!("Resetting reader {}", i));
+      lg.trace(format!("Resetting reader {i}"));
       reader.read_reset();
     }
     Ok(Self::Done {
@@ -337,7 +337,7 @@ impl<'a> CaptureLoop for ArgCapture<'a> {
           if let Some(dumper) = self.capture_target.get_packet_dumper(mod_id, fn_id) {
             dumper.dump(&mut buff)?;
           }
-          Log::get("argCap update_from_buffer").trace(format!("{:?}", buff));
+          Log::get("argCap update_from_buffer").trace(format!("{buff:?}"));
           state.payload.push((mod_id, fn_id, buff));
           // start from an empty state
           PartialCaptureState::Empty

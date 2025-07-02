@@ -155,12 +155,11 @@ pub fn export_tracing_selection(
     let wr_res = file.write(&to_write)?;
     ensure!(
       wr_res == to_write.len(),
-      "Exporting of selection written unexpected amount: {} compared to {}",
-      wr_res,
+      "Exporting of selection written unexpected amount: {wr_res} compared to {}",
       to_write.len()
     );
   }
-  lg.info(format!("Successfully exported to {:?}", path));
+  lg.info(format!("Successfully exported to {path:?}"));
   Ok(())
 }
 
@@ -214,7 +213,7 @@ pub fn export_call_trace_data(
     .map_err(|e| anyhow!(e).context("export_data"))?;
   }
 
-  lg.info(format!("Exported call tracing data to {:?}", out_path));
+  lg.info(format!("Exported call tracing data to {out_path:?}"));
   Ok(())
 }
 

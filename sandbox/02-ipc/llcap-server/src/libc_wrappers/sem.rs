@@ -93,7 +93,7 @@ impl Semaphore {
         Semaphore::Closed {
           cname: cname.clone(),
         },
-        format!("Close on closed semaphore {}", cname),
+        format!("Close on closed semaphore {cname}"),
       )),
     }
   }
@@ -152,7 +152,7 @@ impl Semaphore {
       Error::last_os_error()
     );
 
-    Log::get("try_open").trace(format!("Opened semaphore {} with value {}", s_name, value));
+    Log::get("try_open").trace(format!("Opened semaphore {s_name} with value {value}"));
     Ok(Self::Open {
       sem: result,
       cname: s_name,

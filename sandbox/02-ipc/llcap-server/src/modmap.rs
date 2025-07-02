@@ -472,8 +472,7 @@ impl ExtModuleMap {
       String::from_utf8(head.to_vec())
         .map_err(|e| {
           anyhow!(e).context(format!(
-            "add_module cannot not parse string id of a module: {:?}",
-            head
+            "add_module cannot not parse string id of a module: {head:?}",
           ))
         })
         .map(|v| (v, tail))
@@ -556,7 +555,7 @@ impl TryFrom<&PathBuf> for ExtModuleMap {
       };
 
       if let Err(e) = res {
-        Log::get("ExtmoduleMap::try_from(PathBuff)").warn(format!("Failed to read module: {}", e));
+        Log::get("ExtmoduleMap::try_from(PathBuff)").warn(format!("Failed to read module: {e}"));
       }
     }
 
