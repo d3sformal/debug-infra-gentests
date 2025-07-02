@@ -127,6 +127,6 @@ impl Log {
   }
 
   fn log_progress(&self, msg: &str) {
-    println!("P | {}", msg);
+    println!("P | {msg}");
   }
 }

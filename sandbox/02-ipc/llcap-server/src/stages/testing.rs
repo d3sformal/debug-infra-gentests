@@ -1,7 +1,9 @@
 use std::{
-  fs::{self},
+  fs::{self, File},
   mem,
+  ops::DerefMut,
   path::PathBuf,
+  process::Stdio,
   sync::{Arc, Mutex},
   time::Duration,
 };
@@ -11,16 +13,20 @@ use tokio::{
   io::{AsyncReadExt, BufReader},
   net::{UnixListener, UnixStream, unix::OwnedWriteHalf},
   sync::oneshot::{Receiver, Sender},
-  time::timeout,
+  time::{sleep, timeout},
 };
 
 use crate::{
   log::Log,
-  modmap::{ExtModuleMap, IntegralFnId, IntegralModId},
-  shmem_capture::hooklib_commons::{
-    TAG_EXIT, TAG_FATAL, TAG_PKT, TAG_SGNL, TAG_START, TAG_TEST_END, TAG_TEST_FINISH, TAG_TIMEOUT,
+  modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
+  shmem_capture::{
+    MetadataPublisher, TestParams,
+    hooklib_commons::{
+      TAG_EXIT, TAG_FATAL, TAG_PKT, TAG_SGNL, TAG_START, TAG_TEST_END, TAG_TEST_FINISH, TAG_TIMEOUT,
+    },
+    send_test_metadata,
   },
-  stages::arg_capture::PacketReader,
+  stages::{arg_capture::PacketReader, common::*},
 };
 
 use super::arg_capture::PacketProvider;
@@ -56,7 +62,7 @@ pub async fn test_server_job(
   while end_rx.try_recv().is_err() {
     match timeout(Duration::from_millis(100), listener.accept()).await {
       Ok(Ok((client_stream, client_addr))) => {
-        lg.trace(format!("Connected test {:?}", client_addr));
+        lg.trace(format!("Connected test {client_addr:?}"));
         let results = results.clone();
         handles.push(tokio::spawn(single_test_job(
           client_stream,
@@ -73,7 +79,7 @@ pub async fn test_server_job(
   lg.info("Finishing");
   for handle in handles {
     if let Err(e) = handle.await? {
-      lg.crit(format!("A job has finished with error: {}", e));
+      lg.crit(format!("A job has finished with error: {e}"));
     }
   }
   mem::drop(listener);
@@ -147,7 +153,7 @@ impl TryFrom<&[u8]> for TestStatus {
     } else if tag.starts_with(&TAG_FATAL.to_le_bytes()) {
       Ok(Self::Fatal)
     } else {
-      Err(format!("Invalid status format: {:?}", value))
+      Err(format!("Invalid status format: {value:?}"))
     }
   }
 }
@@ -209,7 +215,7 @@ impl TryFrom<&[u8]> for TestMessage {
     } else if tag.starts_with(&TAG_TEST_FINISH.to_le_bytes()) {
       Ok(Self::End)
     } else {
-      Err(format!("Invalid msg format: {:?}", value))
+      Err(format!("Invalid msg format: {value:?}"))
     }
   }
 }
@@ -242,7 +248,7 @@ async fn single_test_job(
 
   // initialize state, packet supply and the stream for reading and writing to the client on the other side
   let mut state = ClientState::Init;
-  let mut lg = Log::get(&format!("single_test_job@{:?}", state));
+  let mut lg = Log::get(&format!("single_test_job@{state:?}"));
   let mut packets = PacketReader::new(&packet_dir, &modules, mem_limit)?;
   let (read, mut write) = stream.into_split();
   let mut buff_stream = BufReader::new(read);
@@ -271,19 +277,19 @@ async fn single_test_job(
       Err(_) => continue, // timeout
     }
 
-    lg.trace(format!("Read done: {:?}", data));
+    lg.trace(format!("Read done: {data:?}"));
     let msg = TestMessage::try_from(data.as_slice()).map_err(|e| anyhow!(e))?;
 
     let (new_state, response) =
       handle_client_msg(state, msg, &mut packets, results.clone()).map_err(|e| anyhow!(e))?;
     state = new_state;
-    lg = Log::get(&format!("single_test_job@{:?}", state)); // rename logger for a new state
+    lg = Log::get(&format!("single_test_job@{state:?}")); // rename logger for a new state
     if matches!(state, ClientState::Ended) {
       lg.trace("Client ended");
       return Ok(());
     }
 
-    lg.trace(format!("Response: {:?}", response));
+    lg.trace(format!("Response: {response:?}"));
     if response.is_none() {
       continue; // no response required
     }
@@ -314,17 +320,15 @@ fn handle_client_msg(
       TestMessage::Start(m, f, i) => Ok((ClientState::Started(m, f, i), None)),
       TestMessage::End => Ok((ClientState::Ended, None)),
       _ => Err(format!(
-        "Invalid transition from Init state with msg {:?}",
-        msg
+        "Invalid transition from Init state with msg {msg:?}"
       )),
     },
     ClientState::Started(mod_id, fn_id, call_idx) => match msg {
       TestMessage::TestEnd(test_index, status) => {
         Log::get("handle_client_msg").info(format!(
-          "test {} {} ended: {:?}, idx: {}",
+          "test {} {} ended: {status:?}, idx: {}",
           mod_id.hex_string(),
           fn_id.hex_string(),
-          status,
           test_index.0
         ));
         results
@@ -339,13 +343,11 @@ fn handle_client_msg(
       }
       TestMessage::End => Ok((ClientState::Ended, None)),
       _ => Err(format!(
-        "Invalid transition from Started state with msg {:?}",
-        msg
+        "Invalid transition from Started state with msg {msg:?}"
       )),
     },
     ClientState::Ended => Err(format!(
-      "Client state is Ended, no more messages were expected msg: {:?}, from state: {:?}",
-      msg, state
+      "Client state is Ended, no more messages were expected msg: {msg:?}, from state: {state:?}"
     )),
   }
 }
@@ -383,4 +385,108 @@ async fn send_protocol_response(write_stream: &mut OwnedWriteHalf, response: &[u
   .await?;
 
   raw_send_to_client(write_stream, response).await
+}
+
+pub async fn test_job(
+  metadata_svr: Arc<Mutex<MetadataPublisher>>,
+  infra_params: InfraParams,
+  fn_uid: NumFunUid,
+  arg_count: u32,
+  test_count: u32,
+  command: Arc<Vec<String>>,
+  output_gen: Arc<Option<TestOutputPathGen>>,
+) -> Result<()> {
+  let (m, f) = (fn_uid.module_id, fn_uid.function_id);
+  // let mut tests = vec![];
+  for call_idx in 0..test_count {
+    {
+      let mut guard = metadata_svr.lock().unwrap();
+      send_test_metadata(
+        guard.deref_mut(),
+        infra_params,
+        NumFunUid {
+          function_id: f,
+          module_id: m,
+        },
+        TestParams {
+          arg_count,
+          test_count,
+          target_call_number: call_idx + 2,
+        },
+      )?;
+    }
+    let mut cmd = cmd_from_args(&command)?;
+    if let Some(output_gen) = output_gen.as_ref() {
+      let out_path = output_gen.get_out_path(m, f, call_idx + 1);
+      let err_path = output_gen.get_err_path(m, f, call_idx + 1);
+      cmd.stdout(Stdio::from(File::create(out_path.clone()).map_err(
+        |e| anyhow!(e).context(format!("Stdout file creation failed: {out_path:?}")),
+      )?));
+      cmd.stderr(Stdio::from(File::create(err_path).map_err(|e| {
+        anyhow!(e).context(format!("Stderr file creation failed {out_path:?}"))
+      })?));
+    }
+    let mut test = cmd
+      .spawn()
+      .map_err(|e| anyhow!(e).context("spawn from command"))?;
+
+    let _ = test.wait();
+    // TODO decide:
+    // fully parallel test execution VS costs of seeking/re-reading packet capture files
+    // when two non-subsequent packets are requested
+    // for parallel impl, uncomment the below and the 1st line in this fn
+    //    tests.push(test);
+  }
+  // while !tests.iter_mut().all(|t| t.try_wait().is_ok()) {
+  //   sleep(Duration::from_millis(300)).await;
+  // }
+  // additional sleep here to ensure that server processes all the incoming "test end" messages
+  // before we "kill" it
+  sleep(Duration::from_millis(300)).await;
+  Ok(())
+}
+
+pub struct TestOutputPathGen {
+  dir: bool,
+  base: PathBuf,
+}
+
+impl TestOutputPathGen {
+  pub fn new(base: Option<PathBuf>) -> Option<Self> {
+    if let Some(base) = base {
+      Self {
+        dir: base.clone().is_dir(),
+        base,
+      }
+      .into()
+    } else {
+      None
+    }
+  }
+
+  pub fn get_out_path(&self, m: IntegralModId, f: IntegralFnId, id: u32) -> PathBuf {
+    self.get_path(format!(
+      "M{}-F{}-{}.out",
+      m.hex_string(),
+      f.hex_string(),
+      id
+    ))
+  }
+
+  pub fn get_err_path(&self, m: IntegralModId, f: IntegralFnId, id: u32) -> PathBuf {
+    self.get_path(format!(
+      "M{}-F{}-{}.err",
+      m.hex_string(),
+      f.hex_string(),
+      id
+    ))
+  }
+
+  fn get_path(&self, dir_append_variant: String) -> PathBuf {
+    if self.dir {
+      self.base.join(dir_append_variant)
+    } else {
+      self.base.clone()
+    }
+  }
 }

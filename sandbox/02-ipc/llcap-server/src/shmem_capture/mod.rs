@@ -14,6 +14,7 @@ use crate::libc_wrappers::wrappers::to_cstr;
 use crate::log::Log;
 use crate::modmap::{ExtModuleMap, NumFunUid};
 use crate::shmem_capture::mem_utils::{ptr_add_nowrap, ptr_add_nowrap_mut};
+use crate::stages::common::InfraParams;
 use crate::stages::testing::test_server_socket;
 use libc::O_CREAT;
 
@@ -76,7 +77,7 @@ impl<'a> BufferStartPtr<'a> {
   /// read the size field and return a buffer that supports reading of data
   pub fn shift_init_data(mut self) -> Result<ReadOnlyBufferPtr<'a>> {
     let valid_size: u32 = self.ptr.unaligned_shift_num_read()?;
-    Log::get("shift_init").trace(format!("Buffer payload size: {}", valid_size));
+    Log::get("shift_init").trace(format!("Buffer payload size: {valid_size}"));
     Ok(self.ptr.constrain(valid_size as usize))
   }
 }
@@ -242,11 +243,8 @@ impl TracingInfra {
     }
   }
 
-  pub fn try_new(
-    resource_prefix: &str,
-    buff_count: u32,
-    buff_len: u32,
-  ) -> Result<(Self, FinalizerInfraInfo)> {
+  pub fn try_new(resource_prefix: &str, params: InfraParams) -> Result<(Self, FinalizerInfraInfo)> {
+    let (buff_count, buff_len) = (params.buff_count, params.buff_len);
     let lg = Log::get("init_tracing");
     let FreeFullSemNames {
       free: free_name,
@@ -293,9 +291,6 @@ impl TracingInfra {
   pub fn buffer_count(&self) -> usize {
     self.logical_buffer_count
   }
-  pub fn buffer_size(&self) -> usize {
-    self.logical_buffer_size
-  }
 
   /// returns a buffer pointing tho the base of a logical buffer (incl. length field)
   fn get_checked_base_ptr_mut(&mut self) -> Result<BorrowedOneshotWritePtr<'_, u32>> {
@@ -326,7 +321,7 @@ impl TracingInfra {
         buff_offset
       );
     }
-    Log::get("writerptr").trace(format!("Ptr {:?}", buffer_start));
+    Log::get("writerptr").trace(format!("Ptr {buffer_start:?}"));
     // safety: base_mem RefMut, above checks, T is u32
     Ok(unsafe { BorrowedOneshotWritePtr::new(base_mem, buff_offset) })
   }
@@ -395,13 +390,13 @@ fn cleanup_sems(prefix: &str) {
     String::from_utf8(META_SEM_DATA.split_last().unwrap().1.to_vec()).unwrap(),
     String::from_utf8(META_SEM_ACK.split_last().unwrap().1.to_vec()).unwrap(),
   ] {
-    lg.info(format!("Cleanup {}", name));
+    lg.info(format!("Cleanup {name}"));
     let res = Semaphore::try_open(name, 0, O_CREAT.into(), None);
     if let Ok(sem) = res {
       let _ = deinit_semaphore_single(sem)
         .inspect_err(|e| lg.info(format!("Cleanup of opened {name}: {e}")));
     } else {
-      lg.info(format!("Cleanup {}: {}", name, res.err().unwrap()));
+      lg.info(format!("Cleanup {name}: {}", res.err().unwrap()));
     }
   }
 }
@@ -445,15 +440,15 @@ fn cleanup_shared_mem(prefix: &str) -> Result<()> {
   let buffs_shm_name: String = get_shmem_name(prefix); // keep type annotation for safety
   // SAFETY: line above
   for name in unsafe { [to_cstr(&metadata_shm_name), to_cstr(&buffs_shm_name)] } {
-    lg.info(format!("Cleanup {:?}", name));
+    lg.info(format!("Cleanup {name:?}"));
     if let Err(e) = try_shm_unlink_fd(name) {
-      lg.info(format!("Cleanup error: {:?}: {e}", name));
+      lg.info(format!("Cleanup error: {name:?}: {e}"));
     }
   }
   let svr_sock_name = test_server_socket(prefix);
-  lg.info(format!("Cleanup {:?}", svr_sock_name));
+  lg.info(format!("Cleanup {svr_sock_name:?}"));
   let _ = std::fs::remove_file(svr_sock_name.clone())
-    .inspect_err(|e| lg.info(format!("Cleanup error: {}: {}", svr_sock_name, e)));
+    .inspect_err(|e| lg.info(format!("Cleanup error: {svr_sock_name}: {e}")));
   Ok(())
 }
 
@@ -461,12 +456,6 @@ fn deinit_shmem(buffers_mem: ShmemHandle) -> Result<()> {
   buffers_mem
     .try_unmap()
     .map_err(|e| e.context("deinit_shmem"))
-}
-
-#[derive(Clone)]
-pub struct InfraParams {
-  pub buff_count: u32,
-  pub buff_len: u32,
 }
 
 pub fn send_call_tracing_metadata(chnl: &mut MetadataPublisher, infra: InfraParams) -> Result<()> {
@@ -634,7 +623,7 @@ fn run_capture<S: CaptureLoopState, C: CaptureLoop<State = S>>(
   let mut state = S::default();
   let mut last_end_msg_count = 0;
   loop {
-    lg.trace(format!("Waiting for free buff: {}", last_end_msg_count));
+    lg.trace(format!("Waiting for free buff: {last_end_msg_count}"));
     let base_ptr: BorrowedReadBuffer<'_> = infra.wait_for_full_buffer()?;
     lg.trace("Received buffer");
     let st = capture.update_from_buffer(state, base_ptr, modules)?;

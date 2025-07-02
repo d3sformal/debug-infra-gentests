@@ -1,19 +1,13 @@
 use std::{
-  fs::File,
-  ops::DerefMut,
-  os::unix::process::ExitStatusExt,
-  path::PathBuf,
-  process::{Command, Stdio},
   sync::{Arc, Mutex},
   time::Duration,
 };
 
-use anyhow::{Context, Result, anyhow, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail};
 use args::Cli;
 use clap::Parser;
 use log::Log;
 
-use modmap::ExtModuleMap;
 mod args;
 mod constants;
 mod libc_wrappers;
@@ -23,12 +17,8 @@ mod shmem_capture;
 mod sizetype_handlers;
 mod stages;
 use shmem_capture::{
-  MetadataPublisher,
-  arg_capture::perform_arg_capture,
-  call_tracing::perform_call_tracing,
-  cleanup,
-  hooklib_commons::{META_MEM_NAME, META_SEM_ACK, META_SEM_DATA},
-  send_arg_capture_metadata, send_test_metadata,
+  MetadataPublisher, arg_capture::perform_arg_capture, call_tracing::perform_call_tracing, cleanup,
+  send_arg_capture_metadata,
 };
 use stages::{
   arg_capture::{ArgPacketDumper, PacketReader},
@@ -38,158 +28,27 @@ use stages::{
   },
   testing::test_server_job,
 };
-use tokio::time::{sleep, timeout};
+use tokio::time::timeout;
 
 use crate::{
-  modmap::{IntegralFnId, IntegralModId, NumFunUid},
-  shmem_capture::{
-    FinalizerInfraInfo, InfraParams, TestParams, TracingInfra, send_call_tracing_metadata,
+  modmap::NumFunUid,
+  shmem_capture::{TracingInfra, send_call_tracing_metadata},
+  stages::{
+    common::{CommonStageParams, cmd_from_args, drive_instrumented_application},
+    testing::{TestOutputPathGen, test_job},
   },
 };
 
-fn obtain_module_map(path: &std::path::PathBuf) -> Result<ExtModuleMap> {
-  let lg = Log::get("obtain_module_map");
-  let mb_modules = ExtModuleMap::try_from(path);
-  match mb_modules {
-    Ok(m) => Ok(m),
-    Err(e) => {
-      lg.crit(format!(
-        "Could not parse module mapping from {}:\n{}",
-        path.to_string_lossy(),
-        e
-      ));
-      bail!("Could not parse module mapping");
-    }
-  }
-}
-
-fn cmd_from_args(args: &[String]) -> Result<Command> {
-  ensure!(!args.is_empty(), "Command must be specified");
-  let mut cmd = std::process::Command::new(args.first().unwrap());
-  cmd.args(args.iter().skip(1));
-  Ok(cmd)
-}
-
-/// sets up a thread that monitors the child in the background
-///
-/// the monitor returns a oneshot receiver which will be filled with a boolean flag indicating success or failure of the monitor initialization, the monitor's join handle is also returned
-///
-/// the monitor performs the IPC finalizing sequence when a program crashes (is terminated by a signal)
-///
-async fn spawn_process_monitor(
-  mut child: std::process::Child,
-  fin_info: FinalizerInfraInfo,
-) -> (
-  tokio::sync::oneshot::Receiver<bool>,
-  tokio::task::JoinHandle<()>,
-) {
-  let (monitor_ok_tx, monitor_ok_rx) = tokio::sync::oneshot::channel::<bool>();
-  // tokio::spawn ensures the monitor runs without an await
-  let child_monitor = tokio::spawn(async move {
-    let lg = Log::get("child_monitor");
-    lg.trace("child monitor launched");
-    // attaches to the crucial semaphore
-    let fnlzr_infra = match fin_info.try_open() {
-      Ok(infra) => infra,
-      Err(e) => {
-        lg.crit(format!("Failed to init finalizer... manual cleanup most likely required, please terminate llcap-server and perform cleanup (--cleanup)\nError: {}", e));
-        // if the send call is Err => the other end of the channel hung up (unreasonable to react here)
-        let _ = monitor_ok_tx.send(false);
-        return;
-      }
-    };
-    let _ = monitor_ok_tx.send(true);
-
-    // polls with a delay until child exits
-    // if exits by signal, artificially terminates the connection via fnlzr_infra
-    loop {
-      match child.try_wait() {
-        Ok(Some(code)) => {
-          if let Some(sig) = code.signal() {
-            lg.progress(format!("App terminated by signal {}", sig));
-            // wait just to be absolutely sure
-            std::thread::sleep(Duration::from_millis(300));
-            let _ = fnlzr_infra.finalization_flush().inspect_err(|e| lg.crit(format!("Failed to finalize comms... manual cleanup most likely required, please terminate llcap-server and perform cleanup (--cleanup)\nError: {}", e)));
-            break;
-          } else {
-            lg.progress(format!("App terminated with exit code {:?}", code.code()));
-            break;
-          }
-        }
-        Ok(_) => (),
-        Err(e) => {
-          lg.crit(e.to_string());
-          break;
-        }
-      }
-      std::thread::sleep(Duration::from_millis(300));
-    }
-    lg.trace("child monitor stopped");
-  });
-
-  (monitor_ok_rx, child_monitor)
-}
-
-/// a generic driver function that wraps around the launch of the requested
-/// application & the monitoring thread
-///
-/// cmd - command to be executed as a child process
-/// meta_sender - function that performs metadata sending (according to capture type)
-/// capture - function performing the capture (more like a closure that wraps the real invokation)
-///
-/// the function simply abstracts away the child monitor thread
-async fn drive_instrumented_application<MetadataSender, CaptureHandler, R>(
-  mut cmd: Command,
-  finalizer_info: FinalizerInfraInfo,
-  metadata_svr: Arc<Mutex<MetadataPublisher>>,
-  meta_sender: MetadataSender,
-  capture: CaptureHandler,
-  infra_params: InfraParams,
-) -> Result<R>
-where
-  CaptureHandler: FnOnce() -> Result<R>,
-  MetadataSender: FnOnce(&mut MetadataPublisher, InfraParams) -> Result<()>,
-{
-  let lg = Log::get("app_driver");
-
-  {
-    // do not hold accorss awaits
-    let mut guard = metadata_svr.lock().unwrap();
-    meta_sender(guard.deref_mut(), infra_params)?;
-  }
-
-  let spawned_child: std::process::Child = cmd
-    .spawn()
-    .map_err(|e| anyhow!(e).context("Failed to spawn from command"))?;
-
-  let (monitor_ready_rx, child_monitor) =
-    spawn_process_monitor(spawned_child, finalizer_info).await;
-  lg.trace("Waiting for monitor start");
-  match timeout(Duration::from_secs(10), monitor_ready_rx).await {
-    Ok(Ok(val)) => ensure!(val, "Monitor NOT ready"),
-    Err(_) => bail!("Monitor ready timeout"),
-    Ok(Err(e)) => bail!("monitor ready error: {}", e),
-  }
-
-  lg.progress("Monitor ready, listening!");
-
-  let res = capture()?;
-
-  child_monitor
-    .await
-    .map_err(|e| anyhow!("Child monitor join {:?}", e))?;
-  Ok(res)
-}
-
 // shorthands for the creation of the MetadataPublisher
 
-fn create_meta_svr(
-  mem_cstr: &std::ffi::CStr,
-  sem_str: String,
-  ack_str: String,
-) -> Result<Arc<Mutex<MetadataPublisher>>> {
+fn create_meta_svr(params: &CommonStageParams) -> Result<Arc<Mutex<MetadataPublisher>>> {
   Ok(Arc::new(Mutex::new(
-    MetadataPublisher::new(mem_cstr, &sem_str, &ack_str).context("cleanup required")?,
+    MetadataPublisher::new(
+      params.meta_cstr()?,
+      &params.data_semaphore_name,
+      &params.ack_semaphore_name,
+    )
+    .context("cleanup required")?,
   )))
 }
 
@@ -212,13 +71,9 @@ async fn main() -> Result<()> {
     return cleanup(&cli.fd_prefix);
   }
 
-  let mut modules = obtain_module_map(&cli.modmap)?;
-
-  let (buff_count, buff_size) = (cli.buff_count, cli.buff_size);
-  let mem_cstr = std::ffi::CStr::from_bytes_with_nul(META_MEM_NAME)?;
-  let sem_str = String::from_utf8(META_SEM_DATA.split_last().unwrap().1.to_vec())?;
-  let ack_str = String::from_utf8(META_SEM_ACK.split_last().unwrap().1.to_vec())?;
-
+  let mut common_params =
+    CommonStageParams::try_initialize(cli.buff_count, cli.buff_size, &cli.modmap)?;
+  let mut modules = common_params.extract_module_maps()?;
   match cli.stage {
     args::Stage::TraceCalls {
       mut out_file,
@@ -241,13 +96,10 @@ async fn main() -> Result<()> {
         ))?;
 
         lg.progress("Initializing tracing infrastructure");
+        let infra_params = common_params.infra;
         let (mut tracing_infra, finalizer_info) =
-          TracingInfra::try_new(&cli.fd_prefix, buff_count, buff_size)?;
-        let metadata_svr = create_meta_svr(mem_cstr, sem_str, ack_str)?;
-        let infra_params = InfraParams {
-          buff_count: tracing_infra.buffer_count() as u32,
-          buff_len: tracing_infra.buffer_size() as u32,
-        };
+          TracingInfra::try_new(&cli.fd_prefix, infra_params)?;
+        let metadata_svr = create_meta_svr(&common_params)?;
 
         let result = drive_instrumented_application(
           cmd_from_args(&command)?,
@@ -310,13 +162,10 @@ async fn main() -> Result<()> {
       lg.progress("Setting up function packet dumping");
       let mut dumper = ArgPacketDumper::new(&out_dir, &modules, mem_limit as usize)?;
       lg.progress("Initializing tracing infrastructure");
+      let infra_params = common_params.infra;
       let (mut tracing_infra, finalizer_info) =
-        TracingInfra::try_new(&cli.fd_prefix, buff_count, buff_size)?;
-      let metadata_svr = create_meta_svr(mem_cstr, sem_str, ack_str)?;
-      let infra_params = InfraParams {
-        buff_count: tracing_infra.buffer_count() as u32,
-        buff_len: tracing_infra.buffer_size() as u32,
-      };
+        TracingInfra::try_new(&cli.fd_prefix, infra_params)?;
+      let metadata_svr = create_meta_svr(&common_params)?;
 
       // for comments, see the match arm for the TraceCalls subcommand
       let result = drive_instrumented_application(
@@ -377,7 +226,7 @@ async fn main() -> Result<()> {
       }
 
       let mut futs = vec![];
-      let metadata_svr = create_meta_svr(mem_cstr, sem_str, ack_str)?;
+      let metadata_svr = create_meta_svr(&common_params)?;
 
       for module in modules.modules() {
         for function in modules.functions(*module).unwrap() {
@@ -415,10 +264,7 @@ async fn main() -> Result<()> {
 
           let test_job = tokio::spawn(test_job(
             metadata_svr.clone(),
-            InfraParams {
-              buff_count,
-              buff_len: buff_size,
-            },
+            common_params.infra,
             NumFunUid {
               function_id: *function,
               module_id: *module,
@@ -468,108 +314,4 @@ async fn main() -> Result<()> {
   }
   lg.progress("Exiting...");
   Ok(())
-}
-
-async fn test_job(
-  metadata_svr: Arc<Mutex<MetadataPublisher>>,
-  infra_params: InfraParams,
-  fn_uid: NumFunUid,
-  arg_count: u32,
-  test_count: u32,
-  command: Arc<Vec<String>>,
-  output_gen: Arc<Option<TestOutputPathGen>>,
-) -> Result<()> {
-  let (m, f) = (fn_uid.module_id, fn_uid.function_id);
-  // let mut tests = vec![];
-  for call_idx in 0..test_count {
-    {
-      let mut guard = metadata_svr.lock().unwrap();
-      send_test_metadata(
-        guard.deref_mut(),
-        infra_params.clone(),
-        NumFunUid {
-          function_id: f,
-          module_id: m,
-        },
-        TestParams {
-          arg_count,
-          test_count,
-          target_call_number: call_idx + 2,
-        },
-      )?;
-    }
-    let mut cmd = cmd_from_args(&command)?;
-    if let Some(output_gen) = output_gen.as_ref() {
-      let out_path = output_gen.get_out_path(m, f, call_idx + 1);
-      let err_path = output_gen.get_err_path(m, f, call_idx + 1);
-      cmd.stdout(Stdio::from(File::create(out_path.clone()).map_err(
-        |e| anyhow!(e).context(format!("Stdout file creation failed: {:?}", out_path)),
-      )?));
-      cmd.stderr(Stdio::from(File::create(err_path).map_err(|e| {
-        anyhow!(e).context(format!("Stderr file creation failed {:?}", out_path))
-      })?));
-    }
-    let mut test = cmd
-      .spawn()
-      .map_err(|e| anyhow!(e).context("spawn from command"))?;
-
-    let _ = test.wait();
-    // TODO decide:
-    // fully parallel test execution VS costs of seeking/re-reading packet capture files
-    // when two non-subsequent packets are requested
-    // for parallel impl, uncomment the below and the 1st line in this fn
-    //    tests.push(test);
-  }
-  // while !tests.iter_mut().all(|t| t.try_wait().is_ok()) {
-  //   sleep(Duration::from_millis(300)).await;
-  // }
-  // additional sleep here to ensure that server processes all the incoming "test end" messages
-  // before we "kill" it
-  sleep(Duration::from_millis(300)).await;
-  Ok(())
-}
-
-struct TestOutputPathGen {
-  dir: bool,
-  base: PathBuf,
-}
-
-impl TestOutputPathGen {
-  pub fn new(base: Option<PathBuf>) -> Option<Self> {
-    if let Some(base) = base {
-      Self {
-        dir: base.clone().is_dir(),
-        base,
-      }
-      .into()
-    } else {
-      None
-    }
-  }
-
-  pub fn get_out_path(&self, m: IntegralModId, f: IntegralFnId, id: u32) -> PathBuf {
-    self.get_path(format!(
-      "M{}-F{}-{}.out",
-      m.hex_string(),
-      f.hex_string(),
-      id
-    ))
-  }
-
-  pub fn get_err_path(&self, m: IntegralModId, f: IntegralFnId, id: u32) -> PathBuf {
-    self.get_path(format!(
-      "M{}-F{}-{}.err",
-      m.hex_string(),
-      f.hex_string(),
-      id
-    ))
-  }
-
-  fn get_path(&self, dir_append_variant: String) -> PathBuf {
-    if self.dir {
-      self.base.join(dir_append_variant)
-    } else {
-      self.base.clone()
-    }
-  }
 }
