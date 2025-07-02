@@ -35,7 +35,7 @@
 ## Final polishing
 
 * add some tests for `llcap-server` and hooklib now that everything seems to be more or less stable? [in progress - TODO: hooklib tests]
-    * first C++-ify the `hook.cpp` file... [in progress]
+    * ~~first C++-ify the `hook.cpp` file...~~
 * ~~proper automatic cleanup / overwrite policies for outputs [in progress - especially in arg capture]~~
 * ~~make call-tracing stage require arguments and make it run the binary itself~~
     * ~~adjust readmes of examples (2)~~
