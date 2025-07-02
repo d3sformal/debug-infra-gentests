@@ -26,9 +26,8 @@ int unmap_shmem(void *mem, int fd, const char *name, size_t len,
     printf("Failed to UNmap memory %s: %s\n", name, strerror(errno));
     if ((flags & UNMAP_SHMEM_FLAG_TRY_ALL) == 0) {
       return -1;
-    } else {
-      rv = -2;
     }
+    rv = -2;
   }
   if (close_fd(fd, name, "Failed to close FD") != 0) {
     printf("Failed to UNlink FD %s: %s\n", name, strerror(errno));

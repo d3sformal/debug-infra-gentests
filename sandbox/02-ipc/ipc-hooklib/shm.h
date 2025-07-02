@@ -19,7 +19,7 @@ int init(void) __attribute__((constructor));
 void deinit(void) __attribute__((destructor));
 #endif
 
-int push_data(const void *data, uint32_t len);
+int push_data(const void *source, uint32_t len);
 
 bool in_testing_mode(void);
 bool in_testing_fork(void);

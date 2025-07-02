@@ -53,8 +53,6 @@ static bool get_buffer_info(ShmMeta *target) {
                           sizeof(ShmMeta));
 }
 
-#define SEMPERMS (S_IROTH | S_IWOTH | S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR)
-
 // sets up the semaphores and information required for buffer management
 // if this returns 0, s_channel is ready for use
 static int setup_infra(void) {
@@ -89,11 +87,9 @@ static int setup_infra(void) {
 }
 
 int init(void) {
-  int rv = 1;
   if (setup_infra() != 0) {
     printf("Failed to init infra\n");
     exit(-1);
-    return rv;
   }
   if (in_testing_mode()) {
     return 0;
@@ -111,9 +107,10 @@ void deinit(void) {
   }
 
   deinit_channel(&s_channel);
-  return;
 }
 
+#ifdef MANUAL_INIT_DEINIT
+#define SEMPERMS (S_IROTH | S_IWOTH | S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR)
 // after a crash, there can be a buffer, that needs to be flushed
 // we find this by looking at the payload length of a buffer (the first 4 bytes)
 // if there is 0 -> buffer has been flushed (responsibility of the other side)
@@ -134,6 +131,7 @@ int init_finalize_after_crash(const char *name_full_sem, uint32_t buff_count) {
   // process
   return termination_sequence_raw(sem_full, buff_count);
 }
+#endif // MANUAL_INIT_DEINIT
 
 bool in_testing_mode(void) { return s_buff_info.mode == 2; }
 bool in_testing_fork(void) { return s_buff_info.forked; }
@@ -141,12 +139,14 @@ uint32_t test_count(void) { return s_buff_info.test_count; }
 
 void set_fork_flag(void) { s_buff_info.forked = true; }
 
-// call number >1 -> keep counting down, don't hijack this call
-// call number 1  -> hijack this call
-// call number 0  -> don't hijack this call
 uint32_t get_call_num(void) { return s_buff_info.target_call_number - 1; }
 void register_call(void) {
-  s_buff_info.target_call_number > 0 ? s_buff_info.target_call_number-- : 0;
+  if (s_buff_info.target_call_number > 0) {
+    // target_call_number 0 means, that the testing has already been performed
+    // 1 means we will be testing the call that caused register_call to be called
+    // otherwise "we are not at the desired call yet"
+    s_buff_info.target_call_number--;
+  }
 }
 // counts down the arguments for each argument replacement
 void register_argument(void) { s_buff_info.arg_count--; }

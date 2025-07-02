@@ -29,9 +29,9 @@ typedef struct {
   uint32_t bumper_offset;
   sem_t *sem_free;
   sem_t *sem_full;
-  int file_descriptor;
   void *buffer_base;
   size_t current_buffer_idx;
+  int file_descriptor;
 } WriteChannel;
 
 // name, type, info do not have to be kept alive for the lifetime of target

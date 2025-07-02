@@ -2,6 +2,7 @@
 #include "shm_util.h"
 #include <fcntl.h>
 #include <semaphore.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/sem.h>

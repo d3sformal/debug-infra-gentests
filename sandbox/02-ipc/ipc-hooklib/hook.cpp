@@ -1,11 +1,6 @@
 #include "hook.h"
 #include "shm.h"
 #include "shm_commons.h"
-#include <sys/poll.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <sys/un.h>
-#include <sys/wait.h>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -13,7 +8,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <iostream>
 #include <string>
+#include <sys/poll.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <sys/wait.h>
 
 #define GENFN_TEST_PRIMITIVE(name, argt, argvar)                               \
   GENFNDECLTEST(name, argt, argvar) {                                          \
@@ -29,7 +30,8 @@
         }                                                                      \
         register_argument();                                                   \
         if (!consume_bytes_from_packet(sizeof(argvar), target)) {              \
-          printf("Failed to get %lu bytes\n", sizeof(argvar));                 \
+          std::cerr << "Failed to get " << sizeof(argvar) << " bytes"          \
+                    << std::endl;                                              \
           perror("");                                                          \
           exit(2556);                                                          \
         }                                                                      \
@@ -46,18 +48,24 @@
 static int s_server_socket = -1;
 
 static bool connect_to_server(const char *path) {
-  int len;
+  socklen_t len;
   struct sockaddr_un remote;
   remote.sun_family = AF_UNIX;
 
-  if ((s_server_socket = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
+  s_server_socket = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (s_server_socket == -1) {
     perror("Failed to create socket\n");
     return false;
   }
-
-  strcpy(remote.sun_path, path);
-  len = strlen(remote.sun_path) + sizeof(remote.sun_family);
-  if (connect(s_server_socket, (struct sockaddr *)&remote, len) == -1) {
+  // 108 is the limith of the sun_path field
+  constexpr size_t SUN_PATH_MAX_LEN = 108;
+  strncpy(remote.sun_path, path, SUN_PATH_MAX_LEN);
+  len = static_cast<socklen_t>(strnlen(remote.sun_path, SUN_PATH_MAX_LEN) +
+                               sizeof(remote.sun_family));
+  // reinterpret_cast should be legal here... (otherwise there is only C-style
+  // cast)
+  if (connect(s_server_socket, reinterpret_cast<struct sockaddr *>(&remote),
+              len) == -1) {
     perror("Failed to connect\n");
     return false;
   }
@@ -67,7 +75,7 @@ static bool connect_to_server(const char *path) {
 
 static bool do_srv_send(void *data, size_t size, const char *desc) {
   if (send(s_server_socket, data, size, 0) == -1) {
-    printf("Failed to send %s\n", desc);
+    std::cerr << "Failed to send " << desc << std::endl;
     perror("");
     close(s_server_socket);
     return false;
@@ -78,13 +86,13 @@ static bool do_srv_send(void *data, size_t size, const char *desc) {
 static bool do_srv_recv(void *target, size_t size, const char *desc) {
   ssize_t rcvd = recv(s_server_socket, target, size, 0);
   if (rcvd <= 0) {
-    printf("Failed to recv %s, rcvd: %ld\n", desc, rcvd);
+    std::cerr << "Failed to recv " << desc << ", rcvd: " << rcvd << std::endl;
     perror("");
     close(s_server_socket);
     return false;
-  } else if ((size_t)rcvd < size) {
-    printf("Failed to recv size at %s: got %ld expected %ld\n", desc, rcvd,
-           size);
+  } else if (static_cast<size_t>(rcvd) < size) {
+    std::cerr << "Failed to recv size at " << desc << ", got: " << rcvd
+              << " expected " << size << '\n';
     perror("");
     close(s_server_socket);
     return false;
@@ -96,6 +104,9 @@ static bool do_srv_recv(void *target, size_t size, const char *desc) {
 
 static bool send_start_msg(uint32_t mod, uint32_t fun, uint32_t call_idx) {
   char message[MSG_SIZE];
+  static_assert(sizeof(TAG_START) + sizeof(mod) + sizeof(fun) +
+                    sizeof(call_idx) <=
+                MSG_SIZE);
   memcpy(message, &TAG_START, sizeof(TAG_START));
   memcpy(message + 2, &mod, sizeof(mod));
   memcpy(message + 6, &fun, sizeof(fun));
@@ -118,7 +129,7 @@ static bool request_packet_from_server(uint64_t index, void **target,
   if (!do_srv_recv(message, sizeof(uint32_t), "pkt sz")) {
     return false;
   }
-  pkt_size = (size_t)*(uint32_t *)message;
+  pkt_size = static_cast<size_t>(*reinterpret_cast<uint32_t *>(message));
   void *buff = malloc(pkt_size);
   *target = buff;
   if (buff == NULL) {
@@ -130,11 +141,11 @@ static bool request_packet_from_server(uint64_t index, void **target,
   if (!do_srv_recv(buff, pkt_size, "pkt data")) {
     return false;
   }
-  *packet_size = (uint32_t)pkt_size;
+  *packet_size = static_cast<uint32_t>(pkt_size);
   return true;
 }
 
-enum EMsgEnd {
+enum class EMsgEnd : int8_t {
   MSG_END_TIMEOUT = -1,
   MSG_END_SIGNAL = -2,
   MSG_END_STATUS = 0,
@@ -144,12 +155,15 @@ enum EMsgEnd {
 static bool send_test_end_message(uint64_t index, EMsgEnd end_type,
                                   int32_t status) {
   const uint16_t tag =
-      end_type == MSG_END_TIMEOUT
+      end_type == EMsgEnd::MSG_END_TIMEOUT
           ? TAG_TIMEOUT
-          : (end_type == MSG_END_STATUS
+          : (end_type == EMsgEnd::MSG_END_STATUS
                  ? TAG_EXIT
-                 : (end_type == MSG_END_FATAL ? TAG_FATAL : TAG_SGNL));
+                 : (end_type == EMsgEnd::MSG_END_FATAL ? TAG_FATAL : TAG_SGNL));
   char message[MSG_SIZE];
+  static_assert(sizeof(TAG_TEST_END) + sizeof(index) + sizeof(tag) +
+                    sizeof(status) <=
+                MSG_SIZE);
   memcpy(message, &TAG_TEST_END, 2);
   memcpy(message + 2, &index, sizeof(index));
   memcpy(message + 10, &tag, sizeof(tag));
@@ -159,7 +173,9 @@ static bool send_test_end_message(uint64_t index, EMsgEnd end_type,
 
 static bool send_finish_message() {
   char message[MSG_SIZE];
-  memcpy(message, &TAG_TEST_FINISH, 2);
+  static_assert(MSG_SIZE >= sizeof(TAG_TEST_FINISH));
+
+  memcpy(message, &TAG_TEST_FINISH, sizeof(TAG_TEST_FINISH));
   return do_srv_send(message, sizeof(message), "test finish msg");
 }
 
@@ -171,26 +187,26 @@ void hook_start(uint32_t module_id, uint32_t fn_id) {
 static bool try_wait_pid(pid_t pid, int32_t *status, EMsgEnd *result) {
   int w = waitpid(pid, status, WNOHANG | WUNTRACED | WCONTINUED);
   if (w == -1) {
-    printf("Failed waitpid\n");
+    std::cerr << "Failed waitpid" << std::endl;
     exit(4411);
   } else if (w != 0) {
     if (w != pid) {
-      printf("Weird, PID does not match... %d, %d\n", pid, w);
+      std::cerr << "PID does not match... " << pid << " " << w << std::endl;
     }
     if (WIFEXITED(*status)) {
       *status = WEXITSTATUS(*status);
-      *result = MSG_END_STATUS;
+      *result = EMsgEnd::MSG_END_STATUS;
     } else if (WIFSIGNALED(*status)) {
       *status = WTERMSIG(*status);
-      *result = MSG_END_SIGNAL;
+      *result = EMsgEnd::MSG_END_SIGNAL;
     } else if (WIFSTOPPED(*status)) {
       *status = WSTOPSIG(*status);
-      *result = MSG_END_SIGNAL;
+      *result = EMsgEnd::MSG_END_SIGNAL;
     } else if (WIFCONTINUED(*status)) {
       *status = 0;
-      *result = MSG_END_SIGNAL;
+      *result = EMsgEnd::MSG_END_SIGNAL;
     } else {
-      *result = MSG_END_SIGNAL;
+      *result = EMsgEnd::MSG_END_SIGNAL;
     }
     return true;
   }
@@ -215,8 +231,8 @@ static PollResult do_poll(int fd, short events, int timeout_ms, int *result) {
     perror("Failed to poll test rq sock");
     return PollResult::ResultFail;
   }
-  if ((rv & POLLERR) || (rv & POLLRDHUP)) {
-    printf("FD error %d\n", rv);
+  if ((rv & POLLERR) != 0 || (rv & POLLRDHUP) != 0) {
+    std::cerr << "FD error " << rv << '\n';
     return PollResult::ResultFail;
   }
 
@@ -250,18 +266,18 @@ static bool handle_requests(int rq_sock) {
   void *packet_ptr;
   uint32_t packet_size;
   if (!request_packet_from_server(packet_idx, &packet_ptr, &packet_size)) {
-    printf("Pktrq failed pkt idx %lu\n", packet_idx);
+    std::cerr << "Pktrq failed pkt idx " << packet_idx << std::endl;
     free(packet_ptr);
     return false;
   }
   if (write(rq_sock, &packet_size, sizeof(packet_size)) !=
       sizeof(packet_size)) {
-    printf("Pkt sz send failed\n");
+    std::cerr << "Pkt sz send failed" << std::endl;
     free(packet_ptr);
     return false;
   }
   if (write(rq_sock, packet_ptr, packet_size) != packet_size) {
-    printf("Pkt data send failed\n");
+    std::cerr << "Pkt data send failed" << std::endl;
     free(packet_ptr);
     return false;
   }
@@ -273,7 +289,7 @@ static bool handle_requests(int rq_sock) {
 static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
                                          int timeout_s, int32_t *status) {
   time_t seconds;
-  EMsgEnd result = MSG_END_FATAL;
+  EMsgEnd result = EMsgEnd::MSG_END_FATAL;
   seconds = time(NULL);
   while (true) {
     if (try_wait_pid(pid, status, &result)) {
@@ -281,27 +297,26 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
     }
 
     if (time(NULL) - seconds >= timeout_s) {
-      printf("\tTEST Timeout (%d s)", timeout_s);
-      return MSG_END_TIMEOUT;
+      std::cerr << "\tTEST Timeout (" << timeout_s << " s)" << std::endl;
+      return EMsgEnd::MSG_END_TIMEOUT;
     }
 
     if (!handle_requests(test_requests_socket)) {
-      printf("Request handler failed\n");
-      return MSG_END_FATAL;
+      std::cerr << "Request handler failed" << std::endl;
+      return EMsgEnd::MSG_END_FATAL;
     }
-  };
-  return MSG_END_FATAL;
+  }
 }
 
 static void perform_testing(uint32_t module_id, uint32_t function_id,
                             uint32_t call_idx) {
   if (!connect_to_server("/tmp/llcap-test-server")) {
-    printf("Failed to connect");
+    std::cerr << "Failed to connect" << std::endl;
     exit(2389);
   }
 
   if (!send_start_msg(module_id, function_id, call_idx)) {
-    printf("Failed send start message");
+    std::cerr << "Failed send start message" << std::endl;
     exit(2388);
   }
   set_fork_flag();
@@ -348,8 +363,11 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
 
 void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id) {
   if (!in_testing_mode()) {
+    // we are capturing function arguments, first we inform of the function
+    // itself
     push_data(&module_id, sizeof(module_id));
     push_data(&fn_id, sizeof(fn_id));
+    // the rest of this function concerns only the testing mode
     return;
   }
   if (!in_testing_fork() && is_fn_under_test(module_id, fn_id)) {
@@ -374,9 +392,8 @@ GENFN_TEST_PRIMITIVE(hook_uint32, UINT, i)
 GENFN_TEST_PRIMITIVE(hook_int64, LLONG, d)
 GENFN_TEST_PRIMITIVE(hook_uint64, ULLONG, d)
 
-
 void llcap_hooklib_extra_cxx_string(std::string *str, std::string **target,
-                            uint32_t module, uint32_t function) {
+                                    uint32_t module, uint32_t function) {
   if (in_testing_mode()) {
     if (!is_fn_under_test(module, function) || !should_hijack_arg()) {
       goto move_string_to_target;
@@ -403,8 +420,8 @@ void llcap_hooklib_extra_cxx_string(std::string *str, std::string **target,
     }
     return;
   } else {
-    uint32_t cstring_size = (uint32_t)strlen(str->c_str());
-    uint32_t capacity = (uint32_t)str->capacity();
+    uint32_t cstring_size = static_cast<uint32_t>(str->size());
+    uint32_t capacity = static_cast<uint32_t>(str->capacity());
     uint64_t size = cstring_size + sizeof(capacity) + sizeof(cstring_size);
     if (str->size() > UINT32_MAX) {
       perror("Error: std::string too large");

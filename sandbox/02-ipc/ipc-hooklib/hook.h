@@ -16,7 +16,19 @@ static_assert(sizeof(int) == 4, "Expecting int to be 4 bytes");
 #define GENFNDECLTEST(name, argt, argvar)                                      \
   void name(argt argvar, argt *target, uint32_t module, uint32_t fn)
 
+/*
+Hook function for function tracing.
+
+Sends module id and function id to the llcap-server.
+*/
 void hook_start(uint32_t module_id, uint32_t id);
+
+/*
+An argument tracing hook.
+
+Called first during argument capture or testing mode inside instrumented function.
+Ensures correct dispatch according to the test parameters.
+*/
 void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id);
 
 GENFNDECLTEST(hook_int32, int, a);

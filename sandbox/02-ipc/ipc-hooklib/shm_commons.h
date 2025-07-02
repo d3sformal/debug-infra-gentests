@@ -38,18 +38,18 @@ typedef struct {
   unsigned int target_call_number;
 } ShmMeta;
 
-const unsigned short TAG_START = 0;
-const unsigned short TAG_PKT = 1;
-const unsigned short TAG_TEST_END = 2;
-const unsigned short TAG_TEST_FINISH = 3;
+static const unsigned short TAG_START = 0;
+static const unsigned short TAG_PKT = 1;
+static const unsigned short TAG_TEST_END = 2;
+static const unsigned short TAG_TEST_FINISH = 3;
 
-const unsigned short TAG_TIMEOUT = 15;
-const unsigned short TAG_EXIT = 16;
-const unsigned short TAG_SGNL = 17;
-const unsigned short TAG_FATAL = 18;
+static const unsigned short TAG_TIMEOUT = 15;
+static const unsigned short TAG_EXIT = 16;
+static const unsigned short TAG_SGNL = 17;
+static const unsigned short TAG_FATAL = 18;
 
-const char *const META_SEM_DATA = "/llcap-meta-sem-data";
-const char *const META_SEM_ACK = "/llcap-meta-sem-ack";
-const char *const META_MEM_NAME = "/llcap-meta-shmem";
+static const char *const META_SEM_DATA = "/llcap-meta-sem-data";
+static const char *const META_SEM_ACK = "/llcap-meta-sem-ack";
+static const char *const META_MEM_NAME = "/llcap-meta-shmem";
 
 #endif // LLCAP_SHM_COMMONS

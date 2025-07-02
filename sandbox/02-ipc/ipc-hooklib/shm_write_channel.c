@@ -12,14 +12,14 @@
 #include <sys/stat.h> /* For mode constants */
 #include <unistd.h>
 
-const unsigned long MAX_NAME_LEN = 251; // inc null terminator
-const char *CHANNEL_NAME_BASE = "/llcap";
+static const unsigned long MAX_NAME_LEN = 251; // inc null terminator
+static const char *CHANNEL_NAME_BASE = "/llcap";
 
 static bool alloc_name(const char *name_base, const char *name,
                        const char *type_id, const char *postfix, char **out) {
   // must ensure out is written only if allocation is successful!
 
-  const char *FORMAT = "%s-%s-%s-%s"; // e.g. /llcap-TEST-01-meta-semfree
+#define FORMAT "%s-%s-%s-%s" // e.g. /llcap-TEST-01-meta-semfree
   unsigned long to_alloc = strlen(name_base) + 1 + strlen(name) + 1 +
                            strlen(type_id) + 1 + strlen(postfix) +
                            1; // null term
