@@ -30,6 +30,7 @@
     * Child process is spawned at the first call, not the n-th one as desired by instrumentation ! this was unexpected / unnoticed
     * the `register_call` gets called anyway so the behavior looks correct
     * the only difference is that the timeout is counted from the first call, not the n-th desired call
+* make `/tmp/llcap-test-server` a constant
 
 ## Final polishing
 
