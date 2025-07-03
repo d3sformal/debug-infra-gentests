@@ -2,6 +2,7 @@
 #include "shm.h"
 #include "shm_commons.h"
 #include <cassert>
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -297,7 +298,7 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
     }
 
     if (time(NULL) - seconds >= timeout_s) {
-      std::cerr << "\tTEST Timeout (" << timeout_s << " s)" << std::endl;
+      std::cerr << "\tLLCAP-TEST Timeout (" << timeout_s << " s)" << std::endl;
       return EMsgEnd::MSG_END_TIMEOUT;
     }
 
@@ -347,7 +348,12 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
     }
     // PARENT
     int status = -1;
-    EMsgEnd result = serve_for_child_until_end(parent_socket, pid, 3, &status);
+    EMsgEnd result = serve_for_child_until_end(parent_socket, pid, static_cast<int>(get_test_tout_secs()), &status);
+    if (result != EMsgEnd::MSG_END_STATUS && result != EMsgEnd::MSG_END_SIGNAL) {
+      // kill the child on non-exiting result (timeout, error, ...)
+      // KILL and STOP cannot be ignored
+      kill(pid, SIGSTOP);
+    }
 
     if (!send_test_end_message(test_idx, result, status)) {
       exit(5467);

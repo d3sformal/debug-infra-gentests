@@ -100,6 +100,10 @@ pub enum Stage {
     #[arg(short = 'o', long)]
     test_output: Option<PathBuf>,
 
+    /// Timeout for each test case in seconds
+    #[arg(short, long, default_value = "3")]
+    timeout: u16,
+
     /// Command to execute tested binary
     #[arg(trailing_var_arg(true))]
     command: Vec<String>,

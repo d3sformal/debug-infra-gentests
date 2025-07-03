@@ -28,7 +28,6 @@ use stages::{
   },
   testing::test_server_job,
 };
-use tokio::time::timeout;
 
 use crate::{
   modmap::NumFunUid,
@@ -191,6 +190,7 @@ async fn main() -> Result<()> {
       capture_dir,
       mem_limit,
       test_output,
+      timeout,
       command,
     } => {
       let command = Arc::new(command);
@@ -218,7 +218,7 @@ async fn main() -> Result<()> {
       ));
       let output_gen = Arc::new(TestOutputPathGen::new(test_output));
       // wait for server to be ready
-      match timeout(Duration::from_secs(10), ready_rx).await {
+      match tokio::time::timeout(Duration::from_secs(10), ready_rx).await {
         Ok(Ok(())) => lg.trace("Server ready"),
         Err(_) => bail!("server ready timeout"),
         Ok(Err(e)) => bail!("server ready error: {}", e),
@@ -270,6 +270,7 @@ async fn main() -> Result<()> {
             },
             arg_count,
             test_count,
+            Duration::from_secs(timeout as u64),
             command.clone(),
             output_gen.clone(),
           ));

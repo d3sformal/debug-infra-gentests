@@ -135,6 +135,7 @@ int init_finalize_after_crash(const char *name_full_sem, uint32_t buff_count) {
 
 bool in_testing_mode(void) { return s_buff_info.mode == 2; }
 bool in_testing_fork(void) { return s_buff_info.forked; }
+uint16_t get_test_tout_secs(void) { return in_testing_mode() ? s_buff_info.test_timeout_seconds : 0; }
 uint32_t test_count(void) { return s_buff_info.test_count; }
 
 void set_fork_flag(void) { s_buff_info.forked = true; }

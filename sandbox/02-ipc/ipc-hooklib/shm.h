@@ -23,6 +23,7 @@ int push_data(const void *source, uint32_t len);
 
 bool in_testing_mode(void);
 bool in_testing_fork(void);
+uint16_t get_test_tout_secs(void);
 bool should_hijack_arg(void);
 uint32_t test_count(void);
 bool is_fn_under_test(uint32_t mod, uint32_t fn);

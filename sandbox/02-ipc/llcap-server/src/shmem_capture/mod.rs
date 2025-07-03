@@ -6,6 +6,7 @@ use anyhow::{Result, anyhow, bail, ensure};
 use hooklib_commons::{META_MEM_NAME, META_SEM_ACK, META_SEM_DATA, ShmMeta};
 use std::ffi::CStr;
 use std::slice;
+use std::time::Duration;
 
 use crate::libc_wrappers::fd::try_shm_unlink_fd;
 use crate::libc_wrappers::sem::{FreeFullSemNames, Semaphore};
@@ -472,6 +473,7 @@ pub fn send_call_tracing_metadata(chnl: &mut MetadataPublisher, infra: InfraPara
       arg_count: 0,
       test_count: 0,
       target_call_number: 0,
+      test_timeout_seconds: 0,
     },
   )
 }
@@ -490,6 +492,7 @@ pub fn send_arg_capture_metadata(chnl: &mut MetadataPublisher, infra: InfraParam
       arg_count: 0,
       test_count: 0,
       target_call_number: 0,
+      test_timeout_seconds: 0,
     },
   )
 }
@@ -498,6 +501,7 @@ pub struct TestParams {
   pub arg_count: u32,
   pub test_count: u32,
   pub target_call_number: u32,
+  pub timeout: Duration,
 }
 
 pub fn send_test_metadata(
@@ -519,6 +523,7 @@ pub fn send_test_metadata(
       arg_count: params.arg_count,
       test_count: params.test_count,
       target_call_number: params.target_call_number,
+      test_timeout_seconds: params.timeout.as_secs() as u16,
     },
   )
 }

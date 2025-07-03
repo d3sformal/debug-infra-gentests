@@ -387,6 +387,7 @@ pub async fn test_job(
   fn_uid: NumFunUid,
   arg_count: u32,
   test_count: u32,
+  test_timeout: Duration,
   command: Arc<Vec<String>>,
   output_gen: Arc<Option<TestOutputPathGen>>,
 ) -> Result<()> {
@@ -406,6 +407,7 @@ pub async fn test_job(
           arg_count,
           test_count,
           target_call_number: call_idx + 2,
+          timeout: test_timeout,
         },
       )?;
     }

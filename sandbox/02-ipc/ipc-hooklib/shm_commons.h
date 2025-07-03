@@ -36,6 +36,7 @@ typedef struct {
   // means the current call shall be instrumented
   // the number passed here should be "intended call 0-based index" + 2!
   unsigned int target_call_number;
+  unsigned short test_timeout_seconds;
 } ShmMeta;
 
 static const unsigned short TAG_START = 0;
