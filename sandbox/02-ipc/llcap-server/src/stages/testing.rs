@@ -19,13 +19,7 @@ use tokio::{
 use crate::{
   log::Log,
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
-  shmem_capture::{
-    MetadataPublisher, TestParams,
-    hooklib_commons::{
-      TAG_EXIT, TAG_FATAL, TAG_PKT, TAG_SGNL, TAG_START, TAG_TEST_END, TAG_TEST_FINISH, TAG_TIMEOUT,
-    },
-    send_test_metadata,
-  },
+  shmem_capture::{MetadataPublisher, TestParams, hooklib_commons::*, send_test_metadata},
   stages::{arg_capture::PacketReader, common::*},
 };
 
@@ -33,8 +27,9 @@ use super::arg_capture::PacketProvider;
 
 /// returns the path to the socket used to communicate with test instances
 /// (e.g. supply function argument values, communicate start/end of a test session)
-pub fn test_server_socket(prefix: &str) -> String {
-  format!("/tmp{prefix}-test-server")
+pub fn test_server_socket() -> String {
+  null_terminated_to_string(TEST_SERVER_SOCKET_NAME)
+    .expect("Failed to convert null-terminated socket name")
 }
 
 /// this functions takes care of spawning the central "dispatch" server
@@ -43,7 +38,6 @@ pub fn test_server_socket(prefix: &str) -> String {
 /// this future signals readiness (listening for connections) via ready_tx
 /// and periodically checks end_rx (orders the future (and the server) to terminate)
 pub async fn test_server_job(
-  prefix: String,
   packet_dir: PathBuf,
   modules: Arc<ExtModuleMap>,
   mem_limit: usize,
@@ -51,7 +45,7 @@ pub async fn test_server_job(
   results: Arc<Mutex<TestResults>>,
 ) -> Result<()> {
   let lg = Log::get("test_server_job");
-  let path = test_server_socket(&prefix);
+  let path = test_server_socket();
   lg.info(format!("Starting at {path}"));
   let listener = UnixListener::bind(path.clone())?;
   ready_tx.send(()).map_err(|_| anyhow!("Receiver dropped"))?;

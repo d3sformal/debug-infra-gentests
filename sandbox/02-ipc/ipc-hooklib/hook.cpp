@@ -310,7 +310,7 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
 
 static void perform_testing(uint32_t module_id, uint32_t function_id,
                             uint32_t call_idx) {
-  if (!connect_to_server("/tmp/llcap-test-server")) {
+  if (!connect_to_server(TEST_SERVER_SOCKET_NAME)) {
     std::cerr << "Failed to connect" << std::endl;
     exit(2389);
   }

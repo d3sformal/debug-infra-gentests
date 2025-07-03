@@ -210,7 +210,6 @@ async fn main() -> Result<()> {
       let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
       let results = Arc::new(Mutex::new(Vec::with_capacity(500)));
       let svr = tokio::spawn(test_server_job(
-        cli.fd_prefix.clone(),
         capture_dir,
         modules.clone(),
         mem_limit as usize,

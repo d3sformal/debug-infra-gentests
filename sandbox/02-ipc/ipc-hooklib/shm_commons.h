@@ -51,5 +51,6 @@ static const unsigned short TAG_FATAL = 18;
 static const char *const META_SEM_DATA = "/llcap-meta-sem-data";
 static const char *const META_SEM_ACK = "/llcap-meta-sem-ack";
 static const char *const META_MEM_NAME = "/llcap-meta-shmem";
+static const char *const TEST_SERVER_SOCKET_NAME = "/tmp/llcap-test-server";
 
 #endif // LLCAP_SHM_COMMONS

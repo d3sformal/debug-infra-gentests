@@ -445,7 +445,7 @@ fn cleanup_shared_mem(prefix: &str) -> Result<()> {
       lg.info(format!("Cleanup error: {name:?}: {e}"));
     }
   }
-  let svr_sock_name = test_server_socket(prefix);
+  let svr_sock_name = test_server_socket();
   lg.info(format!("Cleanup {svr_sock_name:?}"));
   let _ = std::fs::remove_file(svr_sock_name.clone())
     .inspect_err(|e| lg.info(format!("Cleanup error: {svr_sock_name}: {e}")));
