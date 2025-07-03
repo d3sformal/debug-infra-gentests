@@ -53,8 +53,8 @@
 * validate argument splitting works/is disallowed
 * complete `llcap-server` readme 
     * ~~structure~~
-    * build reqs (bindgen, header file)
-    * update cmdline options
+    * ~~build reqs (bindgen, header file)~~
+    * ~~update cmdline options~~
     * ~~link examples~~
 * document debugging/development techniques
     * ~~verbosity of llcap server~~

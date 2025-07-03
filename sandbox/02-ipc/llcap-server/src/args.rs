@@ -30,15 +30,6 @@ pub struct Cli {
   #[arg(short, long, action = clap::ArgAction::Count)]
   pub verbose: u8,
 
-  /// Perform the full tool iteration starting from the selected stage
-  #[arg(short, long)]
-  pub full: bool,
-
-  /// Produce all artifacts that can be exported (in default locations)
-  /// This option overrides ALL paths specified as import or export paths for ANY stage  
-  #[arg(short, long)]
-  pub all_artifacts: bool,
-
   /// Perform a cleanup of all possibly leftover resources related to the given stage and exit
   #[arg(long)]
   pub cleanup: bool,

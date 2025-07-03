@@ -65,3 +65,7 @@ The build depends on a "shared memory metadata struct" that can be found in the 
   * **NOTE** that the module also contains the `hooklib_commons.rs` file which "`include!`"s a **`bindgen`-generated** file (one of the hooklib header files) and contains constants shared with the hooking library as well as a common data type (for conveying metadata information between the `llcap-server` and the hooklib) 
 * [`stages`](./src/stages/)
   * helpers, import & export functions for call-tracing, argument-capturing and testing stages
+
+  ### Build dependencies (bindgen)
+
+  * the [shm_commons.h](../ipc-hooklib/shm_commons.h) header file is **required** for a successful build
