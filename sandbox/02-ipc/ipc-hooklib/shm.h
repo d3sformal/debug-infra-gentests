@@ -8,6 +8,8 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
+// as this is sent as an "index" value otherwise, it must me large enough to never be an index
+#define HOOKLIB_TESTPASS_VAL 0xFFFFFFFFFAAFF00F
 #ifdef MANUAL_INIT_DEINIT
 
 int init(void);
@@ -33,6 +35,7 @@ void register_call(void);
 void register_argument(void);
 void set_fork_flag(void);
 
+bool send_test_pass_to_monitor(void);
 bool consume_bytes_from_packet(size_t bytes, void *target);
 bool receive_packet(void);
 void init_packet_socket(int fd, uint64_t request_idx);

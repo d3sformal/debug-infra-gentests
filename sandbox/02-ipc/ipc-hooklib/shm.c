@@ -175,10 +175,12 @@ static void *s_packet = NULL;
 static size_t s_current_idx = 0;
 static uint32_t s_packet_size = 0;
 
-static int s_socket_fd = -1;
-static uint64_t s_packet_idx = 0;
+#define PAYLOAD_T uint64_t
 
-void init_packet_socket(int fd, uint64_t request_idx) {
+static int s_socket_fd = -1;
+static PAYLOAD_T s_packet_idx = 0;
+
+void init_packet_socket(int fd, PAYLOAD_T request_idx) {
   s_socket_fd = fd;
   s_packet_idx = request_idx;
 }
@@ -227,5 +229,16 @@ bool consume_bytes_from_packet(size_t bytes, void *target) {
     free(s_packet);
     s_packet_size = 0;
   }
+  return true;
+}
+
+bool send_test_pass_to_monitor(void) {
+  PAYLOAD_T payload = HOOKLIB_TESTPASS_VAL;
+  static_assert(sizeof(s_packet_idx) == sizeof(payload), "sanity check");
+
+  if (write(s_socket_fd, &payload, sizeof(payload)) != sizeof(payload)) {
+    return false;
+  }
+
   return true;
 }

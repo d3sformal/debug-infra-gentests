@@ -12,11 +12,14 @@
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/Demangle/Demangle.h>
+#include "llvm/IR/BasicBlock.h"
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include "llvm/IR/Function.h"
 #include <llvm/IR/GlobalVariable.h>
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Instruction.h"
 #include <llvm/IR/LLVMContext.h>
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
@@ -144,6 +147,66 @@ GlobalVariable *createGlobalStr(Module &M, StringRef Val, StringRef Id) {
   return GV;
 }
 
+void insertTestEpilogueHook(Function &Fn, Module &M, llcap::ModuleId ModuleIntId,
+                       llcap::FunctionId FunctionIntId) {
+  auto *FnIdConstant = ConstantInt::get(
+      M.getContext(), APInt(sizeof(llcap::FunctionId) * 8, FunctionIntId));
+  static_assert(sizeof(llcap::ModuleId) == 4);
+  auto *ModIdConstant = ConstantInt::get(
+      M.getContext(), APInt(sizeof(llcap::ModuleId) * 8, ModuleIntId));
+  FunctionCallee EpilogueCallFn = M.getOrInsertFunction(
+      "hook_test_epilogue",
+      FunctionType::get(Type::getVoidTy(M.getContext()), {ModIdConstant->getType(), FnIdConstant->getType()}, false));
+  // we need to walk all the basic blocks, look for ret, resume, catchswitch,
+  // cleanupret instructions and place a call before them
+
+  // all the crappery below simply modifies the instructions ret, resume,
+  // catchswitch, cleanupret by INSERTING A CALL BEFORE those instructions due
+  // to various method deprecations & mainly iterator invalidation
+  // (inst_iterator), with each modified instruction, we must re-iterate the
+  // instructions (hence the while true) - or at least I haven't found a better,
+  // correct way furthermore, we mark "how many instructions should we skip to
+  // get back to the place we left of" (ToSkip, the small for-loop)
+  size_t ToSkip = 0;
+  while (true) {
+    inst_iterator I = inst_begin(Fn);
+    inst_iterator E = inst_end(Fn);
+    for (size_t Skip = 0; Skip < ToSkip && I != E; ++Skip) {
+      ++I;
+    }
+
+    if (I == E) {
+      break;
+    }
+
+    for (; I != E; ++I) {
+      // increment skip offset
+      ++ToSkip;
+      if (I->getOpcode() == Instruction::Ret ||
+          I->getOpcode() == Instruction::Resume) {
+        CallInst *CallInsn = CallInst::Create(EpilogueCallFn, {ModIdConstant, FnIdConstant});
+        CallInsn->insertBefore(I->getIterator());
+        // add an instruction to skip -> we should skip past the Ret/Resume
+        ++ToSkip;
+        // iterators are invalidated, we must loop again
+        break;
+      }
+
+      if (I->getOpcode() == Instruction::CatchSwitch) {
+        outs()
+            << "CatchSwitch instruction encountered, this is unhandled yet!\n";
+        continue;
+      }
+
+      if (I->getOpcode() == Instruction::CleanupRet) {
+        outs()
+            << "CleanupRet instruction encountered, this is unhandled yet!\n";
+        continue;
+      }
+    }
+  }
+}
+
 void insertArgCapturePreambleHook(IRBuilder<> &Builder, Module &M,
                                   llcap::ModuleId ModuleIntId,
                                   llcap::FunctionId FunctionIntId) {
@@ -182,7 +245,7 @@ void insertFnEntryHook(IRBuilder<> &Builder, Module &M,
   Builder.CreateCall(Callee, {ModIdConstant, FnIdConstant});
 }
 
-static void instrumentArgHijack(IRBuilder<> &Builder, Module &M, Argument *Arg,
+void instrumentArgHijack(IRBuilder<> &Builder, Module &M, Argument *Arg,
                                 Type *Ty, const FunctionCallee &Callee,
                                 ConstantInt *ModId, ConstantInt *FnId) {
   // inserts alloca, call, load instruction sequence where
@@ -350,7 +413,8 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
     }
 
     IF_VERBOSE errs() << "Inserting call std::string\n";
-    auto CallCxxString = GetOrInsertHookFn("llcap_hooklib_extra_cxx_string", ArgT);
+    auto CallCxxString =
+        GetOrInsertHookFn("llcap_hooklib_extra_cxx_string", ArgT);
     instrumentArgHijack(Builder, M, Arg, ArgT, CallCxxString, ModIdConstant,
                         FnIdConstant);
     return;
@@ -509,6 +573,8 @@ public:
                              Mapping.getArgumentSizeTypes(), m_moduleId,
                              FnId->second);
       }
+
+      insertTestEpilogueHook(Fn, m_module, m_moduleId, FnId->second);
     }
   }
 

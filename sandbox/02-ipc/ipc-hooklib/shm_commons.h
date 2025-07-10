@@ -44,6 +44,7 @@ static const unsigned short TAG_PKT = 1;
 static const unsigned short TAG_TEST_END = 2;
 static const unsigned short TAG_TEST_FINISH = 3;
 
+static const unsigned short TAG_PASS = 14;
 static const unsigned short TAG_TIMEOUT = 15;
 static const unsigned short TAG_EXIT = 16;
 static const unsigned short TAG_SGNL = 17;

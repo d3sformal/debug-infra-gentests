@@ -16,6 +16,17 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#define ENDPASS_CODE 231
+
+#define HOOKLIB_EC_PKT_RD 232
+#define HOOKLIB_EC_WTPID 233
+#define HOOKLIB_EC_CONN 234
+#define HOOKLIB_EC_START 236
+#define HOOKLIB_EC_PAIR 237
+#define HOOKLIB_EC_RECV_PKT 238
+#define HOOKLIB_EC_TX_END 239
+#define HOOKLIB_EC_TX_FIN 240
+#define HOOKLIB_EC_IMPL 241
 
 #define GENFN_TEST_PRIMITIVE(name, argt, argvar)                               \
   GENFNDECLTEST(name, argt, argvar) {                                          \
@@ -34,7 +45,7 @@
           std::cerr << "Failed to get " << sizeof(argvar) << " bytes"          \
                     << std::endl;                                              \
           perror("");                                                          \
-          exit(2556);                                                          \
+          exit(HOOKLIB_EC_PKT_RD);                                             \
         }                                                                      \
       }                                                                        \
       return;                                                                  \
@@ -150,17 +161,33 @@ enum class EMsgEnd : int8_t {
   MSG_END_TIMEOUT = -1,
   MSG_END_SIGNAL = -2,
   MSG_END_STATUS = 0,
+  MSG_END_PASS = 1,
   MSG_END_FATAL = -64
 };
 
 static bool send_test_end_message(uint64_t index, EMsgEnd end_type,
                                   int32_t status) {
-  const uint16_t tag =
-      end_type == EMsgEnd::MSG_END_TIMEOUT
-          ? TAG_TIMEOUT
-          : (end_type == EMsgEnd::MSG_END_STATUS
-                 ? TAG_EXIT
-                 : (end_type == EMsgEnd::MSG_END_FATAL ? TAG_FATAL : TAG_SGNL));
+  uint16_t tag = TAG_FATAL;
+  switch (end_type) {
+  case EMsgEnd::MSG_END_TIMEOUT:
+    tag = TAG_TIMEOUT;
+    break;
+  case EMsgEnd::MSG_END_SIGNAL:
+    tag = TAG_SGNL;
+    break;
+  case EMsgEnd::MSG_END_STATUS:
+    tag = TAG_EXIT;
+    break;
+  case EMsgEnd::MSG_END_PASS:
+    tag = TAG_PASS;
+    break;
+
+  case EMsgEnd::MSG_END_FATAL:
+  default:
+    tag = TAG_FATAL;
+    break;
+  }
+
   char message[MSG_SIZE];
   static_assert(sizeof(TAG_TEST_END) + sizeof(index) + sizeof(tag) +
                     sizeof(status) <=
@@ -189,7 +216,7 @@ static bool try_wait_pid(pid_t pid, int32_t *status, EMsgEnd *result) {
   int w = waitpid(pid, status, WNOHANG | WUNTRACED | WCONTINUED);
   if (w == -1) {
     std::cerr << "Failed waitpid" << std::endl;
-    exit(4411);
+    exit(HOOKLIB_EC_WTPID);
   } else if (w != 0) {
     if (w != pid) {
       std::cerr << "PID does not match... " << pid << " " << w << std::endl;
@@ -241,27 +268,33 @@ static PollResult do_poll(int fd, short events, int timeout_ms, int *result) {
   return PollResult::ResultFDReady;
 }
 
-static bool handle_requests(int rq_sock) {
+enum class ERequestResult : uint8_t { Error, Continue, TestPass };
+
+static ERequestResult handle_requests(int rq_sock) {
   int poll_rv;
   PollResult poll_res = do_poll(rq_sock, POLLIN, 50, &poll_rv);
   if (poll_res == PollResult::ResultFail) {
-    return false;
+    return ERequestResult::Error;
   }
   if (poll_res == PollResult::ResultTimeout) {
-    return true;
+    return ERequestResult::Continue;
   }
   if (poll_res != PollResult::ResultFDReady) {
     assert(false && "Invalid value");
   }
 
   if ((poll_rv & POLLIN) == 0) {
-    return true;
+    return ERequestResult::Continue;
   }
 
   uint64_t packet_idx;
   if (read(rq_sock, &packet_idx, sizeof(packet_idx)) != sizeof(packet_idx)) {
     perror("read failed\n");
-    return false;
+    return ERequestResult::Error;
+  }
+
+  if (packet_idx == HOOKLIB_TESTPASS_VAL) {
+    return ERequestResult::TestPass;
   }
 
   void *packet_ptr;
@@ -269,22 +302,22 @@ static bool handle_requests(int rq_sock) {
   if (!request_packet_from_server(packet_idx, &packet_ptr, &packet_size)) {
     std::cerr << "Pktrq failed pkt idx " << packet_idx << std::endl;
     free(packet_ptr);
-    return false;
+    return ERequestResult::Error;
   }
   if (write(rq_sock, &packet_size, sizeof(packet_size)) !=
       sizeof(packet_size)) {
     std::cerr << "Pkt sz send failed" << std::endl;
     free(packet_ptr);
-    return false;
+    return ERequestResult::Error;
   }
   if (write(rq_sock, packet_ptr, packet_size) != packet_size) {
     std::cerr << "Pkt data send failed" << std::endl;
     free(packet_ptr);
-    return false;
+    return ERequestResult::Error;
   }
 
   free(packet_ptr);
-  return true;
+  return ERequestResult::Continue;
 }
 
 static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
@@ -294,6 +327,20 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
   seconds = time(NULL);
   while (true) {
     if (try_wait_pid(pid, status, &result)) {
+      if (result == EMsgEnd::MSG_END_STATUS && *status == ENDPASS_CODE) {
+        // the test could have passed due to the "special" exit code
+        // (we just didnt catch it - yet)
+        // we therefore check the requet socket once more in case we missed it
+        switch (handle_requests(test_requests_socket)) {
+        case ERequestResult::TestPass:
+          return EMsgEnd::MSG_END_PASS;
+        // fallthrough intended, the above can fail, we will just return the
+        // result we got (status code)
+        case ERequestResult::Error:
+        case ERequestResult::Continue:
+          break;
+        }
+      }
       return result;
     }
 
@@ -302,9 +349,14 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
       return EMsgEnd::MSG_END_TIMEOUT;
     }
 
-    if (!handle_requests(test_requests_socket)) {
+    switch (handle_requests(test_requests_socket)) {
+    case ERequestResult::Error:
       std::cerr << "Request handler failed" << std::endl;
       return EMsgEnd::MSG_END_FATAL;
+    case ERequestResult::TestPass:
+      return EMsgEnd::MSG_END_PASS;
+    case ERequestResult::Continue:
+      break;
     }
   }
 }
@@ -313,12 +365,12 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
                             uint32_t call_idx) {
   if (!connect_to_server(TEST_SERVER_SOCKET_NAME)) {
     std::cerr << "Failed to connect" << std::endl;
-    exit(2389);
+    exit(HOOKLIB_EC_CONN);
   }
 
   if (!send_start_msg(module_id, function_id, call_idx)) {
     std::cerr << "Failed send start message" << std::endl;
-    exit(2388);
+    exit(HOOKLIB_EC_START);
   }
   set_fork_flag();
 
@@ -327,7 +379,7 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
 
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == -1) {
       perror("socketpair");
-      exit(2390);
+      exit(HOOKLIB_EC_PAIR);
     }
     int child_socket = sockets[1];
     int parent_socket = sockets[0];
@@ -341,27 +393,29 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
       // populates "argument packet" that will be used by instrumentation
       if (!receive_packet()) {
         perror("Failed to receive argument packet\n");
-        exit(3667);
+        exit(HOOKLIB_EC_RECV_PKT);
       }
       // in child process, return to resume execution (start hijacking)
       return;
     }
     // PARENT
     int status = -1;
-    EMsgEnd result = serve_for_child_until_end(parent_socket, pid, static_cast<int>(get_test_tout_secs()), &status);
-    if (result != EMsgEnd::MSG_END_STATUS && result != EMsgEnd::MSG_END_SIGNAL) {
+    EMsgEnd result = serve_for_child_until_end(
+        parent_socket, pid, static_cast<int>(get_test_tout_secs()), &status);
+    if (result != EMsgEnd::MSG_END_STATUS &&
+        result != EMsgEnd::MSG_END_SIGNAL) {
       // kill the child on non-exiting result (timeout, error, ...)
       // KILL and STOP cannot be ignored
       kill(pid, SIGSTOP);
     }
 
     if (!send_test_end_message(test_idx, result, status)) {
-      exit(5467);
+      exit(HOOKLIB_EC_TX_END);
     }
   }
 
   if (!send_finish_message()) {
-    exit(3123);
+    exit(HOOKLIB_EC_TX_FIN);
   }
 
   exit(0);
@@ -379,22 +433,36 @@ void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id) {
     return;
   }
 
-  // in testing mode we discriminate based on the function that is under the test
-  // if THIS function (the caller of hook_arg_preabmle, see context) is the desired one
-  // we must furhter determine whether we are in the "right" call (n-th call)
+  // in testing mode we discriminate based on the function that is under the
+  // test if THIS function (the caller of hook_arg_preabmle, see context) is the
+  // desired one we must furhter determine whether we are in the "right" call
+  // (n-th call)
   if (!in_testing_fork() && is_fn_under_test(module_id, fn_id)) {
     // modifies call counter
     register_call();
-    
-    // should_hijack_arg becomes true as soon as the coutner updated above indicates
-    // that we "should instrument this call"
+
+    // should_hijack_arg becomes true as soon as the coutner updated above
+    // indicates that we "should instrument this call"
     if (should_hijack_arg()) {
       perform_testing(module_id, fn_id, get_call_num());
-      // PARENT process never returns from the first call to instrumented function
-      // CHILD process simply continues execution, should_hijack_arg is used further in the
-      // type-hijacking functions
+      // PARENT process never returns from the first call to instrumented
+      // function CHILD process simply continues execution, should_hijack_arg is
+      // used further in the type-hijacking functions
     }
   }
+}
+
+void hook_test_epilogue(uint32_t module_id, uint32_t fn_id) {
+  if (!in_testing_mode() || !in_testing_fork() ||
+      !is_fn_under_test(module_id, fn_id)) {
+    return;
+  }
+
+  if (!send_test_pass_to_monitor()) {
+    perror("signal end to monitor");
+  }
+
+  exit(ENDPASS_CODE);
 }
 
 GENFN_TEST_PRIMITIVE(hook_float, float, n)
@@ -423,17 +491,17 @@ void llcap_hooklib_extra_cxx_string(std::string *str, std::string **target,
     if (!consume_bytes_from_packet(4, &cstr_size) ||
         !consume_bytes_from_packet(4, &capacity)) {
       perror("str fail 1\n");
-      exit(3667);
+      exit(HOOKLIB_EC_PKT_RD);
     }
     if (cstr_size > capacity) {
       perror("str fail2\n");
-      exit(3667);
+      exit(HOOKLIB_EC_IMPL);
     }
     (*target)->reserve(capacity);
     (*target)->resize(cstr_size);
     if (!consume_bytes_from_packet(cstr_size, (*target)->data())) {
       perror("str fail 3");
-      exit(3667);
+      exit(HOOKLIB_EC_PKT_RD);
     }
     return;
   } else {

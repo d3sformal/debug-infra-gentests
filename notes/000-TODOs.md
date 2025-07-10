@@ -34,7 +34,21 @@
 * ?? add a  global test timeout for the case there is an infinite loop and the test is never executed
 * testing: use `trace.out` (llcap `-e`) for testing selection (even if it means running the tested binary twice)
     * update in readme
-
+* stop the test right when return is reached
+    * relevant IR insns: 
+        * `ret`
+        * `resume`
+        * `catchswitch` with `unwind to caller` must be replaced with `unwind label %our_resume_label` (or at least warn)
+        * `cleanupret` same as above, though additional constraints apply... not sure about those (catchpad and personality functions)
+    * prorotype in `pre-ret-instrumentation`
+        * registers a hook before `ret` instruction (exceptions not handled yet)
+        * if a tested call (nth call of the desired function) calls the hook, the library sends a special message to the test coordinator and exits with a designated exit code
+        * test coordinator
+            * reacts to the message by signaling test PASS to the `llcap-server` (denoted SNGL)
+            * also reacts to the designated exit code and tries to read the message (if didnt receive, signal failure/signal/exit code as ususal)
+                * this is an implementation detail of the polling loop of the test monitor
+    * problems: cleanups, make it optional?
+    * makes results seem different => UPDATE readmes for examples + container!
 ## Final polishing
 
 * add some tests for `llcap-server` and hooklib now that everything seems to be more or less stable? [in progress - TODO: hooklib tests]
