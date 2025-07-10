@@ -46,6 +46,14 @@ Termination protocol: see the after_crash_recovery function
 */
 
 static ShmMeta s_buff_info;
+// should be initialized and updated such that
+// - is counted down on each target fn call entry
+// - never undeflows (underflow attempts are expected)
+// - if == 1, then target call is reached
+// => initialized to the target call number + 1
+//    -> tgt call number = 1 => init to 2 => first decrement creates 1 -> hijack
+static unsigned int s_call_countdown;
+
 static WriteChannel s_channel;
 
 static bool get_buffer_info(ShmMeta *target) {
@@ -62,6 +70,8 @@ static int setup_infra(void) {
     printf("Could not obtain buffer info\n");
     return rv;
   }
+
+  s_call_countdown = s_buff_info.target_call_number + 1;
 
   ChannelInfo info;
   info.buff_count = s_buff_info.buff_count;
@@ -140,19 +150,20 @@ uint32_t test_count(void) { return s_buff_info.test_count; }
 
 void set_fork_flag(void) { s_buff_info.forked = true; }
 
-uint32_t get_call_num(void) { return s_buff_info.target_call_number - 1; }
+// returns 1-based index of the current call (being/ that was) executed
+uint32_t get_call_num(void) { return s_buff_info.target_call_number + 1 - s_call_countdown; }
 void register_call(void) {
-  if (s_buff_info.target_call_number > 0) {
-    // target_call_number 0 means, that the testing has already been performed
+  if (s_call_countdown > 0) {
+    // s_call_countdown 0 means, that the testing has already been performed
     // 1 means we will be testing the call that caused register_call to be called
     // otherwise "we are not at the desired call yet"
-    s_buff_info.target_call_number--;
+    s_call_countdown--;
   }
 }
 // counts down the arguments for each argument replacement
 void register_argument(void) { s_buff_info.arg_count--; }
 bool should_hijack_arg(void) {
-  return s_buff_info.target_call_number == 1 && s_buff_info.arg_count > 0;
+  return s_call_countdown == 1 && s_buff_info.arg_count > 0;
 }
 
 bool is_fn_under_test(uint32_t mod, uint32_t fn) {

@@ -26,11 +26,12 @@
     * argument capture of a function `foo` === (process of obtaining of the **or** the) set of all recorded argument packets of a function `foo`
     * hooklib, hook library, ...
     * ... ?
-* bug in the `hook_arg_preabmle` function:
-    * Child process is spawned at the first call, not the n-th one as desired by instrumentation ! this was unexpected / unnoticed
-    * the `register_call` gets called anyway so the behavior looks correct
-    * the only difference is that the timeout is counted from the first call, not the n-th desired call
+* ~~bug in the `hook_arg_preabmle` function~~:
+    * ~~Child process is spawned at the first call, not the n-th one as desired by instrumentation ! this was unexpected / unnoticed~~
+    * ~~the `register_call` gets called anyway so the behavior looks correct~~
+    * ~~the only difference is that the timeout is counted from the first call, not the n-th desired call~~
 * ~~make `/tmp/llcap-test-server` a constant~~
+* ?? add a  global test timeout for the case there is an infinite loop and the test is never executed
 
 ## Final polishing
 

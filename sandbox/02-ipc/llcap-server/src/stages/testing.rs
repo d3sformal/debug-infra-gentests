@@ -406,7 +406,7 @@ pub async fn test_job(
         TestParams {
           arg_count,
           test_count,
-          target_call_number: call_idx + 2,
+          target_call_number: call_idx + 1,
           timeout: test_timeout,
         },
       )?;

@@ -368,6 +368,8 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
 }
 
 void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id) {
+  // CONTEXT TO KEEP IN MIND:
+  // we just entered an instrumented function
   if (!in_testing_mode()) {
     // we are capturing function arguments, first we inform of the function
     // itself
@@ -376,13 +378,22 @@ void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id) {
     // the rest of this function concerns only the testing mode
     return;
   }
+
+  // in testing mode we discriminate based on the function that is under the test
+  // if THIS function (the caller of hook_arg_preabmle, see context) is the desired one
+  // we must furhter determine whether we are in the "right" call (n-th call)
   if (!in_testing_fork() && is_fn_under_test(module_id, fn_id)) {
-    perform_testing(module_id, fn_id, get_call_num());
-    // PARENT process never returns from the first call to instrumented function
-  }
-  // CHILD process returns here and registers the call
-  if (in_testing_fork() && is_fn_under_test(module_id, fn_id)) {
+    // modifies call counter
     register_call();
+    
+    // should_hijack_arg becomes true as soon as the coutner updated above indicates
+    // that we "should instrument this call"
+    if (should_hijack_arg()) {
+      perform_testing(module_id, fn_id, get_call_num());
+      // PARENT process never returns from the first call to instrumented function
+      // CHILD process simply continues execution, should_hijack_arg is used further in the
+      // type-hijacking functions
+    }
   }
 }
 
