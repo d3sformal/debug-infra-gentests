@@ -32,6 +32,8 @@
     * ~~the only difference is that the timeout is counted from the first call, not the n-th desired call~~
 * ~~make `/tmp/llcap-test-server` a constant~~
 * ?? add a  global test timeout for the case there is an infinite loop and the test is never executed
+* testing: use `trace.out` (llcap `-e`) for testing selection (even if it means running the tested binary twice)
+    * update in readme
 
 ## Final polishing
 
