@@ -192,6 +192,7 @@ async fn main() -> Result<()> {
       test_output,
       timeout,
       command,
+      inspect_packets: inspect_packet,
     } => {
       let command = Arc::new(command);
       lg.progress("Reading function selection");
@@ -202,8 +203,18 @@ async fn main() -> Result<()> {
       let modules = Arc::new(modules);
       lg.progress("Setting up function packet reader");
 
-      let packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
+      let mut packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
         .map_err(|e| anyhow!(e).context("Packet reader setup failed"))?;
+
+      if let Some(inspection_spec) = inspect_packet {
+        return crate::stages::testing::inspect_packet(
+          &inspection_spec,
+          &modules,
+          &mut packet_reader,
+        );
+      }
+      // redeclare as immutable since mutability is not needed further
+      let packet_reader = packet_reader;
 
       lg.progress("Setting up function packet server");
       let (end_tx, end_rx) = tokio::sync::oneshot::channel::<()>();

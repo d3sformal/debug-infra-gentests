@@ -1,7 +1,57 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use crate::constants::Constants;
+use crate::{
+  constants::Constants,
+  modmap::{IntegralModId, NumFunUid},
+};
+
+#[derive(Clone, Copy)]
+pub enum PktIdxSpec {
+  Single(usize),
+  All,
+}
+
+#[derive(Clone, Copy)]
+pub struct PacketInspecSpec(pub NumFunUid, pub PktIdxSpec);
+
+pub fn parse_pkt_inspect(inp: &str) -> Result<PacketInspecSpec, String> {
+  let split = inp.split('-').collect::<Vec<&str>>();
+  if split.len() != 3 && split.len() != 2 {
+    return Err(format!(
+      "Invalid format, expecting 2 or 3 parts, got {}",
+      split.len()
+    ));
+  }
+  let (mod_str, fn_str) = (split[0], split[1]);
+
+  let parse16 = |s: &str| {
+    u32::from_str_radix(s, 16)
+      .map_err(|e| e.to_string())
+      // HACK: relevant IDs are displayed in arch byte order, user input is in the arch order but string parsing is done in BE
+      .map(|x| {
+        // on BE arch, this is a noop, so this is correct
+        x.to_be()
+      })
+  };
+
+  let module = parse16(mod_str)?;
+  let func = parse16(fn_str)?;
+
+  let pkt_idx = if split.len() == 3 {
+    PktIdxSpec::Single(split[2].parse::<usize>().map_err(|e| e.to_string())?)
+  } else {
+    PktIdxSpec::All
+  };
+
+  Ok(PacketInspecSpec(
+    NumFunUid {
+      function_id: crate::modmap::IntegralFnId(func),
+      module_id: IntegralModId(module),
+    },
+    pkt_idx,
+  ))
+}
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -91,12 +141,16 @@ pub enum Stage {
     #[arg(short = 'o', long)]
     test_output: Option<PathBuf>,
 
-    /// Timeout for each test case in seconds
+    /// Timeout for each test case in seconds. The timeout is counted only for the instrumented function call
     #[arg(short, long, default_value = "3")]
     timeout: u16,
 
     /// Command to execute tested binary
     #[arg(trailing_var_arg(true))]
     command: Vec<String>,
+
+    /// Print out information about a specific function argument packet and exit. Input format is in form MX-FX-DD where M/FX is 4-byte HEXAdecimal module/function id and DD is a DECIMAL index of the packet
+    #[arg(long, value_parser=parse_pkt_inspect)]
+    inspect_packets: Option<PacketInspecSpec>,
   },
 }

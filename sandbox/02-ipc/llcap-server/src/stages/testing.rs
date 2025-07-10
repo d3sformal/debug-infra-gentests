@@ -8,7 +8,7 @@ use std::{
   time::Duration,
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail, ensure};
 use tokio::{
   io::{AsyncReadExt, BufReader},
   net::{UnixListener, UnixStream, unix::OwnedWriteHalf},
@@ -17,6 +17,7 @@ use tokio::{
 };
 
 use crate::{
+  args::PacketInspecSpec,
   log::Log,
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
   shmem_capture::{MetadataPublisher, TestParams, hooklib_commons::*, send_test_metadata},
@@ -483,6 +484,67 @@ impl TestOutputPathGen {
       self.base.join(dir_append_variant)
     } else {
       self.base.clone()
+    }
+  }
+}
+
+pub fn inspect_packet(
+  spec: &PacketInspecSpec,
+  modules: &ExtModuleMap,
+  reader: &mut PacketReader,
+) -> Result<()> {
+  let (fn_uid, pkt_idx) = (spec.0, spec.1);
+  let (fnid, modid) = (fn_uid.function_id, fn_uid.module_id);
+  let lg = Log::get("inspect_packet");
+
+  let module = modules
+    .get_module_string_id(modid)
+    .ok_or(anyhow!("Module {} not found", modid.hex_string()))?;
+  lg.progress(format!("Module: {module}"));
+
+  let function = modules
+    .get_function_name(modid, fnid)
+    .ok_or(anyhow!("Function {} not found", fnid.hex_string()))?;
+  lg.progress(format!("Function: {function}"));
+
+  let len = reader
+    .get_packet_count(modid, fnid)
+    .ok_or(anyhow!("Error, no packets found for function"))? as usize;
+
+  let report_packet = |pkt: &Vec<u8>| {
+    lg.progress(format!("Raw packet: {pkt:?}"));
+  };
+
+  let desc = modules
+    .get_function_arg_size_descriptors(modid, fnid)
+    .ok_or(anyhow!("Error, no packet description found"))?;
+
+  lg.progress(format!("Packet Description: {desc:?}"));
+
+  match pkt_idx {
+    crate::args::PktIdxSpec::Single(mut pkt_idx) => {
+      ensure!(pkt_idx < len, "Packet index overflows packet count");
+      lg.progress(format!("Packet index: {pkt_idx}"));
+
+      let pkt = loop {
+        let pkt = reader.read_next_packet(modid, fnid)?;
+        if pkt_idx == 0 {
+          break pkt;
+        }
+        pkt_idx -= 1;
+      }
+      .ok_or(anyhow!("Error reading packet"))?;
+      report_packet(&pkt);
+      Ok(())
+    }
+    crate::args::PktIdxSpec::All => {
+      let mut counter = 0;
+      while let Some(pkt) = reader.read_next_packet(modid, fnid)? {
+        lg.progress(format!("Packet index: {counter}"));
+        report_packet(&pkt);
+        counter += 1;
+      }
+      Ok(())
     }
   }
 }
