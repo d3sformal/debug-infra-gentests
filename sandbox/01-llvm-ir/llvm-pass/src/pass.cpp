@@ -75,10 +75,10 @@ cl::opt<std::string>
                     cl::desc("Path to a file containing the module IDs and "
                              "function IDs of functions to be instrumented"));
 
-// -mllvm -llcap-argcapture-file
-cl::opt<std::string> ArgCaptureIdMapPath(
-    "llcap-argcapture-file",
-    cl::desc("Output file where argument tracing IDs are written"));
+// -mllvm -llcap-instrument-fn-exit
+cl::opt<bool> InstrumentFnExit(
+    "llcap-instrument-fn-exit",
+    cl::desc("Whether to generate ret/resume function exit hooks"));
 } // namespace args
 
 // there is no way to tell built-ins from user functions in the IR,
@@ -149,6 +149,10 @@ GlobalVariable *createGlobalStr(Module &M, StringRef Val, StringRef Id) {
 
 void insertTestEpilogueHook(Function &Fn, Module &M, llcap::ModuleId ModuleIntId,
                        llcap::FunctionId FunctionIntId) {
+  if (!args::InstrumentFnExit.getValue()) {
+    return;
+  }
+
   auto *FnIdConstant = ConstantInt::get(
       M.getContext(), APInt(sizeof(llcap::FunctionId) * 8, FunctionIntId));
   static_assert(sizeof(llcap::ModuleId) == 4);
