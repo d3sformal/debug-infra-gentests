@@ -18,9 +18,9 @@ struct Destroy {
 int multiply_i_f(int i, float f) {
   // force cleanup code to be generated
   Destroy d;
-  static int call_conter = 0;
-  if (call_conter == 0) {
-    ++call_conter;
+  static int call_counter = 0;
+  if (call_counter == 0) {
+    ++call_counter;
     return 0;
   }
   // can throw an exception

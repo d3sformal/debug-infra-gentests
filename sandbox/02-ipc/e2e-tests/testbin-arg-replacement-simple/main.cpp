@@ -3,14 +3,14 @@
 #include <cstdlib>
 
 int multiply_i_f(int i, float f) {
-  static int call_conter = 0;
-  ++call_conter;
+  static int call_counter = 0;
+  ++call_counter;
 
-  if (call_conter == 1 && i == 0) {
+  if (call_counter == 1 && i == 0) {
     *((volatile int*)0);
   }
 
-  if (call_conter == 4 && i > 0) {
+  if (call_counter == 4 && i > 0) {
     exit(i);
   }
   return i * f;
