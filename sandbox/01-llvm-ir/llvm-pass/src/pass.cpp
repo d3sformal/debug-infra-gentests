@@ -157,6 +157,10 @@ void insertTestEpilogueHook(Function &Fn, Module &M, llcap::ModuleId ModuleIntId
   FunctionCallee EpilogueCallFn = M.getOrInsertFunction(
       "hook_test_epilogue",
       FunctionType::get(Type::getVoidTy(M.getContext()), {ModIdConstant->getType(), FnIdConstant->getType()}, false));
+  
+  FunctionCallee EpilogueExceptionFn = M.getOrInsertFunction(
+    "hook_test_epilogue_exc",
+    FunctionType::get(Type::getVoidTy(M.getContext()), {ModIdConstant->getType(), FnIdConstant->getType()}, false));
   // we need to walk all the basic blocks, look for ret, resume, catchswitch,
   // cleanupret instructions and place a call before them
 
@@ -184,7 +188,7 @@ void insertTestEpilogueHook(Function &Fn, Module &M, llcap::ModuleId ModuleIntId
       ++ToSkip;
       if (I->getOpcode() == Instruction::Ret ||
           I->getOpcode() == Instruction::Resume) {
-        CallInst *CallInsn = CallInst::Create(EpilogueCallFn, {ModIdConstant, FnIdConstant});
+        CallInst *CallInsn = CallInst::Create((I->getOpcode() == Instruction::Resume ? EpilogueExceptionFn : EpilogueCallFn), {ModIdConstant, FnIdConstant});
         CallInsn->insertBefore(I->getIterator());
         // add an instruction to skip -> we should skip past the Ret/Resume
         ++ToSkip;

@@ -232,8 +232,8 @@ bool consume_bytes_from_packet(size_t bytes, void *target) {
   return true;
 }
 
-bool send_test_pass_to_monitor(void) {
-  PAYLOAD_T payload = HOOKLIB_TESTPASS_VAL;
+bool send_test_pass_to_monitor(bool exception) {
+  PAYLOAD_T payload = exception ? HOOKLIB_TESTEXC_VAL : HOOKLIB_TESTPASS_VAL;
   static_assert(sizeof(s_packet_idx) == sizeof(payload), "sanity check");
 
   if (write(s_socket_fd, &payload, sizeof(payload)) != sizeof(payload)) {

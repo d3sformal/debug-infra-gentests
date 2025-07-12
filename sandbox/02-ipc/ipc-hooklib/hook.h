@@ -41,6 +41,8 @@ Called before every return from a function. In testing mode, inside a testing
 fork (child), signals back to the test driver that the test is done (passed).
 */
 void hook_test_epilogue(uint32_t module_id, uint32_t fn_id);
+// see ook_test_epilogue, except this function is called before resuming exception unwind
+void hook_test_epilogue_exc(uint32_t module_id, uint32_t fn_id);
 
 GENFNDECLTEST(hook_int32, int, a);
 

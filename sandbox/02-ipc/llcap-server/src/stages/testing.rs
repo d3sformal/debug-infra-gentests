@@ -102,6 +102,7 @@ enum TestMessage {
 #[derive(Debug, Clone, Copy)]
 pub enum TestStatus {
   Pass,
+  Exception,
   Timeout,
   #[allow(dead_code)] // used by Debug
   Exit(i32),
@@ -136,6 +137,8 @@ impl TryFrom<&[u8]> for TestStatus {
     let (tag, data) = value.split_at(2);
     if tag.starts_with(&TAG_PASS.to_le_bytes()) {
       Ok(Self::Pass)
+    } else if tag.starts_with(&TAG_EXC.to_le_bytes()) {
+      Ok(Self::Exception)
     } else if tag.starts_with(&TAG_TIMEOUT.to_le_bytes()) {
       Ok(Self::Timeout)
     } else if tag.starts_with(&TAG_EXIT.to_le_bytes()) {

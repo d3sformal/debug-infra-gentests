@@ -36,19 +36,26 @@
     * update in readme
 * stop the test right when return is reached
     * relevant IR insns: 
-        * `ret`
-        * `resume`
+        * ~~`ret`~~
+        * ~~`resume`~~
         * `catchswitch` with `unwind to caller` must be replaced with `unwind label %our_resume_label` (or at least warn)
         * `cleanupret` same as above, though additional constraints apply... not sure about those (catchpad and personality functions)
     * prorotype in `pre-ret-instrumentation`
-        * registers a hook before `ret` instruction (exceptions not handled yet)
+        * registers a hook before `ret` and `resume` instruction (exceptions handled only partially)
         * if a tested call (nth call of the desired function) calls the hook, the library sends a special message to the test coordinator and exits with a designated exit code
         * test coordinator
-            * reacts to the message by signaling test PASS to the `llcap-server` (denoted SNGL)
+            * reacts to the message by signaling test PASS/EXCEPTION to the `llcap-server`
             * also reacts to the designated exit code and tries to read the message (if didnt receive, signal failure/signal/exit code as ususal)
                 * this is an implementation detail of the polling loop of the test monitor
-    * problems: cleanups, make it optional?
-    * makes results seem different => UPDATE readmes for examples + container!
+    * problems: 
+        * inside non-throwing function, there seems to be no way to recognise whether the called function may throw or not (without recursing on the entire call tree)
+            * if possible to detect, `call` instructions can be replaced with `invoke` pointing to the `ret` / `resume` hooks
+        * even if cleanup code is generated inside the instrumented function, there seems to be no guarantee that the cleanup gets executed when unwinding
+            * this is expected behaviour, if the function is not enclosed in `try`, first exception terminates the program
+            * so far I haven't found a way to adjust this/fix this, ...
+                * if adjusted, we can force users to create "scope guard" structs that have a destructor which would force the cleanup code generation
+    * the above makes the results listing of `llcap-server` seem different => UPDATE readmes for examples + container + ...!
+
 ## Final polishing
 
 * add some tests for `llcap-server` and hooklib now that everything seems to be more or less stable? [in progress - TODO: hooklib tests]

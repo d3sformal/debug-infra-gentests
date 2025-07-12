@@ -10,6 +10,7 @@ extern "C" {
 
 // as this is sent as an "index" value otherwise, it must me large enough to never be an index
 #define HOOKLIB_TESTPASS_VAL 0xFFFFFFFFFAAFF00F
+#define HOOKLIB_TESTEXC_VAL  0xFFFFFFFFFAAEE00E
 #ifdef MANUAL_INIT_DEINIT
 
 int init(void);
@@ -35,7 +36,7 @@ void register_call(void);
 void register_argument(void);
 void set_fork_flag(void);
 
-bool send_test_pass_to_monitor(void);
+bool send_test_pass_to_monitor(bool exception);
 bool consume_bytes_from_packet(size_t bytes, void *target);
 bool receive_packet(void);
 void init_packet_socket(int fd, uint64_t request_idx);

@@ -1,6 +1,7 @@
 #include "hook.h"
 #include "shm.h"
 #include "shm_commons.h"
+#include <array>
 #include <cassert>
 #include <csignal>
 #include <cstddef>
@@ -16,6 +17,7 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <type_traits>
 #define ENDPASS_CODE 231
 
 #define HOOKLIB_EC_PKT_RD 232
@@ -158,35 +160,25 @@ static bool request_packet_from_server(uint64_t index, void **target,
 }
 
 enum class EMsgEnd : int8_t {
-  MSG_END_TIMEOUT = -1,
-  MSG_END_SIGNAL = -2,
-  MSG_END_STATUS = 0,
-  MSG_END_PASS = 1,
-  MSG_END_FATAL = -64
+  MSG_END_TIMEOUT = 0,
+  MSG_END_SIGNAL = 1,
+  MSG_END_STATUS = 2,
+  MSG_END_PASS = 3,
+  MSG_END_EXC = 4,
+  // keep this one last!
+  MSG_END_FATAL = 5
 };
+
+static uint16_t get_tag(EMsgEnd end_type) {
+  constexpr uint8_t ENUM_LEN = (std::underlying_type_t<EMsgEnd>) EMsgEnd::MSG_END_FATAL + 1;
+  return std::array<uint16_t, ENUM_LEN> {
+    TAG_TIMEOUT, TAG_SGNL, TAG_EXIT, TAG_PASS, TAG_EXC, TAG_FATAL
+  }[(std::underlying_type_t<EMsgEnd>) end_type];
+}
 
 static bool send_test_end_message(uint64_t index, EMsgEnd end_type,
                                   int32_t status) {
-  uint16_t tag = TAG_FATAL;
-  switch (end_type) {
-  case EMsgEnd::MSG_END_TIMEOUT:
-    tag = TAG_TIMEOUT;
-    break;
-  case EMsgEnd::MSG_END_SIGNAL:
-    tag = TAG_SGNL;
-    break;
-  case EMsgEnd::MSG_END_STATUS:
-    tag = TAG_EXIT;
-    break;
-  case EMsgEnd::MSG_END_PASS:
-    tag = TAG_PASS;
-    break;
-
-  case EMsgEnd::MSG_END_FATAL:
-  default:
-    tag = TAG_FATAL;
-    break;
-  }
+  uint16_t tag = get_tag(end_type);
 
   char message[MSG_SIZE];
   static_assert(sizeof(TAG_TEST_END) + sizeof(index) + sizeof(tag) +
@@ -268,7 +260,7 @@ static PollResult do_poll(int fd, short events, int timeout_ms, int *result) {
   return PollResult::ResultFDReady;
 }
 
-enum class ERequestResult : uint8_t { Error, Continue, TestPass };
+enum class ERequestResult : uint8_t { Error, Continue, TestPass, TestException };
 
 static ERequestResult handle_requests(int rq_sock) {
   int poll_rv;
@@ -295,6 +287,8 @@ static ERequestResult handle_requests(int rq_sock) {
 
   if (packet_idx == HOOKLIB_TESTPASS_VAL) {
     return ERequestResult::TestPass;
+  } else if (packet_idx == HOOKLIB_TESTEXC_VAL) {
+    return ERequestResult::TestException;
   }
 
   void *packet_ptr;
@@ -334,6 +328,8 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
         switch (handle_requests(test_requests_socket)) {
         case ERequestResult::TestPass:
           return EMsgEnd::MSG_END_PASS;
+        case ERequestResult::TestException:
+          return EMsgEnd::MSG_END_EXC;
         // fallthrough intended, the above can fail, we will just return the
         // result we got (status code)
         case ERequestResult::Error:
@@ -355,6 +351,8 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
       return EMsgEnd::MSG_END_FATAL;
     case ERequestResult::TestPass:
       return EMsgEnd::MSG_END_PASS;
+    case ERequestResult::TestException:
+      return EMsgEnd::MSG_END_EXC;
     case ERequestResult::Continue:
       break;
     }
@@ -403,7 +401,10 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
     EMsgEnd result = serve_for_child_until_end(
         parent_socket, pid, static_cast<int>(get_test_tout_secs()), &status);
     if (result != EMsgEnd::MSG_END_STATUS &&
-        result != EMsgEnd::MSG_END_SIGNAL) {
+        result != EMsgEnd::MSG_END_SIGNAL &&
+        result != EMsgEnd::MSG_END_EXC &&
+        result != EMsgEnd::MSG_END_PASS
+      ) {
       // kill the child on non-exiting result (timeout, error, ...)
       // KILL and STOP cannot be ignored
       kill(pid, SIGSTOP);
@@ -452,18 +453,27 @@ void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id) {
   }
 }
 
-void hook_test_epilogue(uint32_t module_id, uint32_t fn_id) {
-  if (!in_testing_mode() || !in_testing_fork() ||
+static void hook_test_epilogue_impl(uint32_t module_id, uint32_t fn_id, bool exception) {
+    if (!in_testing_mode() || !in_testing_fork() ||
       !is_fn_under_test(module_id, fn_id)) {
     return;
   }
 
-  if (!send_test_pass_to_monitor()) {
+  if (!send_test_pass_to_monitor(exception)) {
     perror("signal end to monitor");
   }
 
   exit(ENDPASS_CODE);
 }
+
+void hook_test_epilogue(uint32_t module_id, uint32_t fn_id) {
+  hook_test_epilogue_impl(module_id, fn_id, false);
+}
+
+void hook_test_epilogue_exc(uint32_t module_id, uint32_t fn_id) {
+  hook_test_epilogue_impl(module_id, fn_id, true);
+}
+
 
 GENFN_TEST_PRIMITIVE(hook_float, float, n)
 GENFN_TEST_PRIMITIVE(hook_double, double, n)
