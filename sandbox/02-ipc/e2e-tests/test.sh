@@ -5,6 +5,7 @@ set -e
 DIR=$1; shift
 FN_IDX=$1; shift
 TIMEOUT_S=$1; shift
+CXX_ARGS=$@;
 
 cd "$DIR"
 DIR=$(pwd)
@@ -60,7 +61,7 @@ cmake -D CMAKE_C_COMPILER=clang \
 
 cmake   -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_COMPILER=clang++ \
-  -DCMAKE_CXX_FLAGS="-mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SELECTION -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
+  -DCMAKE_CXX_FLAGS="$CXX_ARGS -mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SELECTION -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
   ../
 
 make clean
