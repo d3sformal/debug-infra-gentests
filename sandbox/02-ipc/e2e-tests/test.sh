@@ -16,6 +16,7 @@ mkdir "$BUILD_DIR"
 mkdir -p "$OUTS_DIR"
 
 DIR_RELATIVE_LLCAP_SERVER="../../../llcap-server"
+LLCAP_BIN="$DIR_RELATIVE_LLCAP_SERVER"/target/debug/llcap-server
 TEST_BINARY="$BUILD_DIR"/testbin
 
 cp ../../../01-llvm-ir/llvm-pass/libfn-pass.so "$BUILD_DIR"
@@ -44,7 +45,7 @@ SELECTION="$OUTS_DIR"/selected-fns.bin
 MODMAPS="$BUILD_DIR"/module-maps/
 
 echo "!!! Tracing"
-echo "$FN_IDX" | "$DIR_RELATIVE_LLCAP_SERVER"/target/release/llcap-server --modmap "$MODMAPS" trace-calls -o "$SELECTION" "$TEST_BINARY"
+echo "$FN_IDX" | "$LLCAP_BIN" --modmap "$MODMAPS" trace-calls -o "$SELECTION" "$TEST_BINARY"
 
 echo "!!! Rebuilding"
 
@@ -72,14 +73,14 @@ TEST_OUTPUT_DIR="$OUTS_DIR"/test-outputs
 
 echo "!!! Capturing"
 
-rm -rf "$ARG_TRACES" && "$DIR_RELATIVE_LLCAP_SERVER"/target/release/llcap-server\
+rm -rf "$ARG_TRACES" && "$LLCAP_BIN"\
  --modmap "$MODMAPS" capture-args -s "$SELECTION" -o "$ARG_TRACES" "$TEST_BINARY"
 
 echo "!!! Testing"
 
 mkdir -p "$TEST_OUTPUT_DIR"
 
-OUTPUT=$(rm -rf "$TEST_OUTPUT_DIR"/* && "$DIR_RELATIVE_LLCAP_SERVER"/target/release/llcap-server\
+OUTPUT=$(rm -rf "$TEST_OUTPUT_DIR"/* && "$LLCAP_BIN"\
  --modmap "$MODMAPS" test -s "$SELECTION" -t "$TIMEOUT_S" -c "$ARG_TRACES"\
      -o "$TEST_OUTPUT_DIR" "$TEST_BINARY")
 
