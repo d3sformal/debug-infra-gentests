@@ -150,6 +150,21 @@ impl NumFunUid {
   }
 }
 
+impl From<(IntegralFnId, IntegralModId)> for NumFunUid {
+  fn from(value: (IntegralFnId, IntegralModId)) -> Self {
+    Self {
+      function_id: value.0,
+      module_id: value.1,
+    }
+  }
+}
+
+impl From<(IntegralModId, IntegralFnId)> for NumFunUid {
+  fn from(value: (IntegralModId, IntegralFnId)) -> Self {
+    (value.1, value.0).into()
+  }
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 /// textual unique function identifier
 pub struct TextFunUid {
@@ -414,7 +429,10 @@ impl ExtModuleMap {
           .get(modid)
           .unwrap()
           .iter()
-          .map(|x| (x.hex_string(), self.get_function_name(*modid, *x).unwrap()))
+          .map(|x| (
+            x.hex_string(),
+            self.get_function_name((*modid, *x).into()).unwrap()
+          ))
           .collect::<Vec<_>>(),
         modid.hex_string()
       ));
@@ -495,20 +513,22 @@ impl ExtModuleMap {
       .map(|v| *v.0)
   }
 
-  pub fn get_function_name(&self, mod_id: IntegralModId, fn_id: IntegralFnId) -> Option<&String> {
-    self.function_ids.get(&mod_id)?.get_name(fn_id)
+  pub fn get_function_name(&self, id: NumFunUid) -> Option<&String> {
+    self
+      .function_ids
+      .get(&id.module_id)?
+      .get_name(id.function_id)
   }
 
   pub fn get_function_id(&self, mod_id: IntegralModId, fn_name: &String) -> Option<&IntegralFnId> {
     self.function_ids.get(&mod_id)?.get_id(fn_name)
   }
 
-  pub fn get_function_arg_size_descriptors(
-    &self,
-    mod_id: IntegralModId,
-    fn_id: IntegralFnId,
-  ) -> Option<&Vec<ArgSizeTypeRef>> {
-    self.function_ids.get(&mod_id)?.get_arg_size_ref(fn_id)
+  pub fn get_function_arg_size_descriptors(&self, id: NumFunUid) -> Option<&Vec<ArgSizeTypeRef>> {
+    self
+      .function_ids
+      .get(&id.module_id)?
+      .get_arg_size_ref(id.function_id)
   }
 
   pub fn get_module_string_id(&self, mod_id: IntegralModId) -> Option<&String> {
@@ -663,12 +683,12 @@ mod tests {
     );
     assert!(
       map
-        .get_function_arg_size_descriptors(IntegralModId(1), IntegralFnId(2))
+        .get_function_arg_size_descriptors((IntegralModId(1), IntegralFnId(2)).into())
         .is_none()
     );
     assert!(
       map
-        .get_function_name(IntegralModId(1), IntegralFnId(2))
+        .get_function_name((IntegralModId(1), IntegralFnId(2)).into())
         .is_none()
     );
 
@@ -679,12 +699,12 @@ mod tests {
     );
     assert!(
       map
-        .get_function_arg_size_descriptors(IntegralModId(2), IntegralFnId(1))
+        .get_function_arg_size_descriptors((IntegralModId(2), IntegralFnId(1)).into())
         .is_none()
     );
     assert!(
       map
-        .get_function_name(IntegralModId(2), IntegralFnId(1))
+        .get_function_name((IntegralModId(2), IntegralFnId(1)).into())
         .is_none()
     );
   }
@@ -709,12 +729,12 @@ mod tests {
     );
     assert!(
       map
-        .get_function_arg_size_descriptors(IntegralModId(2), IntegralFnId(1))
+        .get_function_arg_size_descriptors((IntegralModId(2), IntegralFnId(1)).into())
         .is_none()
     );
     assert!(
       map
-        .get_function_name(IntegralModId(2), IntegralFnId(1))
+        .get_function_name((IntegralModId(2), IntegralFnId(1)).into())
         .is_none()
     );
 
@@ -725,12 +745,12 @@ mod tests {
     );
     assert!(
       map
-        .get_function_arg_size_descriptors(IntegralModId(2), IntegralFnId(2))
+        .get_function_arg_size_descriptors((IntegralModId(2), IntegralFnId(2)).into())
         .is_none()
     );
     assert!(
       map
-        .get_function_name(IntegralModId(2), IntegralFnId(2))
+        .get_function_name((IntegralModId(2), IntegralFnId(2)).into())
         .is_none()
     );
 
@@ -750,11 +770,11 @@ mod tests {
     );
     assert!(
       map
-        .get_function_arg_size_descriptors(IntegralModId(1), IntegralFnId(1))
+        .get_function_arg_size_descriptors((IntegralModId(1), IntegralFnId(1)).into())
         .is_some()
     );
     assert!(
-      matches!(map.get_function_name(IntegralModId(1), IntegralFnId(1)), Some(v) if v == "Name1")
+      matches!(map.get_function_name((IntegralModId(1), IntegralFnId(1)).into()), Some(v) if v == "Name1")
     );
   }
 }

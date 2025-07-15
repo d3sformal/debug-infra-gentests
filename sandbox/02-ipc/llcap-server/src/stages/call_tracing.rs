@@ -21,7 +21,7 @@ pub fn print_call_tracing_summary(frequencies: &mut [(NumFunUid, u64)], mods: &E
 
   for (idx, (fninfo, freq)) in frequencies.iter().enumerate() {
     let modstr = mods.get_module_string_id(fninfo.module_id);
-    let fn_name = mods.get_function_name(fninfo.module_id, fninfo.function_id);
+    let fn_name = mods.get_function_name(*fninfo);
     seen_modules.insert(fninfo.module_id);
     if modstr.and(fn_name).is_none() {
       lg.warn(format!(
@@ -51,27 +51,31 @@ fn get_line_input() -> Result<String> {
   Ok(user_input)
 }
 
-/// a CLI "dialog" that collects a list of functions the user wishes to trace
-pub fn obtain_function_id_selection(
+type SelectionResult = Result<Vec<TextFunUid>>;
+
+fn try_name_selection(
+  substring: &str,
   ordered_traces: &[NumFunUid],
   mapping: &ExtModuleMap,
-) -> Result<Vec<TextFunUid>> {
-  let lg = Log::get("obtain_function_ids");
-  println!("Enter indicies of function to test (single line, numbers separated by spaces):");
-  let user_input = get_line_input().expect("Error collecting input");
+) -> SelectionResult {
+  todo!()
+}
 
+fn try_index_selection(
+  input: &str,
+  ordered_traces: &[NumFunUid],
+  mapping: &ExtModuleMap,
+) -> SelectionResult {
+  let lg = Log::get("try_index_selection");
   let mut result = vec![];
 
-  for inp in user_input.trim().split(' ').map(|v| v.trim()) {
+  for inp in input.trim().split(' ').map(|v| v.trim()) {
     let i = inp.parse::<usize>()?;
 
     if i < ordered_traces.len() {
-      let NumFunUid {
-        function_id,
-        module_id,
-      } = ordered_traces[i];
-      let fn_str = mapping.get_function_name(module_id, function_id);
-      let mod_str = mapping.get_module_string_id(module_id);
+      let id = ordered_traces[i];
+      let fn_str = mapping.get_function_name(id);
+      let mod_str = mapping.get_module_string_id(id.module_id);
 
       match (fn_str, mod_str) {
         (None, _) | (_, None) => {
@@ -88,6 +92,24 @@ pub fn obtain_function_id_selection(
   }
 
   Ok(result)
+}
+
+/// a CLI "dialog" that collects a list of functions the user wishes to trace
+pub fn obtain_function_id_selection(
+  ordered_traces: &[NumFunUid],
+  mapping: &ExtModuleMap,
+) -> SelectionResult {
+  const NAME_SEARCH_START: &str = "N:";
+  println!(
+    "Enter indicies of function to test (single line, numbers separated by spaces) or a string to match in funcion's name (in the format {NAME_SEARCH_START}<name>):"
+  );
+  let user_input = get_line_input().expect("Error collecting input");
+
+  if let Some((_, after)) = user_input.split_once(NAME_SEARCH_START) {
+    try_name_selection(after, ordered_traces, mapping)
+  } else {
+    try_index_selection(&user_input, ordered_traces, mapping)
+  }
 }
 
 fn user_input_or_default(default: &str, prompt: &str) -> Result<PathBuf> {
@@ -250,16 +272,12 @@ pub fn import_call_trace_data(
     line.clear();
 
     if let (Ok(fr), Ok(fnid), Ok(modhash)) = parse_res {
-      let (fnid, mod_id) = (IntegralFnId(fnid), IntegralModId(modhash));
+      let id = (IntegralFnId(fnid), IntegralModId(modhash)).into();
       ensure!(
-        modmap
-          .get_function_arg_size_descriptors(mod_id, fnid)
-          .is_some(),
-        "Function not found, module: {}, fn: {}",
-        *mod_id,
-        *fnid
+        modmap.get_function_arg_size_descriptors(id).is_some(),
+        "Function not found, fn: {id:?}"
       );
-      result.push((NumFunUid::new(fnid, mod_id), fr));
+      result.push((id, fr));
     } else {
       bail!(
         "Failed to parse import, invalid format in one of the numbers {:?}",

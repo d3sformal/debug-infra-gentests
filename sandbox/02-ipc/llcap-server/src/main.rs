@@ -240,20 +240,17 @@ async fn main() -> Result<()> {
 
       for module in modules.modules() {
         for function in modules.functions(*module).unwrap() {
-          let test_count = packet_reader
-            .get_packet_count(*module, *function)
-            .ok_or(anyhow!(
-              "Not found tests: {} {}",
-              module.hex_string(),
-              function.hex_string()
-            ))?;
-          let arg_count = packet_reader
-            .get_arg_count(*module, *function)
-            .ok_or(anyhow!(
-              "Not found args: {} {}",
-              module.hex_string(),
-              function.hex_string()
-            ))?;
+          let uid = (*module, *function).into();
+          let test_count = packet_reader.get_packet_count(uid).ok_or(anyhow!(
+            "Not found tests: {} {}",
+            module.hex_string(),
+            function.hex_string()
+          ))?;
+          let arg_count = packet_reader.get_arg_count(uid).ok_or(anyhow!(
+            "Not found args: {} {}",
+            module.hex_string(),
+            function.hex_string()
+          ))?;
 
           if test_count == 0 || arg_count == 0 {
             Log::get("send_test_metadata").warn(format!(
@@ -301,18 +298,18 @@ async fn main() -> Result<()> {
       let mut results = results.lock().unwrap();
       lg.progress(format!("Test results ({}): ", results.len()));
       lg.progress("Module ID | Function ID |  Call  | Packet | Result");
-      results.sort_by(|a, b| a.3.0.cmp(&b.3.0));
       results.sort_by(|a, b| a.2.0.cmp(&b.2.0));
-      results.sort_by(|a, b| a.1.cmp(&b.1));
-      results.sort_by(|a, b| a.0.cmp(&b.0));
+      results.sort_by(|a, b| a.1.0.cmp(&b.1.0));
+      results.sort_by(|a, b| a.0.function_id.cmp(&b.0.function_id));
+      results.sort_by(|a, b| a.0.module_id.cmp(&b.0.module_id));
       for result in results.iter() {
         let s = format!(
           "{:^10}|{:^13}|{:^8}|{:^8}| {:?}",
-          result.0.hex_string(),
-          result.1.hex_string(),
+          result.0.module_id.hex_string(),
+          result.0.function_id.hex_string(),
+          result.1.0,
           result.2.0,
-          result.3.0,
-          result.4
+          result.3
         );
         lg.progress(s);
       }

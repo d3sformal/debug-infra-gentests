@@ -1,6 +1,6 @@
 use crate::{
   log::Log,
-  modmap::{ExtModuleMap, IntegralFnId, IntegralModId},
+  modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
   shmem_capture::{
     BorrowedReadBuffer, CaptureLoop, CaptureLoopState, ReadOnlyBufferPtr, run_capture,
   },
@@ -71,14 +71,12 @@ enum PartialCaptureState {
     module_id: IntegralModId,
   },
   CapturingArgs {
-    module_id: IntegralModId,
-    fn_id: IntegralFnId,
+    id: NumFunUid,
     arg_idx: usize,
     buff: Vec<u8>,
   },
   Done {
-    module_id: IntegralModId,
-    fn_id: IntegralFnId,
+    id: NumFunUid,
     buff: Vec<u8>,
   },
 }
@@ -112,16 +110,16 @@ impl PartialCaptureState {
     // keep the type annotation to warn if implementing types change
     let fn_id: IntegralFnId = IntegralFnId::from(fn_id);
 
+    let id = (module_id, fn_id).into();
     ensure!(
-      mods.get_function_name(module_id, fn_id).is_some(),
+      mods.get_function_name(id).is_some(),
       "Function id not found @ module 0x{:02X}: 0x{:02X}",
       *module_id,
       *fn_id
     );
     lg.trace(format!("Fnc Id: 0x{:02X}", *fn_id));
     Ok(Self::CapturingArgs {
-      module_id,
-      fn_id,
+      id,
       arg_idx: 0,
       buff: Vec::new(),
     })
@@ -133,27 +131,17 @@ impl PartialCaptureState {
     raw_buff: &mut ReadOnlyBufferPtr,
     mods: &ExtModuleMap,
     readers: &mut SizeTypeReaders,
-    module_id: IntegralModId,
-    fn_id: IntegralFnId,
+    id: NumFunUid,
     arg_idx: usize,
     mut buff: Vec<u8>,
   ) -> Result<Self> {
     let lg = Log::get("progress_read_args");
-    let size_refs = mods.get_function_arg_size_descriptors(module_id, fn_id);
-    ensure!(
-      size_refs.is_some(),
-      "Unknown function with module idx {} fn id {}",
-      *module_id,
-      *fn_id
-    );
+    let size_refs = mods.get_function_arg_size_descriptors(id);
+    ensure!(size_refs.is_some(), "Unknown function {id:?}");
     let size_refs = size_refs.unwrap();
     if arg_idx >= size_refs.len() {
       lg.warn(format!(
-        "Invalid arg index {} for args {:?} in ID m/f {}/{}",
-        arg_idx,
-        size_refs,
-        module_id.hex_string(),
-        fn_id.hex_string()
+        "Invalid arg index {arg_idx} for args {size_refs:?} in ID {id:?}"
       ));
     }
 
@@ -161,8 +149,7 @@ impl PartialCaptureState {
       lg.trace(format!("Argument idx: {i}, desc: {desc:?}"));
       if raw_buff.empty() {
         return Ok(Self::CapturingArgs {
-          module_id,
-          fn_id,
+          id,
           arg_idx: i,
           buff,
         });
@@ -188,8 +175,7 @@ impl PartialCaptureState {
         ReadProgress::NotYet => {
           raw_buff.shift(slice.len());
           return Ok(Self::CapturingArgs {
-            module_id,
-            fn_id,
+            id,
             arg_idx: i,
             buff,
           });
@@ -197,8 +183,7 @@ impl PartialCaptureState {
         ReadProgress::Nop => {
           raw_buff.shift(slice.len());
           return Ok(Self::CapturingArgs {
-            module_id,
-            fn_id,
+            id,
             arg_idx: i,
             buff,
           });
@@ -209,11 +194,7 @@ impl PartialCaptureState {
       lg.trace(format!("Resetting reader {i}"));
       reader.read_reset();
     }
-    Ok(Self::Done {
-      module_id,
-      fn_id,
-      buff,
-    })
+    Ok(Self::Done { id, buff })
   }
 
   /// This function mutates (shifts) the raw_buff within the bounds of buff_end
@@ -226,24 +207,13 @@ impl PartialCaptureState {
     match self {
       Self::Empty => Self::progress_read_mod_id(raw_buff, mods),
       Self::GotModuleId { module_id } => Self::progress_read_fn_id(raw_buff, mods, module_id),
-      Self::CapturingArgs {
-        module_id,
-        fn_id,
-        arg_idx,
-        buff,
-      } => Self::progress_read_args(raw_buff, mods, readers, module_id, fn_id, arg_idx, buff),
-      Self::Done {
-        module_id,
-        fn_id,
-        buff,
-      } => {
+      Self::CapturingArgs { id, arg_idx, buff } => {
+        Self::progress_read_args(raw_buff, mods, readers, id, arg_idx, buff)
+      }
+      Self::Done { id, buff } => {
         let lg = Log::get("progress::Done");
         lg.warn("Noop in arg capture progress");
-        Ok(Self::Done {
-          module_id,
-          fn_id,
-          buff,
-        })
+        Ok(Self::Done { id, buff })
       }
     }
   }
@@ -252,7 +222,7 @@ impl PartialCaptureState {
 #[derive(Debug)]
 struct ArgCaptureState {
   partial_state: PartialCaptureState,
-  payload: Vec<(IntegralModId, IntegralFnId, Vec<u8>)>,
+  payload: Vec<(NumFunUid, Vec<u8>)>,
   endmessage_counter: usize,
 }
 
@@ -268,7 +238,7 @@ impl Default for ArgCaptureState {
 
 impl ArgCaptureState {
   #[allow(dead_code)]
-  fn extract_messages(&mut self) -> Vec<(IntegralModId, IntegralFnId, Vec<u8>)> {
+  fn extract_messages(&mut self) -> Vec<(NumFunUid, Vec<u8>)> {
     let mut res = vec![];
     std::mem::swap(&mut res, &mut self.payload);
     res
@@ -329,16 +299,12 @@ impl<'a> CaptureLoop for ArgCapture<'a> {
         .progress(buff, modules, &mut self.cache)?;
 
       state.partial_state = match partial_state {
-        PartialCaptureState::Done {
-          module_id: mod_id,
-          fn_id,
-          mut buff,
-        } => {
-          if let Some(dumper) = self.capture_target.get_packet_dumper(mod_id, fn_id) {
+        PartialCaptureState::Done { id, mut buff } => {
+          if let Some(dumper) = self.capture_target.get_packet_dumper(id) {
             dumper.dump(&mut buff)?;
           }
           Log::get("argCap update_from_buffer").trace(format!("{buff:?}"));
-          state.payload.push((mod_id, fn_id, buff));
+          state.payload.push((id, buff));
           // start from an empty state
           PartialCaptureState::Empty
         }

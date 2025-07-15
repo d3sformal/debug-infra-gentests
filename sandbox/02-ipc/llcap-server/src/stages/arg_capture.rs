@@ -10,7 +10,7 @@ use anyhow::{Result, anyhow, bail, ensure};
 
 use crate::{
   log::Log,
-  modmap::{ExtModuleMap, IntegralFnId, IntegralModId},
+  modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
 };
 
 /// dumps argument packet data into a file
@@ -141,13 +141,9 @@ impl ArgPacketDumper {
     })
   }
 
-  pub fn get_packet_dumper(
-    &mut self,
-    module: IntegralModId,
-    function: IntegralFnId,
-  ) -> Option<&mut FunctionPacketDumper> {
-    if let Some(md) = self.dumpers.get_mut(&module) {
-      md.get_function_dumper(function)
+  pub fn get_packet_dumper(&mut self, id: NumFunUid) -> Option<&mut FunctionPacketDumper> {
+    if let Some(md) = self.dumpers.get_mut(&id.module_id) {
+      md.get_function_dumper(id.function_id)
     } else {
       None
     }
@@ -175,17 +171,14 @@ struct CaptureReader {
 /// exposes iteration over individual argument packets on individual function basis
 /// and metadata (packet counts, ...)
 pub struct PacketReader {
-  captures: HashMap<(IntegralModId, IntegralFnId), Arc<Mutex<dyn PacketIterator + Send>>>,
+  captures: HashMap<NumFunUid, Arc<Mutex<dyn PacketIterator + Send>>>,
 }
 
 impl PacketReader {
   pub fn new(dir: &Path, module_maps: &ExtModuleMap, buff_limit: usize) -> Result<Self> {
     let lg = Log::get("PacketReader");
     let capacity = (buff_limit / module_maps.modules().count()).max(4096 * 2);
-    let mut captures: HashMap<
-      (IntegralModId, IntegralFnId),
-      Arc<Mutex<dyn PacketIterator + Send>>,
-    > = HashMap::new();
+    let mut captures: HashMap<NumFunUid, Arc<Mutex<dyn PacketIterator + Send>>> = HashMap::new();
     for module in module_maps.modules() {
       let functions = module_maps.functions(*module);
       ensure!(
@@ -197,12 +190,12 @@ impl PacketReader {
 
       for function in functions {
         let path = dir.join(module.hex_string()).join(function.hex_string());
-        let key = (*module, *function);
+        let key = (*module, *function).into();
         if !path.exists() {
           lg.warn(format!(
             "Inserting dummy packet iterator for {:?} - missing capture file\n\tFunction name: {:?} \n\tModule name: {:?}",
             path,
-            module_maps.get_function_name(*module, *function),
+            module_maps.get_function_name(key),
             module_maps.get_module_string_id(*module)
           ));
           captures.insert(key, Arc::new(Mutex::new(EmptyPacketIter {})));
@@ -228,20 +221,20 @@ impl PacketReader {
             }
           }
           lg.info(format!("\ttests {tests} "));
+          let id = (*module, *function).into();
 
-          let args =
-            if let Some(v) = module_maps.get_function_arg_size_descriptors(*module, *function) {
-              Ok(
-                v.iter()
-                  .filter(|x| !matches!(x, crate::sizetype_handlers::ArgSizeTypeRef::Fixed(0)))
-                  .count(),
-              )
-            } else {
-              Err(anyhow!("Failed look up function argument types"))
-            }?;
+          let args = if let Some(v) = module_maps.get_function_arg_size_descriptors(id) {
+            Ok(
+              v.iter()
+                .filter(|x| !matches!(x, crate::sizetype_handlers::ArgSizeTypeRef::Fixed(0)))
+                .count(),
+            )
+          } else {
+            Err(anyhow!("Failed look up function argument types"))
+          }?;
           lg.info(format!("\targs {args} "));
           captures.insert(
-            (*module, *function),
+            id,
             Arc::new(Mutex::new(CaptureReader {
               path: path.clone(),
               file: BufReader::with_capacity(capacity, File::open(path)?),
@@ -260,56 +253,47 @@ impl PacketReader {
   /// a helper that performs a locking extraction of the desired packet iterator
   fn get_locked_capture_iterator(
     &mut self,
-    m: IntegralModId,
-    f: IntegralFnId,
+    id: NumFunUid,
   ) -> Result<MutexGuard<'_, dyn PacketIterator + Send + 'static>> {
-    if let Some(v) = self.captures.get_mut(&(m, f)) {
+    if let Some(v) = self.captures.get_mut(&id) {
       Ok(v.lock().unwrap())
     } else {
-      bail!(
-        "Not found in packet reader m/f {} {}",
-        m.hex_string(),
-        f.hex_string()
-      )
+      bail!("Not found in packet reader m/f {id:?}")
     }
   }
 
-  pub fn read_next_packet(
-    &mut self,
-    module: IntegralModId,
-    fun: IntegralFnId,
-  ) -> Result<Option<Vec<u8>>> {
+  pub fn read_next_packet(&mut self, id: NumFunUid) -> Result<Option<Vec<u8>>> {
     let mut it = self
-      .get_locked_capture_iterator(module, fun)
+      .get_locked_capture_iterator(id)
       .map_err(|e| e.context("read_next_packet"))?;
     it.read_next_packet()
   }
 
-  pub fn try_reset(&mut self, module: IntegralModId, fun: IntegralFnId) -> Result<()> {
+  pub fn try_reset(&mut self, id: NumFunUid) -> Result<()> {
     let mut it = self
-      .get_locked_capture_iterator(module, fun)
+      .get_locked_capture_iterator(id)
       .map_err(|e| e.context("try_reset"))?;
     it.try_reset()
   }
 
-  pub fn get_packet_count(&self, module: IntegralModId, fun: IntegralFnId) -> Option<u32> {
+  pub fn get_packet_count(&self, id: NumFunUid) -> Option<u32> {
     self
       .captures
-      .get(&(module, fun))
+      .get(&id)
       .map(|v| v.lock().unwrap().packet_count())
   }
 
-  pub fn get_arg_count(&self, module: IntegralModId, fun: IntegralFnId) -> Option<u32> {
+  pub fn get_arg_count(&self, id: NumFunUid) -> Option<u32> {
     self
       .captures
-      .get(&(module, fun))
+      .get(&id)
       .map(|v| v.lock().unwrap().arg_count())
   }
 
-  pub fn get_upcoming_pkt_idx(&self, module: IntegralModId, fun: IntegralFnId) -> Option<usize> {
+  pub fn get_upcoming_pkt_idx(&self, id: NumFunUid) -> Option<usize> {
     self
       .captures
-      .get(&(module, fun))
+      .get(&id)
       .map(|v| v.lock().unwrap().upcoming_packet_idx())
   }
 }
@@ -401,30 +385,30 @@ impl PacketIterator for EmptyPacketIter {
 pub trait PacketProvider {
   /// returns the packet at a specific index
   /// if `index` overflows, the first packet is returned (if exists)
-  fn get_packet(&mut self, m: IntegralModId, f: IntegralFnId, index: usize) -> Option<Vec<u8>>;
+  fn get_packet(&mut self, id: NumFunUid, index: usize) -> Option<Vec<u8>>;
 }
 
 impl PacketProvider for PacketReader {
-  fn get_packet(&mut self, m: IntegralModId, f: IntegralFnId, index: usize) -> Option<Vec<u8>> {
+  fn get_packet(&mut self, id: NumFunUid, index: usize) -> Option<Vec<u8>> {
     // we expect the packets will be accessed in sequential order as the test instance progresses
     // through each packet in series (waiting for each test case to finish)
 
     // still, in case of a non-sequential access, the reader should be able to fall back to
     // an inefficient yet non-error path
-    let packets = self.get_packet_count(m, f)?;
+    let packets = self.get_packet_count(id)?;
     if packets == 0 {
       return None;
     } else if index as u32 >= packets {
       // tries to return the first packet
-      self.try_reset(m, f).ok()?;
-    } else if self.get_upcoming_pkt_idx(m, f)? != index {
+      self.try_reset(id).ok()?;
+    } else if self.get_upcoming_pkt_idx(id)? != index {
       // index is within packet count, the following should return the desired packet
       // albeit with linear delay
-      self.try_reset(m, f).ok()?;
-      while self.get_upcoming_pkt_idx(m, f)? < index {
-        self.read_next_packet(m, f).ok()?;
+      self.try_reset(id).ok()?;
+      while self.get_upcoming_pkt_idx(id)? < index {
+        self.read_next_packet(id).ok()?;
       }
     }
-    self.read_next_packet(m, f).ok()?
+    self.read_next_packet(id).ok()?
   }
 }
