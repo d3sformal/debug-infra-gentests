@@ -15,7 +15,7 @@ struct Destroy {
   }
 };
 
-int multiply_i_f(int i, float f) {
+int test_target(int i, float f) {
   // force cleanup code to be generated
   Destroy d;
   static int call_counter = 0;
@@ -31,20 +31,20 @@ int multiply_i_f(int i, float f) {
 
 
 int main() {
-  multiply_i_f(11, 12);
-  int result = multiply_i_f(21, 3.0f);
+  test_target(11, 12);
+  int result = test_target(21, 3.0f);
 
-  multiply_i_f(3, 4.0f);
+  test_target(3, 4.0f);
   if (result == 0) {
     *((volatile int*)0);
   }
 
   try {
-    multiply_i_f(44, 2.0f);
+    test_target(44, 2.0f);
   } catch (const char*) {
     return 0;
   }
 
-  multiply_i_f(0, 0);
+  test_target(0, 0);
   return result;
 }

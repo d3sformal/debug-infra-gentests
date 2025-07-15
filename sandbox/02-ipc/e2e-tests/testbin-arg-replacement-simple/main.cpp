@@ -2,7 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-int multiply_i_f(int i, float f) {
+int test_target(int i, float f) {
   static int call_counter = 0;
   ++call_counter;
 
@@ -18,13 +18,13 @@ int multiply_i_f(int i, float f) {
 
 
 int main() {
-  int result = multiply_i_f(21, 3.0f);
-  multiply_i_f(3, 4.0f);
+  int result = test_target(21, 3.0f);
+  test_target(3, 4.0f);
   if (result == 0) {
     *((volatile int*)0);
   }
-  multiply_i_f(44, 2.0f);
+  test_target(44, 2.0f);
   // if int_called_with_int_float is tested, one test will fail due to the check above
-  multiply_i_f(0, 0);
+  test_target(0, 0);
   return result;
 }
