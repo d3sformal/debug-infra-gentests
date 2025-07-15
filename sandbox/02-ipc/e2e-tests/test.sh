@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-# Args: <tested binary directory> <index of the function> <timeout in seconds>
+# Args: <tested binary directory> <function name> <timeout in seconds> <output-testing script/directory> <clang args>
 WorkingDir=$1; shift
 TestedFnName=$1; shift
 TimeoutSec=$1; shift
