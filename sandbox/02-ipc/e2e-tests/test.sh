@@ -5,7 +5,7 @@ set -e
 DIR=$1; shift
 FN_IDX=$1; shift
 TIMEOUT_S=$1; shift
-CXX_ARGS=$@;
+CXX_ARGS=$*;
 
 cd "$DIR"
 DIR=$(pwd)
@@ -80,7 +80,7 @@ echo "!!! Testing"
 
 mkdir -p "$TEST_OUTPUT_DIR"
 
-OUTPUT=$(rm -rf "$TEST_OUTPUT_DIR"/* && "$LLCAP_BIN"\
+OUTPUT=$(rm -rf "${TEST_OUTPUT_DIR:?}"/* && "$LLCAP_BIN"\
  --modmap "$MODMAPS" test -s "$SELECTION" -t "$TIMEOUT_S" -c "$ARG_TRACES"\
      -o "$TEST_OUTPUT_DIR" "$TEST_BINARY")
 
