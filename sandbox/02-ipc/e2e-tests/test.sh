@@ -3,7 +3,7 @@ set -e
 
 # Args: <tested binary directory> <index of the function> <timeout in seconds>
 DIR=$1; shift
-FN_IDX=$1; shift
+FN_NAME=$1; shift
 TIMEOUT_S=$1; shift
 CXX_ARGS=$*;
 
@@ -45,7 +45,7 @@ SELECTION="$OUTS_DIR"/selected-fns.bin
 MODMAPS="$BUILD_DIR"/module-maps/
 
 echo "!!! Tracing"
-echo "$FN_IDX" | "$LLCAP_BIN" --modmap "$MODMAPS" trace-calls -o "$SELECTION" "$TEST_BINARY"
+echo "N:$FN_NAME" | "$LLCAP_BIN" --modmap "$MODMAPS" trace-calls -o "$SELECTION" "$TEST_BINARY"
 
 echo "!!! Rebuilding"
 
@@ -73,16 +73,16 @@ TEST_OUTPUT_DIR="$OUTS_DIR"/test-outputs
 
 echo "!!! Capturing"
 
-rm -rf "$ARG_TRACES" && "$LLCAP_BIN"\
- --modmap "$MODMAPS" capture-args -s "$SELECTION" -o "$ARG_TRACES" "$TEST_BINARY"
+rm -rf "$ARG_TRACES" && "$LLCAP_BIN" --modmap "$MODMAPS"\
+ capture-args -s "$SELECTION" -o "$ARG_TRACES" "$TEST_BINARY"
 
 echo "!!! Testing"
 
 mkdir -p "$TEST_OUTPUT_DIR"
 
-OUTPUT=$(rm -rf "${TEST_OUTPUT_DIR:?}"/* && "$LLCAP_BIN"\
- --modmap "$MODMAPS" test -s "$SELECTION" -t "$TIMEOUT_S" -c "$ARG_TRACES"\
-     -o "$TEST_OUTPUT_DIR" "$TEST_BINARY")
+OUTPUT=$(rm -rf "${TEST_OUTPUT_DIR:?}"/* && "$LLCAP_BIN" --modmap "$MODMAPS"\
+ test -s "$SELECTION" -t "$TIMEOUT_S" -c "$ARG_TRACES"\
+ -o "$TEST_OUTPUT_DIR" "$TEST_BINARY")
 
 # transform output to a |-separated table with a single-line header
 # ModuleID|FunctionID|Call|Packet|Result

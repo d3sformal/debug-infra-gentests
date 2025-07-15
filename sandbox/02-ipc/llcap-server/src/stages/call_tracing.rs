@@ -58,7 +58,25 @@ fn try_name_selection(
   ordered_traces: &[NumFunUid],
   mapping: &ExtModuleMap,
 ) -> SelectionResult {
-  todo!()
+  let lg = Log::get("try_name_selection");
+  if substring.is_empty() {
+    lg.warn("Empty substring selection selects all functions");
+  }
+
+  let mut result = vec![];
+
+  for id in ordered_traces {
+    if let Some(fn_name) = mapping
+      .get_function_name(*id)
+      .filter(|n| n.contains(substring))
+      .cloned()
+      && let Some(fn_module) = mapping.get_module_string_id(id.module_id).cloned()
+    {
+      result.push(TextFunUid { fn_name, fn_module });
+    }
+  }
+
+  Ok(result)
 }
 
 fn try_index_selection(
@@ -106,9 +124,9 @@ pub fn obtain_function_id_selection(
   let user_input = get_line_input().expect("Error collecting input");
 
   if let Some((_, after)) = user_input.split_once(NAME_SEARCH_START) {
-    try_name_selection(after, ordered_traces, mapping)
+    try_name_selection(after.trim(), ordered_traces, mapping)
   } else {
-    try_index_selection(&user_input, ordered_traces, mapping)
+    try_index_selection(user_input.trim(), ordered_traces, mapping)
   }
 }
 
