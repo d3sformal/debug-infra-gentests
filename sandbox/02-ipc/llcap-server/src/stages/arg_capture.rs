@@ -177,6 +177,8 @@ pub struct PacketReader {
 impl PacketReader {
   pub fn new(dir: &Path, module_maps: &ExtModuleMap, buff_limit: usize) -> Result<Self> {
     let lg = Log::get("PacketReader");
+    let mod_count = module_maps.modules().count();
+    ensure!(mod_count > 0, "No modules present, no reason to continue");
     let capacity = (buff_limit / module_maps.modules().count()).max(4096 * 2);
     let mut captures: HashMap<NumFunUid, Arc<Mutex<dyn PacketIterator + Send>>> = HashMap::new();
     for module in module_maps.modules() {
