@@ -2,6 +2,8 @@
 set -e
 
 # Args: <tested binary directory> <function name> <timeout in seconds> <output-testing script/directory> <clang args>
+
+# give names to arguments, navigate to the correct working directory (of the binary we will be instrumenting) 
 WorkingDir=$1; shift
 TestedFnName=$1; shift
 TimeoutSec=$1; shift
@@ -12,20 +14,27 @@ cd "$WorkingDir"
 WorkingDir=$(pwd)
 BuildDir="$WorkingDir"/build
 OutputsDir="$WorkingDir"/out
-rm -rf "$BuildDir"
-mkdir "$BuildDir"
-mkdir -p "$OutputsDir"
 
+# "testbin" name should be hardcoded into the cmakelists.txt file
 LlcapSvrBin="$WorkingDir/../../llcap-server/target/debug/llcap-server"
 InstrumentedBin="$BuildDir"/testbin
+ModMapsPath="$BuildDir"/module-maps/
 
-cp ../../../01-llvm-ir/llvm-pass/libfn-pass.so "$BuildDir"
+# build hooklib
 cd ../../ipc-hooklib
 
 cmake ./ -DCFG_MANUAL=OFF
 make
 
+# build the first instrumentation stage
+rm -rf "$BuildDir"
+mkdir "$BuildDir"
 cd "$BuildDir"
+
+# ! assume llvm pass to be built 
+# (avoiding rebuild, because this is quite a long compilation)
+cp ../../../../01-llvm-ir/llvm-pass/libfn-pass.so "$BuildDir"
+
 
 cmake -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_COMPILER=clang++ \
@@ -36,25 +45,21 @@ cmake   -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_FLAGS="-mllvm -Call -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
   ../
 
-rm "$BuildDir"/module-maps/* || true
-mkdir -p "$BuildDir"/module-maps
+# re-initialize artifact directories
+mkdir -p "$OutputsDir"
+# initialize directory for llvm pass artifacts
+mkdir "$ModMapsPath"
+
 make clean
 make
 
 SelectionPath="$OutputsDir"/selected-fns.bin
-ModMapsPath="$BuildDir"/module-maps/
 
 echo "!!! Tracing"
 echo "N:$TestedFnName" | "$LlcapSvrBin" --modmap "$ModMapsPath" trace-calls -o "$SelectionPath" "$InstrumentedBin"
 
+# rebuild for the second instrumentation stage
 echo "!!! Rebuilding"
-
-cd "$WorkingDir"
-
-cd ../../ipc-hooklib
-cmake ./ -DCFG_MANUAL=OFF
-make
-cd "$BuildDir"
 
 cmake -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_COMPILER=clang++ \
@@ -68,20 +73,20 @@ cmake   -D CMAKE_C_COMPILER=clang \
 make clean
 make
 
-ARG_TRACES="$OutputsDir"/arg-traces-dir
+ArgTraceDir="$OutputsDir"/arg-traces-dir
 TestOutputsDir="$OutputsDir"/test-outputs
 
 echo "!!! Capturing"
 
-rm -rf "$ARG_TRACES" && "$LlcapSvrBin" --modmap "$ModMapsPath"\
- capture-args -s "$SelectionPath" -o "$ARG_TRACES" "$InstrumentedBin"
+rm -rf "$ArgTraceDir" && "$LlcapSvrBin" --modmap "$ModMapsPath"\
+ capture-args -s "$SelectionPath" -o "$ArgTraceDir" "$InstrumentedBin"
 
 echo "!!! Testing"
 
 mkdir -p "$TestOutputsDir"
 
 Output=$(rm -rf "${TestOutputsDir:?}"/* && "$LlcapSvrBin" --modmap "$ModMapsPath"\
- test -s "$SelectionPath" -t "$TimeoutSec" -c "$ARG_TRACES"\
+ test -s "$SelectionPath" -t "$TimeoutSec" -c "$ArgTraceDir"\
  -o "$TestOutputsDir" "$InstrumentedBin")
 
 # transform output to a |-separated table with a single-line header
@@ -97,8 +102,9 @@ then
   if [ -d "$OutputTestScriptDir" ];
   then
     for File in "$OutputTestScriptDir"/tc-*.sh; do
-      echo -n "Test $File "
-      "$File" "$Output" &1>/dev/null
+      echo "Test $File"
+      # never redirect this, do not touch this line
+      "$File" "$Output"
       echo "OK"
     done
   else
