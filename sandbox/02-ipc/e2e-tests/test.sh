@@ -95,8 +95,6 @@ Output=$(rm -rf "${TestOutputsDir:?}"/* && "$LlcapSvrBin" --modmap "$ModMapsPath
 # ModuleID|FunctionID|Call|Packet|Result
 Output=$(echo "$Output" | cut -d']' -f 2- | grep ".*|.*|.*" | tr -d '[:blank:]')
 
-
-set -e
 if [[ "$OutputTestScriptDir" != "" ]]
 then
   echo "!!! Testing Outputs"
