@@ -98,6 +98,17 @@ Output=$(echo "$Output" | cut -d']' -f 2- | grep ".*|.*|.*" | tr -d '[:blank:]')
 if [[ "$OutputTestScriptDir" != "" ]]
 then
   echo "!!! Testing Outputs"
+  
+  # testing for a fatal erorr first, allow the lookup to fail
+  set +e
+  echo "$Output" | tail -n+2 | grep "Fatal"
+  if [[ "$?" == 0 ]]
+  then
+    echo "$Output"
+    exit 1;
+  fi
+  set -e
+
   # go through all files and execute them
   if [ -d "$OutputTestScriptDir" ];
   then
