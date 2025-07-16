@@ -31,10 +31,10 @@
     * ~~the `register_call` gets called anyway so the behavior looks correct~~
     * ~~the only difference is that the timeout is counted from the first call, not the n-th desired call~~
 * ~~make `/tmp/llcap-test-server` a constant~~
-* ?? add a  global test timeout for the case there is an infinite loop and the test is never executed
-* testing: use `trace.out` (llcap `-e`) for testing selection (even if it means running the tested binary twice)
+* ~~?? add a global test timeout for the case there is an infinite loop and the test is never executed~~
+* ~~testing: use `trace.out` (llcap `-e`) for testing selection (even if it means running the tested binary twice) (implemented via name matching)~~
     * update in readme
-* stop the test right when return is reached
+* [move this elsewhere] stop the test right when return is reached
     * relevant IR insns: 
         * ~~`ret`~~
         * ~~`resume`~~
@@ -58,7 +58,7 @@
 
 ## Final polishing
 
-* add some tests for `llcap-server` and hooklib now that everything seems to be more or less stable? [in progress - TODO: hooklib tests]
+* add some tests ~~for `llcap-server` and~~ hooklib now that everything seems to be more or less stable? [in progress - TODO: hooklib tests]
     * ~~first C++-ify the `hook.cpp` file...~~
 * ~~proper automatic cleanup / overwrite policies for outputs [in progress - especially in arg capture]~~
 * ~~make call-tracing stage require arguments and make it run the binary itself~~
@@ -67,12 +67,13 @@
     * ~~update readmes of examples (2)~~
 * try out various scenarios (timeouts of test cases, crashes)
 * ~~add a simple argument replacement example~~
-    * add a replicated C example (also serves as verification that we can also link/build with C programs)
+    * ~~add a replicated C example (also serves as verification that we can also link/build with C programs)~~
 * add a guide for adding custom type support
     * make the UX of this in the LLVM plugin better  
 * ~~try compilation from scratch in a new environment~~ 
-* (optionally?) terminate program right after tested function returns
+* ~~(optionally?) terminate program right after tested function returns~~
     * exception handling???
+        * document, document turning on, ...
 * investigate debug metadata usage instead of current approach
 * validate argument splitting works/is disallowed
 * complete `llcap-server` readme 
