@@ -454,7 +454,7 @@ void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id) {
 }
 
 static void hook_test_epilogue_impl(uint32_t module_id, uint32_t fn_id, bool exception) {
-    if (!in_testing_mode() || !in_testing_fork() ||
+  if (!in_testing_mode() || !in_testing_fork() ||
       !is_fn_under_test(module_id, fn_id)) {
     return;
   }
