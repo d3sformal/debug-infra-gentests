@@ -4,7 +4,7 @@ use std::{
   ops::DerefMut,
   path::PathBuf,
   process::Stdio,
-  sync::{Arc, Mutex},
+  sync::{Arc, Mutex, atomic::AtomicBool},
   time::Duration,
 };
 
@@ -12,6 +12,7 @@ use anyhow::{Result, anyhow, bail, ensure};
 use tokio::{
   io::{AsyncReadExt, BufReader},
   net::{UnixListener, UnixStream, unix::OwnedWriteHalf},
+  process::{Child, Command},
   sync::oneshot::{Receiver, Sender},
   time::{sleep, timeout},
 };
@@ -53,6 +54,13 @@ pub async fn test_server_job(
   lg.info("Listening");
 
   let mut handles = vec![];
+  // this stop flags is an emergency info relay
+  // basically, if the "global timeout" terminates the process, the
+  // client_stream does not "close" properly and keeps timing out instead of
+  // giving an error
+  // this flag will be set for all "single_test_job" that have not yet
+  // stopped serving their client after the server is instructed to stop
+  let test_job_stop_flag: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
   while end_rx.try_recv().is_err() {
     match timeout(Duration::from_millis(100), listener.accept()).await {
@@ -65,6 +73,7 @@ pub async fn test_server_job(
           modules.clone(),
           mem_limit,
           results,
+          test_job_stop_flag.clone(),
         )));
       }
       Ok(Err(e)) => Err(anyhow!(e))?,
@@ -73,6 +82,7 @@ pub async fn test_server_job(
   }
   lg.info("Finishing");
   for handle in handles {
+    test_job_stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
     if let Err(e) = handle.await? {
       lg.crit(format!("A job has finished with error: {e}"));
     }
@@ -86,7 +96,7 @@ pub async fn test_server_job(
 pub struct CallIndexT(pub u32);
 #[derive(Debug, Clone, Copy)]
 pub struct PacketIndexT(pub u64);
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 /// message received from the test client (test coordinator)
 enum TestMessage {
   /// test started
@@ -99,7 +109,7 @@ enum TestMessage {
   End,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum TestStatus {
   Pass,
   Exception,
@@ -109,8 +119,9 @@ pub enum TestStatus {
   #[allow(dead_code)]
   Signal(i32),
   /// an unexpected test failure outside the sandboxing and monitoring of the test coordinator
-  /// - could be a test coordinator crash
-  Fatal,
+  /// - could be a test coordinator crash or test job crash
+  #[allow(dead_code)]
+  Fatal(String),
 }
 
 pub type TestResults = Vec<(NumFunUid, CallIndexT, PacketIndexT, TestStatus)>;
@@ -146,7 +157,7 @@ impl TryFrom<&[u8]> for TestStatus {
         .map_err(|e: std::array::TryFromSliceError| e.to_string())?;
       Ok(Self::Signal(i32::from_le_bytes(sized)))
     } else if tag.starts_with(&TAG_FATAL.to_le_bytes()) {
-      Ok(Self::Fatal)
+      Ok(Self::Fatal("test coordinator".to_owned()))
     } else {
       Err(format!("Invalid status format: {value:?} {tag:?} {data:?}"))
     }
@@ -241,9 +252,8 @@ async fn single_test_job(
   modules: Arc<ExtModuleMap>,
   mem_limit: usize,
   results: Arc<Mutex<TestResults>>,
+  stop_flag: Arc<AtomicBool>,
 ) -> Result<()> {
-  // TODO: report test failures in "results" (see return statements - failure is only logged)
-
   // initialize state, packet supply and the stream for reading and writing to the client on the other side
   let mut state = ClientState::Init;
   let mut lg = Log::get(&format!("single_test_job@{state:?}"));
@@ -272,7 +282,13 @@ async fn single_test_job(
       Ok(Err(e)) => {
         bail!("Not readable {e} - ending, state: {:?}", state);
       }
-      Err(_) => continue, // timeout
+      Err(_) => {
+        // see test_server_job
+        if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+          return Ok(());
+        }
+        continue;
+      } // timeout
     }
 
     lg.trace(format!("Read done: {data:?}"));
@@ -383,19 +399,49 @@ async fn send_protocol_response(write_stream: &mut OwnedWriteHalf, response: &[u
   raw_send_to_client(write_stream, response).await
 }
 
+#[derive(Clone)]
+pub struct TestJobParams {
+  pub fn_uid: NumFunUid,
+  pub arg_count: u32,
+  pub test_count: u32,
+  pub test_case_timeout: Duration,
+  pub job_timeout: Option<Duration>,
+  pub command: Arc<Vec<String>>,
+}
+
+impl TestJobParams {
+  fn test_params(&self, call_idx: u32) -> TestParams {
+    TestParams {
+      target_call_number: call_idx + 1,
+      timeout: self.test_case_timeout,
+      arg_count: self.arg_count,
+      test_count: self.test_count,
+    }
+  }
+}
+
+pub struct TestJobFailure {
+  pub params: TestJobParams,
+  pub call_number: u32,
+  pub message: String,
+}
+
 pub async fn test_job(
   metadata_svr: Arc<Mutex<MetadataPublisher>>,
   infra_params: InfraParams,
-  fn_uid: NumFunUid,
-  arg_count: u32,
-  test_count: u32,
-  test_timeout: Duration,
-  command: Arc<Vec<String>>,
+  job_params: TestJobParams,
   output_gen: Arc<Option<TestOutputPathGen>>,
-) -> Result<()> {
+) -> Result<(), TestJobFailure> {
+  let fn_uid = job_params.fn_uid;
   let (m, f) = (fn_uid.module_id, fn_uid.function_id);
-  // let mut tests = vec![];
-  for call_idx in 0..test_count {
+  for call_idx in 0..job_params.test_count {
+    let cloned_params = job_params.clone();
+    let mk_error = |error: anyhow::Error| TestJobFailure {
+      params: cloned_params,
+      call_number: call_idx + 1,
+      message: error.to_string(),
+    };
+    let job_params = job_params.clone();
     {
       let mut guard = metadata_svr.lock().unwrap();
       send_test_metadata(
@@ -405,43 +451,82 @@ pub async fn test_job(
           function_id: f,
           module_id: m,
         },
-        TestParams {
-          arg_count,
-          test_count,
-          target_call_number: call_idx + 1,
-          timeout: test_timeout,
-        },
-      )?;
+        job_params.test_params(call_idx),
+      )
+      .map_err(mk_error.clone())?;
     }
-    let mut cmd = cmd_from_args(&command)?;
+    let mut cmd = cmd_from_args(&job_params.command).map_err(mk_error.clone())?;
     if let Some(output_gen) = output_gen.as_ref() {
       let out_path = output_gen.get_out_path(m, f, call_idx + 1);
       let err_path = output_gen.get_err_path(m, f, call_idx + 1);
-      cmd.stdout(Stdio::from(File::create(out_path.clone()).map_err(
-        |e| anyhow!(e).context(format!("Stdout file creation failed: {out_path:?}")),
-      )?));
-      cmd.stderr(Stdio::from(File::create(err_path).map_err(|e| {
-        anyhow!(e).context(format!("Stderr file creation failed {out_path:?}"))
-      })?));
+      cmd.stdout(Stdio::from(
+        File::create(out_path.clone())
+          .map_err(|e| anyhow!(e).context(format!("Stdout file creation failed: {out_path:?}")))
+          .map_err(mk_error.clone())?,
+      ));
+      cmd.stderr(Stdio::from(
+        File::create(err_path)
+          .map_err(|e| anyhow!(e).context(format!("Stderr file creation failed {out_path:?}")))
+          .map_err(mk_error.clone())?,
+      ));
     }
-    let mut test = cmd
+    let test = cmd
       .spawn()
-      .map_err(|e| anyhow!(e).context("spawn from command"))?;
+      .map_err(|e| anyhow!(e).context("spawn from command"))
+      .map_err(mk_error.clone())?;
 
-    let _ = test.wait();
-    // TODO decide:
-    // fully parallel test execution VS costs of seeking/re-reading packet capture files
-    // when two non-subsequent packets are requested
-    // for parallel impl, uncomment the below and the 1st line in this fn
-    //    tests.push(test);
+    let result = wait_or_terminate(test, &job_params, call_idx).await;
+
+    sleep(Duration::from_millis(300)).await;
+    result.map_err(mk_error)?;
   }
-  // while !tests.iter_mut().all(|t| t.try_wait().is_ok()) {
-  //   sleep(Duration::from_millis(300)).await;
-  // }
-  // additional sleep here to ensure that server processes all the incoming "test end" messages
-  // before we "kill" it
-  sleep(Duration::from_millis(300)).await;
+
   Ok(())
+}
+
+/// waits for or terminates the test instance (child process) based on a timeout
+async fn wait_or_terminate(mut test: Child, params: &TestJobParams, call_idx: u32) -> Result<()> {
+  let lg = Log::get("test_job_terminate");
+  if let Some(tout_dur) = params.job_timeout {
+    match tokio::time::timeout(tout_dur, test.wait()).await {
+      Err(_) => {
+        lg.crit(format!(
+          "Global timeout, killing child, test params: {:?}",
+          params.test_params(call_idx)
+        ));
+        // this will most likely generate a redundant Timeout/Error test status
+        // (we are killing children first, then the monitor)
+
+        // but since we return error from here, there will also be a
+        // "Fatal" test status wich should be detected
+        // the clutter is okay, since this should not happen
+        if let Some(pid) = test.id() {
+          // kills the children of the tested app (forked by hooklib)
+          let _ = Command::new("pkill")
+            .args(["-P", &pid.to_string()])
+            .spawn()
+            .unwrap()
+            .wait()
+            .await;
+        }
+        let _ = test.kill().await;
+
+        Err(anyhow!("Job timeout"))
+      }
+      Ok(_) => Ok(()),
+    }
+  } else {
+    // we ignore "failures" here because if wait erred, there is not much we can do, if the
+    // test child failed, it can be a perfectly desired result (no point reacting to it)
+    // if the waiting failed, it will get logged
+    let _ = test.wait().await.inspect_err(|e| {
+      lg.crit(format!(
+        "Test wait {:?} failed with error {e}",
+        params.test_params(call_idx)
+      ))
+    });
+    Ok(())
+  }
 }
 
 pub struct TestOutputPathGen {

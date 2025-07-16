@@ -145,6 +145,10 @@ pub enum Stage {
     #[arg(short, long, default_value = "3")]
     timeout: u16,
 
+    /// A global timeout for each test job in seconds. The timeout is counted since around the launch of the instrumented application. Set this option if you expect that test cases will not be triggered
+    #[arg(long)]
+    global_timeout: Option<u16>,
+
     /// Command to execute tested binary
     #[arg(trailing_var_arg(true))]
     command: Vec<String>,

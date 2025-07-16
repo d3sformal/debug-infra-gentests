@@ -3,7 +3,6 @@ use std::{
   ops::DerefMut,
   os::unix::process::ExitStatusExt,
   path::PathBuf,
-  process::Command,
   sync::{Arc, Mutex},
   time::Duration,
 };
@@ -15,7 +14,7 @@ use crate::{
 };
 
 use anyhow::{Result, anyhow, bail, ensure};
-use tokio::time::timeout;
+use tokio::{process::Command, time::timeout};
 
 /// sets up a thread that monitors the child in the background
 ///
@@ -24,7 +23,7 @@ use tokio::time::timeout;
 /// the monitor performs the IPC finalizing sequence when a program crashes (is terminated by a signal)
 ///
 async fn spawn_process_monitor(
-  mut child: std::process::Child,
+  mut child: tokio::process::Child,
   fin_info: FinalizerInfraInfo,
 ) -> (
   tokio::sync::oneshot::Receiver<bool>,
@@ -105,7 +104,7 @@ where
     meta_sender(guard.deref_mut(), infra_params)?;
   }
 
-  let spawned_child: std::process::Child = cmd
+  let spawned_child = cmd
     .spawn()
     .map_err(|e| anyhow!(e).context("Failed to spawn from command"))?;
 
@@ -146,7 +145,7 @@ pub fn obtain_module_map(path: &std::path::PathBuf) -> Result<ExtModuleMap> {
 
 pub fn cmd_from_args(args: &[String]) -> Result<Command> {
   ensure!(!args.is_empty(), "Command must be specified");
-  let mut cmd = std::process::Command::new(args.first().unwrap());
+  let mut cmd = tokio::process::Command::new(args.first().unwrap());
   cmd.args(args.iter().skip(1));
   Ok(cmd)
 }

@@ -497,6 +497,7 @@ pub fn send_arg_capture_metadata(chnl: &mut MetadataPublisher, infra: InfraParam
   )
 }
 
+#[derive(Debug)]
 pub struct TestParams {
   pub arg_count: u32,
   pub test_count: u32,

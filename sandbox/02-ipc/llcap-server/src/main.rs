@@ -34,7 +34,7 @@ use crate::{
   shmem_capture::{TracingInfra, send_call_tracing_metadata},
   stages::{
     common::{CommonStageParams, cmd_from_args, drive_instrumented_application},
-    testing::{TestOutputPathGen, test_job},
+    testing::{CallIndexT, PacketIndexT, TestJobParams, TestOutputPathGen, TestStatus, test_job},
   },
 };
 
@@ -191,6 +191,7 @@ async fn main() -> Result<()> {
       mem_limit,
       test_output,
       timeout,
+      global_timeout,
       command,
       inspect_packets: inspect_packet,
     } => {
@@ -272,14 +273,17 @@ async fn main() -> Result<()> {
           let test_job = tokio::spawn(test_job(
             metadata_svr.clone(),
             common_params.infra,
-            NumFunUid {
-              function_id: *function,
-              module_id: *module,
+            TestJobParams {
+              fn_uid: NumFunUid {
+                function_id: *function,
+                module_id: *module,
+              },
+              arg_count,
+              test_count,
+              test_case_timeout: Duration::from_secs(timeout as u64),
+              job_timeout: global_timeout.map(|v| Duration::from_secs(v as u64)),
+              command: command.clone(),
             },
-            arg_count,
-            test_count,
-            Duration::from_secs(timeout as u64),
-            command.clone(),
             output_gen.clone(),
           ));
 
@@ -287,9 +291,13 @@ async fn main() -> Result<()> {
         }
       }
       lg.progress("Waiting for jobs to finish...");
+      let mut errors = vec![];
       for fut in futs {
-        fut.await??;
+        if let Err(e) = fut.await? {
+          errors.push(e);
+        }
       }
+
       lg.progress("Waiting for server to exit...");
       let defer_res_end_svr = end_tx.send(()).map_err(|_| anyhow!("failed to end server"));
       let defer_res_joins = svr.await.map_err(|e| anyhow!(e).context("joins"));
@@ -302,16 +310,29 @@ async fn main() -> Result<()> {
       results.sort_by(|a, b| a.1.0.cmp(&b.1.0));
       results.sort_by(|a, b| a.0.function_id.cmp(&b.0.function_id));
       results.sort_by(|a, b| a.0.module_id.cmp(&b.0.module_id));
+      let line_fmter = |fn_uid: NumFunUid,
+                        call_num: stages::testing::CallIndexT,
+                        pkt_idx: stages::testing::PacketIndexT,
+                        result: &TestStatus| {
+        format!(
+          "{:^10}|{:^13}|{:^8}|{:^8}| {result:?}",
+          fn_uid.module_id.hex_string(),
+          fn_uid.function_id.hex_string(),
+          call_num.0,
+          pkt_idx.0
+        )
+      };
+
       for result in results.iter() {
-        let s = format!(
-          "{:^10}|{:^13}|{:^8}|{:^8}| {:?}",
-          result.0.module_id.hex_string(),
-          result.0.function_id.hex_string(),
-          result.1.0,
-          result.2.0,
-          result.3
-        );
-        lg.progress(s);
+        lg.progress(line_fmter(result.0, result.1, result.2, &result.3));
+      }
+      for error in errors {
+        lg.progress(line_fmter(
+          error.params.fn_uid,
+          CallIndexT(error.call_number),
+          PacketIndexT(0),
+          &TestStatus::Fatal(error.message),
+        ));
       }
       lg.progress("---------------------------------------------------------------");
       lg.trace("Cleaning up");
