@@ -42,4 +42,6 @@ function run-test-in-directory-fn-end-instr {
 
 run-test "testbin-arg-replacement-simple" "timeout-all.sh" "test_target" "0"
 run-test-in-directory "testbin-arg-replacement-simple" "test_target" "5"
+run-test-in-directory "testbin-c-example" "test_target" "5"
+run-test "testbin-c-example" "timeout-all.sh" "test_target" "0"
 run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc" "test_target" "5"

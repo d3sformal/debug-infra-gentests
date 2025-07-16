@@ -41,6 +41,7 @@ cmake -D CMAKE_C_COMPILER=clang \
   ../
 
 cmake   -D CMAKE_C_COMPILER=clang \
+  -D CMAKE_C_FLAGS="-mllvm -Call -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
   -D CMAKE_CXX_COMPILER=clang++ \
   -D CMAKE_CXX_FLAGS="-mllvm -Call -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
   ../
@@ -66,8 +67,9 @@ cmake -D CMAKE_C_COMPILER=clang \
   ../
 
 cmake   -D CMAKE_C_COMPILER=clang \
+  -D CMAKE_C_FLAGS="$CppArgs -mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
   -D CMAKE_CXX_COMPILER=clang++ \
-  -DCMAKE_CXX_FLAGS="$CppArgs -mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
+  -D CMAKE_CXX_FLAGS="$CppArgs -mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
   ../
 
 make clean
