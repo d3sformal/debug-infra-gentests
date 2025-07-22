@@ -1,10 +1,10 @@
 #!/bin/sh
 set -xe
 
-COMPILER=$1; shift
-SOURCE_FILE=$1; shift
+Compiler=$1; shift
+SrcFile=$1; shift
 
-if [ -z "$COMPILER" ] || [ -z "$SOURCE_FILE" ]; then
+if [ -z "$Compiler" ] || [ -z "$SrcFile" ]; then
     echo "Usage: $0 <compiler> <file to instrument>" >&2
     exit 1
 fi
@@ -17,8 +17,8 @@ echo "BUILD"
 ./rebuild-meta-plugin.sh
 ./build-libs.sh
 echo "PASS"
-./run-pass-with-meta-plugin.sh "$COMPILER" "$SOURCE_FILE" $@
+./run-pass-with-meta-plugin.sh "$Compiler" "$SrcFile" $@
 echo "IR TO BIN"
-./ir-to-bin.sh "$COMPILER"
+./ir-to-bin.sh "$Compiler"
 . ./export_lib_path.sh
 ./build/a.out

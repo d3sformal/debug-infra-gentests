@@ -1,11 +1,11 @@
 #!/bin/sh
 set -x
 
-CLANG_COMPILER=$1; shift
-TARGET=$1; shift
-PLUGIN_OPTS="$@"
+ClangCompiler=$1; shift
+Target=$1; shift
+PluginOpts="$@"
 
-cp ../"$TARGET" ./
+cp ../"$Target" ./
 mkdir -p ./build
-$CLANG_COMPILER -Xclang -load -Xclang ../../llvm-pass/libfn-pass.so -Xclang -fpass-plugin=../../llvm-pass/libfn-pass.so "$TARGET" -S -emit-llvm -o ./build/bitcode.ll $PLUGIN_OPTS -mllvm -llcap-filter-by-mangled
+$ClangCompiler -Xclang -load -Xclang ../../llvm-pass/libfn-pass.so -Xclang -fpass-plugin=../../llvm-pass/libfn-pass.so "$Target" -S -emit-llvm -o ./build/bitcode.ll $PluginOpts -mllvm -llcap-filter-by-mangled
 

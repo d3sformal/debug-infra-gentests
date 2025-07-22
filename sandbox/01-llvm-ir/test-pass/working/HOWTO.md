@@ -80,6 +80,9 @@ f3 9.18271e-41
 ```
 # Function argument recording (for a selected function)
 
+* **this no longer works** due to changes made to the LLVM plugin
+    * commits `bc9b341b959b9d32ab434900906dfd9bbd1c67bb` and `01bc6e2d301efcff784efe5e153abcb422822169` should work
+
     ./build-and-run-meta.sh clang++ test-program.cpp -mllvm -Arg -mllvm -llcap-fn-targets-file=./dummy-selected.bin
 
 ```
@@ -106,7 +109,7 @@ f2 31
 f3 9.12582e-41
 ```
 
-# TODO: add commit hash of the stuff below (old):
+# Demo of even older version
 
 To compile and run everything (apart from LLVM):
 
