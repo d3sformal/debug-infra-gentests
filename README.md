@@ -53,7 +53,7 @@ Demo container is available on [Docker Hub](https://https://hub.docker.com/r/vas
 
 Last commit of this repository used to build the container and test the demo: 
 
-`aa850775eeb16675653958e6ae1162660658f95b`
+`d46c9195c61d70f5733284a212f82e671ee9943c`
 
 For usage, refer to the [example-arg-replacement](./sandbox/02-ipc/example-arg-replacement) directory.
 

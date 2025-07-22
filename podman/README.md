@@ -8,6 +8,11 @@ To build: `podman build ./ -f ./Containerfile -t llcap-env`
 
 To run: `podman run -it llcap-env`
 
+### Running end-to-end tests
+
+To run [e2e tests](../sandbox/02-ipc/e2e-tests/), you need to (**inside** the container) 
+create the `[llcap-server](../sandbox/02-ipc/llcap-server/)/target/debug` directory and
+`cp llcap-server/bn/llcap-server llcap-server/target/debug`.
 
 ## Development version
 
