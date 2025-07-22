@@ -42,7 +42,7 @@ Bytes 4+ : payload from the foreign process
 /*
 Special considerations w.r.t. program **crashing**.
   - semaphore & memory should be unregistered by the OS
-Termination protocol: see the after_crash_recovery function
+Termination protocol: see the termination_sequence_raw function
 */
 
 static ShmMeta s_buff_info;

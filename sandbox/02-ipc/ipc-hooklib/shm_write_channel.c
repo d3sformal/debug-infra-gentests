@@ -182,7 +182,9 @@ static bool move_to_next_buff(WriteChannel *self) {
 int termination_sequence_raw(sem_t* sem_full, uint32_t buffer_count) {
   // we'll post to the "full" semaphore exactly 2 * N times (N = number of
   // buffers) this is in order to guarantee N consecutive "empty" buffers being
-  // sent the above relies on the fact that the other side of the communication
+  // sent 
+
+  // the above relies on the fact that the other side of the communication
   // sets the payload length (inside a buffer) to zero before "pushing it back"
   for (uint32_t i = 0; i < 2 * buffer_count; ++i) {
     if (sem_post(sem_full) != 0) {
