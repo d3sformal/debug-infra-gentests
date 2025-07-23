@@ -886,3 +886,48 @@ Separated "finalizing" TODOs, added a bunch of them: [TODOs Final polishing](./0
 * final report construction?
 
 Expecting a lot of work...
+
+# July
+
+Refactorings, tidying, end-to-end tests. Trying to tackle "early test termination".
+
+## Early test termination
+
+Aim: instrument target (tested) functions to terminate right before that function returns.
+
+
+* relevant IR insns: 
+    * `ret` (handled)
+    * `resume` (handled)
+    * `catchswitch` with `unwind to caller` must be replaced with `unwind label %our_resume_label` (or warn)
+    * `cleanupret` same as above, though additional constraints apply... not sure about those (catchpad and personality functions)
+
+### Implementation
+
+We register a call before `ret` and `resume` instruction (exceptions handled only partially - `catchswitch` and `cleanupret`).
+
+**Intro/Roles:**
+
+`llcap-server` spawns the tested binary, this binary forks *just before* a tested call (n-th call)
+is executed. The parent will be called *test coordinator* and the child the *tested call*.
+
+**How it works:**
+
+If a tested call (nth call of the desired function) calls the hook, the library sends a message to the test coordinator and exits with a *designated exit code*
+
+Test coordinator reacts to the message by signaling test PASS/EXCEPTION to the `llcap-server`
+It also reacts to the *designated exit code* and tries to read the message (if didn't receive, signals failure/signal/exit code as ususal).
+
+### Problems / observations
+
+* inside a non-throwing function, there seems to be no way to recognise whether the called function may throw or not
+    * no use walking call graph -> virtual functions, etc.
+    * if possible to detect, `call` instructions could (not confirmed) be replaced with `invoke` pointing to the `ret` / `resume` hooks (see [Alternative](#alternative))
+* even if cleanup code is generated inside the instrumented function, there seems to be no guarantee that the cleanup gets executed when unwinding
+    * this is expected behaviour, if the function is not enclosed in `try`, first exception terminates the program
+    * if there was a way to force cleanup code, we can suggest that users create "scope guard" structs that have a destructor which would then cause the generation of cleanup code
+
+### Alternative
+
+Wrap the function in a `try {} finally {}` block on the LLVM IR level. This can be seen in the
+[LLVM example](https://github.com/llvm-mirror/llvm/blob/2c4ca6832fa6b306ee6a7010bfb80a3f2596f824/examples/ExceptionDemo/ExceptionDemo.cpp#L1075).
