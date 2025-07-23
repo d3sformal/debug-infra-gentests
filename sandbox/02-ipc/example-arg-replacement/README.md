@@ -4,8 +4,16 @@ This is a simple demo that aims to demonstrate the capabilities of the `llcap` t
 
 ## Prerequisites
 
+Either
+
 * LLVM-based tooling (AST plugin as well as the LLVM plugin) built and installed
 * [llcap-server](../llcap-server/) built (or at least `cargo` toolchain installed)
+
+or
+
+* the demo container available on [Docker Hub](https://https://hub.docker.com/r/vasutro/llcap-demo-env)
+
+        podman run -it docker.io/vasutro/llcap-demo-env:1.0.2
 
 ## Workflow
 

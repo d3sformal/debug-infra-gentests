@@ -5,45 +5,20 @@
 
     git submodule update --depth=1 ./sandbox/llvm-project
 
+## Motivation, context
 
-## Setup & Build
+Suppose we develop a program that contains a bug which causes a crash. In this project, we
+try to create tools to help investigate root causes of such bugs by automatically testing the
+target program. The tools and plugins developed as a part of this project aim to assist in automating the following:
 
-> [!note] Prerequisites: 
-> `cmake`, C/C++ toolchain, `ninja`, `xargs`
+* capture of calls to non-builtin/library/external functions
+* capture of argument values of user-specified functions
+* hijacking of the arguments of the user-specified functions
+* monitoring of the hijacked program (where the possibly bug-triggering argument sets will stand out)
 
-### Setup LLVM
+## Demo
 
-The following sets up the `ninja` build system:
-
-```sh
-cd sandbox/
-./setup-llvm-build.sh
-```
-
-### Building
-
-```sh
-cd sandbox/build
-ninja
-# add -jN for parallelism or
-# ninja -j $(nproc)
-```
-
-To install:
-
-> [!Warning]
-> I have no robust idea how or if the `ninja install` (installation step) is reversible. I recommend setting up a VM for your testing & development environment.
-
-
-```sh
-sudo ninja install
-```
-
-To uninstall:
-
-```sh
-xargs rm -rf < install_manifest.txt
-```
+We provide a complete demo in the form of a small C++ program inside the [example-arg-replacement](./sandbox/02-ipc/example-arg-replacement) directory.
 
 ## Containers
 
@@ -59,12 +34,84 @@ For usage, refer to the [example-arg-replacement](./sandbox/02-ipc/example-arg-r
 
 For container internals & development container information, see [podman](./podman/) directory.
 
+## Setup & Build
+
+To **use** the tools, the only thing required is to use our ([patched version of LLVM/clang](./sandbox/01-llvm-ir/clang-ir-mapping-llvm.diff)) (you can use our [demo container](#containers))  and adjusting your build tools to use the patched compiler
+and pass [additional](./sandbox/02-ipc/example-arg-replacement/build-arg-trace.sh) [arguments](./sandbox/02-ipc/example-arg-replacement/build-call-trace.sh) to it.
+
+To **build** the tools:
+
+> [!note] Prerequisites: 
+> `git`, `cmake`, C/C++ toolchain, `ninja`, `xargs`
+
+### Setup LLVM
+
+```sh
+git submodule update --init --depth=1 ./sandbox/llvm-project
+# apply our LLVM patch
+cd ./sandbox/llvm-project
+git apply ../01-llvm-ir/clang-ir-mapping-llvm.diff
+cd ../../
+```
+
+The following sets up LLVM for the `ninja` build system:
+
+```sh
+cd sandbox/
+./setup-llvm-build.sh
+cd ../
+```
+
+### Building
+
+```sh
+# this step takes A LONG TIME (and GBs of disk space)
+cd sandbox/build
+ninja
+# add -jN for parallelism or
+# ninja -j $(nproc)
+```
+
+To install:
+
+> [!Warning]
+> the `ninja install` step may not be totally reversible! We recommend setting up a VM for your testing & development environment
+
+```sh
+sudo ninja install
+# do not clean the build directory yet!
+```
+
+We can now build the AST plugin:
+
+```sh
+cd ../../
+cd ./sandbox/01-llvm-ir/custom-metadata-pass
+./setup-tool.sh
+cd ../../build
+
+# build and install again (only builds the small AST plugin)
+ninja -j $(nproc)
+sudo ninja install
+```
+
+To uninstall:
+
+```sh
+xargs rm -rf < install_manifest.txt
+```
+
+Next, you will also need to build (commands shall be executed in the tools' subdirectories):
+* [LLVM pass plugin](./sandbox/01-llvm-ir/llvm-pass/) (**depends on** `llvm-project`) - `cmake ./ && make` 
+* [hook library](./sandbox/02-ipc/ipc-hooklib/) - `cmake ./ && make` (independent)
+* [`llcap-server`](./sandbox/02-ipc/llcap-server/) - `cargo b` or `cargo b --release` (independednt)
+
 ## Organization
 
 Code style in most sources that `#include` LLVM headers is (auto)formatted by `clangd`.
-Other files have no code style enforced (so far). Most of the time, running `cmake ./ && make` should result in a successful build. 
+Other files have no code style enforced (unless a `.clang-tidy` file is present). Most of the time, running `cmake ./ && make` should result in a successful build. 
  
-Folder naming: 
+Folder naming:
 
 * `working` - a "working folder", a place where most of commands are executed / most files are being changed, gitignored, ...
 * `build*` - most output artifacts will end up here
@@ -98,12 +145,12 @@ LLMs have been used to consult on **exactly and only** these topics:
 
 1. Brief overview of the capacities of LLVM to transfer information between individual LLVM passes
     * dead end
-3. Quick preliminary analysis of a [demangling issue encountered](./notes/0x-llvm-demangling.md)
+2. Quick preliminary analysis of a [demangling issue encountered](./notes/0x-llvm-demangling.md)
     * majority was a "quick intro" to mangled symbol "syntax"
     * analysis in the [linked document](./notes/0x-llvm-demangling.md) was performed by human
-4. Linking of multiple libraries into one
+3. Linking of multiple libraries into one
     * generated `Cmake` examples not functional
-5. Discussion of ZMQ's buffer flushing - whether it is possible to force-flush them
+4. Discussion of ZMQ's buffer flushing - whether it is possible to force-flush them
     * last resort option used after studying documentation & searching internet forums
     * results *not used*
 
