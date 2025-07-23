@@ -26,7 +26,8 @@ class FunctionIDMapper {
   collapseHash(const std::array<uint8_t, SHA256_BYTES> &Data);
 
 public:
- [[nodiscard]] static bool flush(FunctionIDMapper &&Mapper, const std::string &TargetDir);
+  [[nodiscard]] static bool flush(FunctionIDMapper &&Mapper,
+                                  const std::string &TargetDir);
 
   FunctionIDMapper(const std::string &ModuleId);
   llcap::FunctionId addFunction(const std::string &FnInfo,

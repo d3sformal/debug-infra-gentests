@@ -1,5 +1,5 @@
-#include "../../custom-metadata-pass/ast-meta-add/llvm-metadata.h"
 #include "argMapping.hpp"
+#include "../../custom-metadata-pass/ast-meta-add/llvm-metadata.h"
 #include "typeAlias.hpp"
 #include "typeids.h"
 #include "utility.hpp"
@@ -182,8 +182,8 @@ ClangMetadataToLLVMArgumentMapping::getArgumentSizeTypes() const {
   return Res;
 }
 
-LlcapSizeType
-ClangMetadataToLLVMArgumentMapping::llvmArgNoSizeType(unsigned int LlvmArgNo) const {
+LlcapSizeType ClangMetadataToLLVMArgumentMapping::llvmArgNoSizeType(
+    unsigned int LlvmArgNo) const {
   LlcapSizeType Res = LlcapSizeType::LLSZ_INVALID;
   for (auto &&[CustTName, Desc] : m_typeIndicies) {
     auto &&[SizeType, _] = Desc;
@@ -194,7 +194,7 @@ ClangMetadataToLLVMArgumentMapping::llvmArgNoSizeType(unsigned int LlvmArgNo) co
       if (Res == LlcapSizeType::LLSZ_INVALID) {
         Res = Sz;
       } else {
-        llvm::errs() << "Serious error!!!\nLLVM No Arg " << LlvmArgNo
+        llvm::errs() << "Serious error!!!\nLLVM Arg Number" << LlvmArgNo
                      << " of function " << m_fn.getName()
                      << " found to be associated with > 1 custom size "
                         "types!\nThe current one is: "

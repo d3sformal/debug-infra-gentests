@@ -44,6 +44,8 @@ class ClangMetadataToLLVMArgumentMapping {
   // and is accounted for)
   std::vector<size_t> m_shiftMap;
   bool m_instanceMember;
+  // tag (e.g. VSTR_LLVM_CXX_DUMP_STDSTRING) -> pairs of (sizeType, indicies of
+  // all arguments of this sizeType)
   std::map<llvm::StringRef, std::pair<LlcapSizeType, std::set<size_t>>>
       m_typeIndicies;
   llvm::Function &m_fn;

@@ -1,4 +1,3 @@
-#include "llvm/Pass.h"
 #include "../../custom-metadata-pass/ast-meta-add/llvm-metadata.h"
 #include "argMapping.hpp"
 #include "constants.hpp"
@@ -25,6 +24,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include <llvm/IR/Type.h>
+#include "llvm/Pass.h"
 #include <llvm/Passes/OptimizationLevel.h>
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
@@ -36,6 +36,7 @@
 #include <ios>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 
 using namespace llvm;
@@ -80,6 +81,24 @@ cl::opt<bool> InstrumentFnExit(
     "llcap-instrument-fn-exit",
     cl::desc("Whether to generate ret/resume function exit hooks"));
 } // namespace args
+
+struct SCustomTypeDescription {
+  const char *m_hookFnName;
+  const char *m_log_name;
+};
+
+const std::unordered_map<const char *, LlcapSizeType> SCustomSizes{
+    {VSTR_LLVM_CXX_DUMP_STDSTRING, LlcapSizeType::LLSZ_CUSTOM},
+    // invalid size means
+    // that this type index is just a "flag" and
+    // has no effect on the "real argument size" that the instrumentation will
+    // work with
+    {VSTR_LLVM_UNSIGNED_IDCS, LlcapSizeType::LLSZ_INVALID}};
+
+const std::unordered_map<const char *, SCustomTypeDescription> SCustomHooks{
+    {VSTR_LLVM_CXX_DUMP_STDSTRING,
+     SCustomTypeDescription{.m_hookFnName = "llcap_hooklib_extra_cxx_string",
+                            .m_log_name = "std::string"}}};
 
 // there is no way to tell built-ins from user functions in the IR,
 // we can only query external linkage and whether a function is a "declaration"
@@ -147,8 +166,9 @@ GlobalVariable *createGlobalStr(Module &M, StringRef Val, StringRef Id) {
   return GV;
 }
 
-void insertTestEpilogueHook(Function &Fn, Module &M, llcap::ModuleId ModuleIntId,
-                       llcap::FunctionId FunctionIntId) {
+void insertTestEpilogueHook(Function &Fn, Module &M,
+                            llcap::ModuleId ModuleIntId,
+                            llcap::FunctionId FunctionIntId) {
   if (!args::InstrumentFnExit.getValue()) {
     return;
   }
@@ -160,11 +180,15 @@ void insertTestEpilogueHook(Function &Fn, Module &M, llcap::ModuleId ModuleIntId
       M.getContext(), APInt(sizeof(llcap::ModuleId) * 8, ModuleIntId));
   FunctionCallee EpilogueCallFn = M.getOrInsertFunction(
       "hook_test_epilogue",
-      FunctionType::get(Type::getVoidTy(M.getContext()), {ModIdConstant->getType(), FnIdConstant->getType()}, false));
-  
+      FunctionType::get(Type::getVoidTy(M.getContext()),
+                        {ModIdConstant->getType(), FnIdConstant->getType()},
+                        false));
+
   FunctionCallee EpilogueExceptionFn = M.getOrInsertFunction(
-    "hook_test_epilogue_exc",
-    FunctionType::get(Type::getVoidTy(M.getContext()), {ModIdConstant->getType(), FnIdConstant->getType()}, false));
+      "hook_test_epilogue_exc",
+      FunctionType::get(Type::getVoidTy(M.getContext()),
+                        {ModIdConstant->getType(), FnIdConstant->getType()},
+                        false));
   // we need to walk all the basic blocks, look for ret, resume, catchswitch,
   // cleanupret instructions and place a call before them
 
@@ -192,7 +216,10 @@ void insertTestEpilogueHook(Function &Fn, Module &M, llcap::ModuleId ModuleIntId
       ++ToSkip;
       if (I->getOpcode() == Instruction::Ret ||
           I->getOpcode() == Instruction::Resume) {
-        CallInst *CallInsn = CallInst::Create((I->getOpcode() == Instruction::Resume ? EpilogueExceptionFn : EpilogueCallFn), {ModIdConstant, FnIdConstant});
+        CallInst *CallInsn = CallInst::Create(
+            (I->getOpcode() == Instruction::Resume ? EpilogueExceptionFn
+                                                   : EpilogueCallFn),
+            {ModIdConstant, FnIdConstant});
         CallInsn->insertBefore(I->getIterator());
         // add an instruction to skip -> we should skip past the Ret/Resume
         ++ToSkip;
@@ -254,8 +281,8 @@ void insertFnEntryHook(IRBuilder<> &Builder, Module &M,
 }
 
 void instrumentArgHijack(IRBuilder<> &Builder, Module &M, Argument *Arg,
-                                Type *Ty, const FunctionCallee &Callee,
-                                ConstantInt *ModId, ConstantInt *FnId) {
+                         Type *Ty, const FunctionCallee &Callee,
+                         ConstantInt *ModId, ConstantInt *FnId) {
   // inserts alloca, call, load instruction sequence where
   // the alloca allocates "some" bytes, pointer to those bytes
   // is passed to a hooklib call (along with original argument)
@@ -263,14 +290,20 @@ void instrumentArgHijack(IRBuilder<> &Builder, Module &M, Argument *Arg,
   //
   // it is expected hooklib somehow initializes the pointer to newly
   // allocated data
-  // TODO: destructors (where to call, for what object)
-  // TODO: data passed in more than one register (Arg would only be half of
-  // the data e.g. for 128bit number)
+
+  // Weirdness introduced by argument hijacking:
+  // - destructors (where to call, for what object) - not called (const-ness,
+  // similarly why value/property replacement in-place is not performed)
+  // - data passed in more than one register (Arg would only be half of
+  // the data e.g. for 128bit number) - this should be handled correctly by
+  // hijacking all parts of such arguments hopefully (current index shifting is
+  // done based only on sret). Plus, custom data shall be only instrumented
+  // by-pointer, not by value
   auto *Alloca = Builder.CreateAlloca(Ty);
 
   if (Alloca == nullptr) {
-    errs() << "Instrumentation failed: Alloca";
-    exit(1); // TODO?
+    errs() << "Instrumentation failed: Alloca\n";
+    exit(1);
   }
   IF_DEBUG {
     Alloca->dump();
@@ -285,8 +318,8 @@ void instrumentArgHijack(IRBuilder<> &Builder, Module &M, Argument *Arg,
   auto *Load = Builder.CreateAlignedLoad(
       Ty, Alloca, M.getDataLayout().getPrefTypeAlign(Ty));
   if (Alloca == nullptr) {
-    errs() << "Instrumentation failed: Load";
-    exit(1); // TODO?
+    errs() << "Instrumentation failed: Load\n";
+    exit(1);
   }
 
   // replaces all usages Arg (argument to be captured/hijacked)
@@ -412,19 +445,26 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
     }
   }
 
-  // TODO make this more customizable
-  if (Mapping.llvmArgNoMatches(ArgNum, VSTR_LLVM_CXX_DUMP_STDSTRING)) {
-    if (!ArgT->isPointerTy()) {
-      errs() << "std::string hooks cannot handle non-pointer argument of this "
-                "type yet\n";
-      return;
-    }
+  bool Instrumented = false;
+  for (auto &&[key, desc] : SCustomHooks) {
+    if (Mapping.llvmArgNoMatches(ArgNum, key)) {
+      if (!ArgT->isPointerTy()) {
+        errs() << desc.m_log_name
+               << " hooks cannot handle non-pointer argument of this "
+                  "type yet\n";
+        return;
+      }
 
-    IF_VERBOSE errs() << "Inserting call std::string\n";
-    auto CallCxxString =
-        GetOrInsertHookFn("llcap_hooklib_extra_cxx_string", ArgT);
-    instrumentArgHijack(Builder, M, Arg, ArgT, CallCxxString, ModIdConstant,
-                        FnIdConstant);
+      IF_VERBOSE errs() << "Inserting call" << desc.m_log_name << "\n";
+      auto CallCxxString = GetOrInsertHookFn(desc.m_hookFnName, ArgT);
+      instrumentArgHijack(Builder, M, Arg, ArgT, CallCxxString, ModIdConstant,
+                          FnIdConstant);
+      Instrumented = true;
+      break;
+    }
+  }
+
+  if (Instrumented) {
     return;
   }
 
@@ -448,23 +488,15 @@ bool isStdFn(const Function &Fn, const Str &DemangledName,
 ClangMetadataToLLVMArgumentMapping
 getFullyRegisteredArgMapping(Function &Fn, IdxMappingInfo &IdxInfo) {
   ClangMetadataToLLVMArgumentMapping Mapping(Fn, IdxInfo);
-  Mapping.registerCustomTypeIndicies(VSTR_LLVM_CXX_DUMP_STDSTRING,
-                                     LlcapSizeType::LLSZ_CUSTOM);
-  Mapping.registerCustomTypeIndicies(
-      VSTR_LLVM_UNSIGNED_IDCS,
-      LlcapSizeType::LLSZ_INVALID); // invalid size -> indeterminate size means
-                                    // that this type index is just a "flag" and
-                                    // has no effect on the final size read
+  for (auto &&[key, size] : SCustomSizes) {
+    Mapping.registerCustomTypeIndicies(key, size);
+  }
   return Mapping;
 }
 
 bool instrumentArgs() {
   return args::InstrumentationType.getValue() == args::InstrumentationType::Arg;
 }
-
-const char *MappingParseGuideMetaKey = "LLCAP-CLANG-LLVM-MAP-PRSGD";
-const char *MappingInvlIdxMetaKey = "LLCAP-CLANG-LLVM-MAP-INVLD-IDX";
-const char *MappingMetaKey = "LLCAP-CLANG-LLVM-MAP-DATA";
 
 class Instrumentation {
 public:
@@ -476,6 +508,8 @@ public:
 
 class FunctionEntryInsertion : public Instrumentation {
 private:
+  // TODO: forgotten exported metdata? (test foo(u128, std::string) and similar)
+  static constexpr char *MAP_META_KEY = "LLCAP-CLANG-LLVM-MAP-DATA";
   FunctionIDMapper m_fnIdMap;
   Module &m_module;
   IdxMappingInfo m_seps;
@@ -496,7 +530,7 @@ public:
       Str DemangledName = llvm::demangle(MangledName);
 
       IF_DEBUG {
-        if (MDNode *N = Fn.getMetadata(MappingMetaKey)) {
+        if (MDNode *N = Fn.getMetadata(MAP_META_KEY)) {
           errs() << DemangledName << ": \n";
           N->dumpTree();
         }
@@ -509,7 +543,8 @@ public:
       BasicBlock &EntryBB = Fn.getEntryBlock();
       IRBuilder<> Builder(&EntryBB.front());
 
-      // TODO: this needs improvement (Vector types, ...)
+      // Note: there are more LLVM IR types that theoretically could be handled
+      // in the future (e.g. the SIMD Vector type)
       Set<llvm::Type::TypeID> AllowedTypes;
       {
         using llvm::Type;
@@ -528,7 +563,7 @@ public:
           }
         }
       }
-      // TODO handle viability
+      // TODO handle viability - tied to "MAP_META_KEY"?
       ClangMetadataToLLVMArgumentMapping Mapping =
           getFullyRegisteredArgMapping(Fn, m_seps);
       const auto FunId = m_fnIdMap.addFunction(DemangledName, Mapping);
@@ -681,10 +716,11 @@ collectTracedFunctionsForModule(Module &M) {
 }
 
 Maybe<IdxMappingInfo> getIdxMappingInfo(Module &M) {
+  constexpr char *PARSE_GUIDE_META_KEY = "LLCAP-CLANG-LLVM-MAP-PRSGD";
+  constexpr char *INVL_IDX_META_KEY = "LLCAP-CLANG-LLVM-MAP-INVLD-IDX";
   IdxMappingInfo Result;
 
-  if (auto MbStr =
-          getMetadataStrVal(M.getNamedMetadata(MappingParseGuideMetaKey));
+  if (auto MbStr = getMetadataStrVal(M.getNamedMetadata(PARSE_GUIDE_META_KEY));
       MbStr && MbStr->size() == 3) {
     Result.primary = MbStr->at(0);
     Result.group = MbStr->at(1);
@@ -695,10 +731,9 @@ Maybe<IdxMappingInfo> getIdxMappingInfo(Module &M) {
     return NONE;
   }
 
-  // TODO: make mandatory
   Result.invalidIndexValue = 0xFFFFFFFFFFFFFFFF;
   // try get string from metadata
-  if (auto MbStr = getMetadataStrVal(M.getNamedMetadata(MappingInvlIdxMetaKey));
+  if (auto MbStr = getMetadataStrVal(M.getNamedMetadata(INVL_IDX_META_KEY));
       MbStr) {
     // try parse u64 from the string
     if (auto Parsed = tryParse<u64>(*MbStr); Parsed) {
