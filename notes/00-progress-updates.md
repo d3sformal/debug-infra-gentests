@@ -212,7 +212,7 @@ define dso_local void @_Z13pass128Struct11Fits128Bits(i64 %0, i64 %1) #0 !VSTR-N
 
 [A reduced diff, showcasing the functionality](./misc/clang-ir-index-mapping.diff)
 
-[A full diff that has to be applied](../sandbox/01-llvm-ir/clan-ir-mapping-full.diff)
+[A full diff that has to be applied](../sandbox/01-llvm-ir/clan-ir-mapping-llvm.diff)
 
 ## Sketch of a custom type support
 
@@ -685,7 +685,7 @@ deactivate LLCS
 * cleanup - currently, the test coordinator simply terminates (`exit`) right after all tests are executed - the binary has no chance to perform any sort of cleanup that could be part of the binary's implementation
 * (experimental) `std::string` implementation & custom types concerns:
     * replacement is currently done by creating a new pointer on the stack
-    * is argument is an `in out` argument (passed e.g. by non-const reference), the effects of the will be mostly a no-op (as modifications will be done on a different pointer, different object)
+    * if argument is an `in out` argument (passed e.g. by non-const reference), the effects of the will be mostly a no-op (as modifications will be done on a different pointer, different object)
     * alternative approach would be to "re-allocate" or "replace" the contents of the pointer argument
         * would most likely violate invariants (already stored hashes of such objects, `const`-ness)
         * compared to the current approach, it does not leak memory if the object is "replacable"
