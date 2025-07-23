@@ -5,10 +5,9 @@
 * ~~think about non-deterministic traces~~
     * ~~do we permit relying on function call determinism?~~
 * ~~think about C++ objects - capturing inside of them, this, ...~~
-* better source organisation, READMEs where possible
-    * a link tree in the root README
+* ~~better source organisation, READMEs where possible~~
+    * ~~a link tree in the root README~~
 * ~~move `llvm-project` somewhere more sensible~~
-* add links to commits/READMEs/other files for every "DONE" item in this file
 * ~~unify SOLVED vs DONE items~~
 * ~~public repo?~~
 * ~~remove ZMQ references entirely (too expensive to maintain)~~
@@ -211,6 +210,29 @@ Currently the language rules around mutability and sharing when reading and writ
 memory buffers are enforced by `RefCell` and a check that "no raw pointer is ever casted from
 `*const` to `*mut`".
 
-The following snippet is a prototype of a checked and fully encapsulated "reader" from
-a pointer (to shared memory). It provides a restrictive interface that disallow the above-mentioned
-cast.
+# Future Work
+
+## Ensuring all exceptions are always detected
+
+In the `fn-exit` instrumentation mode of the [LLVM pass](../sandbox/01-llvm-ir/llvm-pass/) (used by passing `-mllvm -llcap-instrument-fn-exit` to `clang`), only `ret` and `resume` IR instructions are
+instrumented. The instrumentation simply inserts a `call hook_test_epilogue` or `hook_test_epilogue_exc` before `ret` and `resume` respectively.
+
+Other exception-handling instructions are not handled yet. The possible soltions and an
+LLVM example is linked [here](./00-progress-updates.md#problems--observations) and [here](./00-progress-updates.md#alternative).
+
+If this feature will be implemented, the `-mllvm -llcap-instrument-fn-exit` shall be the default
+and instrumentation without `fn-exit` will only serve for debug purposes perhaps.
+
+## Eliminating the need for the LLVM patch
+
+Currently, the LLVM patch is used to "send" data from the AST plugin to the LLVM pass plugin.
+This is because of two reasons:
+1. Mark functions that are eligible for call tracing (non-library, non-external) so that LLVM pass
+may detect them
+2. Mark offsets of arguments "of interest" (e.g. the `std::string` type which appears as a pointer in the IR)
+
+The LLVM IR debug metadata may provide enough information to eliminate `2`. (i.e. it should be possible to map the IR argument index to the C++ type of the arugment).
+
+We are unsure with regards to `1` though. So far, the only option that avoids the LLVM patch is
+checking of mangled function names which is an ugly and unstable solution.
+
