@@ -138,7 +138,7 @@
 * trouble with filtering (non) library funcitons - information not available in the IR
     * **[DONE]** **Idea**: add metadata to the functions in the IR that could tell the LLVM pass if the function is `#include`d, library, ...
         * [LLVM Discussion](https://discourse.llvm.org/t/how-to-distinguish-between-user-defined-function-in-a-program-and-library-functions/54401/7)
-    * more metadata could help with a GUI integration later (emitting line informatio metadata - *using debug information metadata*, ...)
+    * more metadata could help with a GUI integration later (emitting line information metadata - *using debug information metadata*, ...)
     * **[DONE]** inject custom metadata regarding (non)library/builtin functions
 * **[DONE]** capturing inside a lambda, overall lambda instrumentation
 * **[DONE]** LLVM [intrinsics](http://llvm.org/docs/LangRef.html#intrinsics) - can they be used?
@@ -222,7 +222,7 @@
 ```
 
 
-# **[DONE]** Revamp of buffer reading and writng
+# **[DONE]** Revamp of buffer reading and writing
 
 * implemented via `BorrowedReadBuffer` and `BorrowedOneshotWritePtr`
 
@@ -230,13 +230,13 @@ Currently the language rules around mutability and sharing when reading and writ
 memory buffers are enforced by `RefCell` and a check that "no raw pointer is ever casted from
 `*const` to `*mut`".
 
-The following snipped is a prototype of a checked and fully encapsulated "reader" from
+The following snippet is a prototype of a checked and fully encapsulated "reader" from
 a pointer (to shared memory). It provides a restrictive interface that disallow the above-mentioned
 cast.
 
 
 <details>
-<summary>Old snipped, click to expand</summary>
+<summary>Old snippet, click to expand</summary>
 
 ```rust
 /// an object that represents reading permission on a given contiguous section of
