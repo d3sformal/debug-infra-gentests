@@ -12,6 +12,7 @@ as a C library (or that we have to deal with C++ mangling when calling the libra
 * [`llvm-pass`](./llvm-pass/)
     * contains a customized LLVM pass that goes through the IR and modifies it
     * compiled as a static library to be passed later to the LLVM toolchain
+    * arguments are passed in the following way: `-mllvm -the-llvm-pass-arg` (see comments in [`pass.cpp`](./llvm-pass/src/pass.cpp) or search `-mllvm` throughout the repository)
 * [`test-pass`](./test-pass/)
     * a playground for testing the outputs of the custom LLVM pass
     * Contents: 

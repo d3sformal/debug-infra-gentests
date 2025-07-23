@@ -55,14 +55,14 @@
         * document, document turning on, ...
 * investigate debug metadata usage instead of current approach
 * validate argument splitting works/is disallowed
-* complete `llcap-server` readme 
+* complete `llcap-server` readme
     * ~~structure~~
     * ~~build reqs (bindgen, header file)~~
     * ~~update cmdline options~~
     * ~~link examples~~
-* document debugging/development techniques
+* ~~document debugging/development techniques~~
     * ~~verbosity of llcap server~~
-    * passing arguments to the llvm plugins
+    * ~~passing arguments to the llvm plugins~~
 
 
 **List of topics:**
