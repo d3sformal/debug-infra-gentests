@@ -160,7 +160,7 @@ to communicate with all the surrounding infrastructure, we implement in this pro
 The `llcap-server` ("LL capture" server) is the largest piece of the architectural puzzle we present.
 The `llcap-server` is designed to be the central point: it launches and monitors the instrumented binary, it sets up the environment required by the instrumented program and `hooklib`, and cooperates with them, achieving the goals of the project by interacting with the user.
 
-TODO diagram: modified binary, hooklib, llcap-server and "outputs"
+![High-level concept diagram](./notes/images/diags/root-high-level.png)
 
 ### Phases
 
@@ -168,20 +168,28 @@ The workflow we will present consists of 3 phases. Each phase requires slightly 
 
 1. **Call tracing** - collects information about what functions have been entered in the instrumented program
     * user selects the **target functions**, which are subject to further tracing and final testing
+    * the selection is then used to perform instrumentation of the *target functions* 
+
+Runtime diagram:
+
+![Call tracing high-level runtime diagram](./notes/images/diags/root-high-ctracing.png)
+
 2. **Argument capture** - collects raw copies of arguments of the *target functions* and stores them for the subsequent phases
     * we call the set of all arguments of the `n`-th call to function `foo` the **foo's n-th argument packet**
+
+Runtime diagram (the binary running is the binary created by instrumenting *target functions*):
+
+![Argument capture high-level runtime diagram](./notes/images/diags/root-high-acapture.png)
+
 3. **Testing** - performs an exhaustive replacement of arguments of a target function with all its *argument packets* recorded in the previous (*argument capture*) phase
-    * our implementation performs a `fork`-based testing - the *instrumented binary* is launched in testing mode and monitored by the `llcap-server`. We call this instance of the instrumented program the **test coordinator**
-    * *test coordinator* decides when a test is launched (when a `fork` is performed and arguments are substituted with an *argument packet* obtained from the `llcap-server`)
+    * our implementation performs a `fork`-based testing - the *instrumented binary* is launched in testing mode and monitored by the `llcap-server`. We call this instance of the instrumented program the **test coordinator** and its functionality is implemented inside `hooklib`
+    * *test coordinator* decides when a test is launched (when a `fork` is performed and arguments are substituted with an *argument packet* obtained from the `llcap-server`). It also monitors the test and reports results back to the `llcap-server`
 
-TODO diagram: high-level call tracing same as diagram above, llcap-server listens for function entrance
+Runtime diagram:
 
-TODO diagram: high-level argument capture -> llcap-server listens for args
-
-TODO diagram: high-level testing -> llcap-server provides args, test coordinator, fork approach (forked child) 
+![Testing high-level runtime diagram](./notes/images/diags/root-high-testing.png)
 
 TODO: older diagrams, rename to match concepts
-
 
 # AI/LLM usage disclosure
 
