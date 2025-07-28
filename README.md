@@ -165,7 +165,7 @@ The `llcap-server` is designed to be the central point: it launches and monitors
 
 ### Phases
 
-The workflow we will present consists of 3 phases. Each phase requires slightly different instrumentation. Two instrumentation passes are required to be performed on the tested program (1 for the first phase, the other for the rest). Here, we list the phases and describe their purpose. We also **emphasize** important concepts:
+The workflow we will present consists of 3 phases. Each phase requires slightly different instrumentation. Two instrumentation passes on the tested program are required (1 for the first phase, the other for the rest). Here, we list the phases and describe their purpose. We also **emphasize** important concepts:
 
 1. **Call tracing** - collects information about what functions have been entered in the instrumented program
     * user selects the **target functions**, which are subject to further tracing and final testing
