@@ -37,7 +37,7 @@ For container internals & development container information, see [podman](./podm
 ## Setup & Build
 
 To **use** the tools, you merely have to use our ([patched version of LLVM/clang](./sandbox/01-llvm-ir/clang-ir-mapping-llvm.diff)) (you can use our [demo container](#containers)), 
-adjusting your build tools to use the patched compiler and passing 
+adjust your build tools to use the patched compiler and pass 
 [additional](./sandbox/02-ipc/example-arg-replacement/build-arg-trace.sh) [arguments](./sandbox/02-ipc/example-arg-replacement/build-call-trace.sh) to it.
 
 To **build** the tools:
