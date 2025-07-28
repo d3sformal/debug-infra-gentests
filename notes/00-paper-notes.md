@@ -83,7 +83,7 @@
 - comparisons with dynamic instrumentation techniques
 - nice examples of LLVM IR (wrt. the paper's topic & even as a sort of introductory material)
 - calls to a symbolic execution library - the EXACT thing I've proposed (for syntactic version)
-    - this (and above) prompted me to implement LLVM IR experiment
+    - this (and above) prompted me to implement [LLVM IR experiment](../sandbox/01-llvm-ir/test-pass/)
     - simple, what remains is the execution forking
 
 # AURORA: Statistical Crash Analysis for Automated Root Cause Explanation

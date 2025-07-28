@@ -105,7 +105,7 @@ Will try on smaller example.
 * `clang -Xclang -ast-dump srcfile`
 
 
-Progress: **sandbox-00-clang-ast** demonstrates how to inject code to a source-available project.
+Progress: [sandbox/00-clang-ast](../sandbox/00-clang-ast/) demonstrates how to inject code to a source-available project.
 
 <details>
 <summary>
@@ -115,8 +115,8 @@ Expand **Before**
 ```c++
 #include <iostream>
 
+// just a placeholder for any kind of "tracing framework" 
 namespace __framework {
-
     class Reporter {
         public:
         template<class T>

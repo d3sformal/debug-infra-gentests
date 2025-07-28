@@ -43,17 +43,17 @@ The current implementation instruments the sample (C++-only) code to "record" fu
 * [library interface](../sandbox/00-clang-ast/inject-w-library/lib/include/funTrace.hpp)
 * [AST rewriter](../sandbox/00-clang-ast/cpy-to-llvm-project/clang-tools-extra/ast-injection-with-lib/AstInjection.cpp)
 * [test program - raw](../sandbox/00-clang-ast/instr-rapid-iter/test-program.cpp)
-* to perform instrumentation, run either `ftrace-program-instr.sh` for function tracing or `program-instr.sh` for parameter tracing (in `sandbox/00-clang-ast/instr-rapid-iter/working` directory)
+* to perform instrumentation, run either [`ftrace-program-instr.sh`](../sandbox/00-clang-ast/instr-rapid-iter/working/ftrace-program-instr.sh) for function tracing or [`program-instr.sh`](../sandbox/00-clang-ast/instr-rapid-iter/working/program-instr.sh) for parameter tracing
 
 The only positive compared to a custom LLVM IR pass would be the ability to easily differentiate between built-in/library/`#include`d functions from "user" functions.
 
 ## Runtime overhead and possible speedup by recording in two passes
 
 It might come in handy to perform a two-phase execution before test-case generation:
-1. Run Function Tracing Instrumented code - generates simply put a list of called (and exited) functions
-    * then let developer select a funciton whose input values should be recorded
+1. Run Function Tracing Instrumented code - generates a list of called (and exited) functions
+    * **then let user select** a funciton whose input values should be recorded
 2. Run Function Argument Recording Instrumented code - no user interaction needed
-3. Run Function Unit-Testing code using recorded Arguments
+3. Run Function Unit-Testing code using recorded arguments
 
 This introduces a overhead of recompilation for each different function to be examined. Results could be cached though or the instrumentation could be "conditional" based on a function identifier.
 
@@ -69,7 +69,6 @@ Approach similar to the AST rewriting: instrument functions & call to a runtime 
     * provides a simple interface as a proof-of-concept
 * [code to instrument in C](../sandbox/01-llvm-ir/test-pass/test-program.c)
 * [code to instrument in C++](../sandbox/01-llvm-ir/test-pass/test-program.cpp)
-
 * [how to instrument the sample code and outputs for the instrumented code](../sandbox/01-llvm-ir/test-pass/working/HOWTO.md)
     * instrumented IR 
 
@@ -101,7 +100,7 @@ Approach similar to the AST rewriting: instrument functions & call to a runtime 
 
 Remedies:
 * a simple [patch](../sandbox/01-llvm-ir/custom-metadata-pass/custom-metadata.diff) to clang/llvm
-    * add a method to `FunctionDecl` to **set** string key-value metadata pair 
+    * add a method to `FunctionDecl` to **set** string key-value metadata pair
     * plus a method to **fetch** the metdata later when constructing LLVM IR
 
 * [AST plugin](../sandbox/01-llvm-ir/custom-metadata-pass/ast-meta-add/AstMetaAdd.cpp) walks the AST and injects metadata 
@@ -150,7 +149,7 @@ the mapping occurs but was unable to make it correct, reaching a dead end.
 
 2. **Using metadata and a fragment of code from LLVM**
 
-Of course, argument order and introduction of extra arguments is entirely dependent on the target architecture. As such, when experimenting with more and more variants of functions in [the C++ test program](../sandbox/01-llvm-ir/test-pass/test-program.cpp), I ended up discovering that **LLVM may return an argument "in a register" that is passed as an *output* argument** (indicated by IR `sret` attribute). When digging around for more ABI-specific details, I found a fragment of code (class `ClangToLLVMArgMapping`) that allows to map function arguments as seen in AST to their representations in LLVM IR.
+Of course, argument order and introduction of extra arguments is entirely dependent on the target architecture. As such, when experimenting with more and more variants of functions in [the C++ test program](../sandbox/01-llvm-ir/test-pass/test-program.cpp), I ended up discovering that **LLVM may return an argument "in a register" that is passed as an *output* argument** (indicated by the IR `sret` attribute). When digging around for more ABI-specific details, I found a fragment of code (class eloquently named `ClangToLLVMArgMapping`) that allows to map function arguments as seen in AST to their representations in LLVM IR.
 
 This fragment is not "exported" in a header file, therefore - to minimize modifications to the LLVM codebase, I copy-pasted this fragment to the relevant part of source code, where I plan on converting the AST argument indicies to LLVM ones. Luckily, the already-modified area of `CodeGenFunction.cpp`'s `StarFunction` has all the required objects initialized and ready to be used.
 
@@ -212,7 +211,7 @@ define dso_local void @_Z13pass128Struct11Fits128Bits(i64 %0, i64 %1) #0 !VSTR-N
 
 [A reduced diff, showcasing the functionality](./misc/clang-ir-index-mapping.diff)
 
-[A full diff that has to be applied](../sandbox/01-llvm-ir/clan-ir-mapping-llvm.diff)
+[A full diff that has to be applied](../sandbox/01-llvm-ir/clang-ir-mapping-llvm.diff)
 
 ## Sketch of a custom type support
 
@@ -419,7 +418,7 @@ In the current version, `llcap-server` initializes 2 semaphores (indicating a *f
 
 The "buffers" region contains `N` buffers, each of length `L`. The "meta" region contains the initial communication parameters (number, length and total length of buffers). It is expected the `llcap-server` **runs first** to initialize the memory mappings and only then can the target application be started.
 
-The target application maps the created memory regions and "opens" the semaphores. As of April 27th, the functionality includes correct memory mapping and opening of semaphores (no interaction yet).
+The target application maps the created memory regions and "opens" the semaphores. As of April 27th 2025, the functionality includes correct memory mapping and opening of semaphores (no interaction yet).
 
 Files implementing this approach:
 
@@ -439,7 +438,7 @@ Consumer processes the buffer. Meanwhile producer moves onto another buffer by w
 
 ## Call tracing finalization & bugfixes
 
-* removal of ZMQ from all layers
+* removal of [ZMQ](#zeromq-communication-and-the-termination-issue) from all layers
 
 ### Module ID Shrinking
 
@@ -474,7 +473,7 @@ Consumer processes the buffer. Meanwhile producer moves onto another buffer by w
     * if not mapping, we introduce at least 8B of overhead per call more than 3rd (which for functions with small arguments becomes significant)
         * `fnid` + `modid` (8B so far) + `len` vs `cap_id` (probably less than 256)
 * seems like the 3rd option is the best (spoiler: it is not)
-    * mapping ~~can~~ **can't** be created as part of the "modmap" generation (because of the separation of module compilation)
+    * mapping ~~can~~ **can't** be created as part of the "modmap" generation (can't: because of the separation of module compilation - there is no "global state" shared between the separate compilations)
 
 #### High level overview
 
@@ -584,11 +583,11 @@ On a lower level, the `llcap-server` spawns the application as many times as the
 
 For a function `foo`, we may have recorded `n` calls whose arguments we captured. Currently, we spawn `n` test subprocesses for `foo` testing. In each process, we hijack the arguments of `n`-th call to `foo`, leaving the rest unmodified.
 
-### Test subprocess - the test "coordinator"
+### Test subprocess - the "test coordinator"
 
 The test subprocess utilizes modified hook library to execute tests using the `fork` method:
 
-The original subprocess is the test "coordinator": once the coordinator reaches its `n`th call of `foo` (that is supposed to be hijacked), it enters a branch which:
+The original subprocess is the **test coordinator**: once the *coordinator* reaches its `n`th call of `foo` (that is supposed to be hijacked), it enters a branch which:
 
 1. sets up communication channels to the `llcap-server`
 2. registers the start of the test of `foo` at call index `n`
@@ -602,7 +601,7 @@ Then, for each set of arguments, it
 5. report the end of the entire test session for `foo` and call index `n`
 6. terminate
 
-In other words, the test coordinator simply prepares the environment for the test cases (by simply executing) up to a specific call of `foo` and runs them while monitoring them.
+In other words, the test *coordinator* simply prepares the environment for the test cases (by simply executing) up to a specific call of `foo` and runs them while monitoring them.
 
 The monitoring phase has 2 responsibilities:
 
@@ -677,6 +676,7 @@ deactivate LLCS
 ### Issues
 
 * "diagonal" test cases are not skipped (instrumenting `n`-th call with `n`-th set of captured arguments is the same as running the original uninstrumented binary)
+    * discussed -> no issue (they could still differ, esp. with nondeterministic programs)
 * *paralelization potential*: the current implementation of the test coordinator waits for each test separately, I believe that test cases can be multiplexed by the same mechanism as the test case termination / test case messages are handled - `poll` with a timeout
 * shared state - an obvious issue that comes from parallelization of the testing phase
     * `llcap-server` testing can be forced to be sequential (is not currently sequential - TODO?)
