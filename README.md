@@ -108,33 +108,79 @@ Next, you will also need to build (commands shall be executed in the tools' subd
 
 ## Organization
 
-Code style in most sources that `#include` LLVM headers is (auto)formatted by `clangd`.
-Other files have no code style enforced (unless a `.clang-tidy` file is present). Most of the time, running `cmake ./ && make` should result in a successful build. 
+Code style in most sources that `#include` LLVM headers is (auto)enforced by `clangd`/`clang-tidy` (LLVM style).
+Other files have no code style enforced (unless a `.clang-tidy` file is present). Most of the time, running `cmake ./ && make` should result in a successful build.
  
-Folder naming:
-
-* `working` - a "working folder", a place where most of commands are executed / most files are being changed, gitignored, ...
-* `build*` - most output artifacts will end up here
-
 
 1. [`notes`](./notes/) subdirectory generally unorganized notes
-    * [`00-paper-notes`](./notes/00-paper-notes.md) - related papers
-    * [`00-testing-alternatives`](./notes/00-testing-alternatives.md) - bulletpoint-style thoughts on, pros/cons of and issues with various methods 
-2. [`sandbox`](./sandbox/)
-    * [`00-clang-ast`](./sandbox/00-clang-ast/) - explores source-level modification of the Clang's AST
-        * idea: 
-            * modify source code by inspecting and rewriting the AST
-            * recompile modified source code with an instrumentation library
-    * [`01-llvm-ir`](./sandbox/01-llvm-ir/) - explores LLVM IR modification
-        * idea:
-            * compile source into LLVM Bitcode
-            * inspect and modify generated Bitcode by adding instructions (mostly just calls into instrumentation library functions)
-            * compile modified Bitcode with an instrumentation library
-    * [`02-ipc`](./sandbox/02-ipc/) - next stage -  experiments based on IPC
-        * idea:
-            * we need to extract data from the instrumented application
-            * instrumentation library's responsibility is to establish connections to "us" and send "us" data
-            * also serves as a preparation for the final stage: executing targeted unit tests (i.e. sending data from "us" to unit tests - input data into cloned process)
+    * [`Notes from related papaers`](./notes/00-paper-notes.md)
+    * [`Initial analysis`](./notes/00-initial-analysis.md), and [`progress updates`](./notes/00-progress-updates.md) - bulletpoint-style thoughts on, pros/cons of, and issues with various methods
+    * [`TODOs`](./notes/000-TODOs.md)
+    * [LLVM IR metadata emission notes](./notes/01-llvm-ir-metadata-emission.md)
+    * various dead ends or other issues encountered ([LLVM demangling discrepancies](./notes/0x-llvm-demangling.md) and [notes on MLIR](./notes/02-mlir-notes.md))
+2. [`sandbox`](./sandbox/) - demo-style exploration of approaches used in our solution
+    * [`00-clang-ast`](./sandbox/00-clang-ast/) - *source-level* modification of the Clang's AST
+        * modify source code by inspecting and rewriting the AST
+        * recompile modified source code with an instrumentation library linked in
+    * [`01-llvm-ir`](./sandbox/01-llvm-ir/) - LLVM IR modification
+        * compile source into LLVM Intermediate Representation (IR)
+        * inspect and modify generated IR by adding instructions (mostly `call`s into instrumentation library functions)
+        * compile modified IR with an instrumentation library
+    * [`02-ipc`](./sandbox/02-ipc/) - experiments with Inter-process communication (coordination of tests)
+        * requirement: extraction of data from the instrumented application
+        * The instrumentation library's responsibility is to establish connections back to "us" and send "us" data
+        * preparation for the final stage: executing targeted tests (i.e., sending our data into a tested function)
+
+Other folder naming:
+
+* `working` - a "working folder", a place where most of the commands are executed / most files are being changed, gitignored, ...
+* `build*` - most output artifacts will end up here
+
+## Concepts
+
+On a high level, the project aims to instrument functions so that their arguments can be modified
+just before the given instrumented function executes. We designed and implemented a non-trivial
+infrastructure that allows this workflow, and throughout the accompanying text, we will try to use unified terminology to refer to the individual parts of the infrastructure.
+
+First, we describe the high-level concepts that are core to the architecture. 
+
+### Instrumented program
+
+We will mostly refer to an **instrumented program**.
+The instrumented program is the program under the test. The instrumentation which creates this program is required to have **minimal** effect on the execution flow of the program. That is, during the instrumented program runtime, we want to *ideally* achieve the same branches taken, functions called with the same arguments, etc. as in the uninstrumented case's runtime (given a deterministic program). In other words, we want the instrumentation to be unintrusive.
+
+### `hooklib` or the hooking library
+
+The `hooklib` is a library designed to be used by the *instrumented program* to perform tasks
+that are specific to our testing approach. Primarily, *instrumented program* calls into `hooklib`
+to communicate with all the surrounding infrastructure, we implement in this project.
+
+### `llcap-server`
+
+The `llcap-server` ("LL capture" server) is the largest piece of the architectural puzzle we present.
+The `llcap-server` is designed to be the central point: it launches and monitors the instrumented binary, it sets up the environment required by the instrumented program and `hooklib`, and cooperates with them, achieving the goals of the project by interacting with the user.
+
+TODO diagram: modified binary, hooklib, llcap-server and "outputs"
+
+### Phases
+
+The workflow we will present consists of 3 phases. Each phase requires slightly different instrumentation. Two instrumentation passes are required to be performed on the tested program (1 for the first phase, the other for the rest). Here, we list the phases and describe their purpose. We also **emphasize** important concepts:
+
+1. **Call tracing** - collects information about what functions have been entered in the instrumented program
+    * user selects the **target functions**, which are subject to further tracing and final testing
+2. **Argument capture** - collects raw copies of arguments of the *target functions* and stores them for the subsequent phases
+    * we call the set of all arguments of the `n`-th call to function `foo` the **foo's n-th argument packet**
+3. **Testing** - performs an exhaustive replacement of arguments of a target function with all its *argument packets* recorded in the previous (*argument capture*) phase
+    * our implementation performs a `fork`-based testing - the *instrumented binary* is launched in testing mode and monitored by the `llcap-server`. We call this instance of the instrumented program the **test coordinator**
+    * *test coordinator* decides when a test is launched (when a `fork` is performed and arguments are substituted with an *argument packet* obtained from the `llcap-server`)
+
+TODO diagram: high-level call tracing same as diagram above, llcap-server listens for function entrance
+
+TODO diagram: high-level argument capture -> llcap-server listens for args
+
+TODO diagram: high-level testing -> llcap-server provides args, test coordinator, fork approach (forked child) 
+
+TODO: older diagrams, rename to match concepts
 
 
 # AI/LLM usage disclosure
