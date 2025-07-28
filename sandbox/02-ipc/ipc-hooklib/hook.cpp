@@ -33,12 +33,10 @@
 #define GENFN_TEST_PRIMITIVE(name, argt, argvar)                               \
   GENFNDECLTEST(name, argt, argvar) {                                          \
     if (in_testing_mode()) {                                                   \
-      /* we do not check for in_fork - if we are here, we MUST be in a forked  \
-       * process - i.e. the parent of this process will stop in preamble       \
-       * function and never will never reach argument instruemntation*/        \
       if (!is_fn_under_test(module, fn)) {                                     \
         goto just_copy_arg;                                                    \
       } else {                                                                 \
+        /* Makes sure this is the right call (call order-wise) */              \
         if (!should_hijack_arg()) {                                            \
           goto just_copy_arg;                                                  \
         }                                                                      \
