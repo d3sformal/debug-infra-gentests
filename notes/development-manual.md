@@ -21,6 +21,8 @@ least to be able to:
 2. inject code that serializes `T`
 3. inject code that de-serializes `T`
 
+In the following sections, we will explain how one may add support for a hypothetical type `T`.
+
 ### (De)serialization
 
 Let us first focus on the (de)serialization of `T`. This is achieved by [`hooklib`](../sandbox/02-ipc/ipc-hooklib/). Concretely, the `GENFN_TEST_PRIMITIVE` macro and `llcap_hooklib_extra_cxx_string` functions in the [`hook.cpp`](../sandbox/02-ipc/ipc-hooklib/hook.cpp) file are the functions responsible for this.
@@ -100,8 +102,61 @@ In summary, for custom type serialization and deserialization, you must:
     * use `consume_bytes_from_packet` to receive your data
   * **always** deserialize into the `target` pointer - `*target` must point to an object of `T` even if argument replacement has not taken place
 
+What remains is to rebuild `hooklib` by navigating to its [directory](../sandbox/02-ipc/ipc-hooklib/) and running `make`.
+
 ### Injection of code, detection of data types
 
-* AST plugin  - simple string parsing (troubleshoot using ast dumping), mention functions only from the sources (no externals), custom type metadata key
-* LLVM plugin - custom type metadata key registration, tie it to the (de)serialization
-* ??? done?
+With our (de)serialization code written, we now need to provide information to compiler plugins to 
+detect the type `T` and insert calls to our (de)serialization.
+
+We need to know the `T`'s AST type name and its size (as used in the serialization function written earlier). You can use `clang -Xclang -ast-dump main.c` (or with the `-fsyntax-only` flag) to discover the AST type name of your types.
+
+#### AST plugin extension
+
+To add support for `T` on the AST plugin's side, you must modify the AST plugin and rebuild it (for now). During the build process, the [AST plugin's directory](../sandbox/01-llvm-ir/custom-metadata-pass/ast-meta-add/) is copied into the [`llvm-project` file structure](../sandbox/llvm-project/clang/examples/ast-meta-add/). 
+Be sure to either copy the modified files to this folder, or perform modifications directly inside 
+it. For clarity, we will refer to the non-llvm-project files in the file links that follow.
+
+1. `#define` a new unique string literal in the [`llvm-metadata.h`](../sandbox/01-llvm-ir/custom-metadata-pass/ast-meta-add/llvm-metadata.h) file. This will serve as a metadata key used to identify the type `T`.
+2. inside the `addFunctionLocationMetadata` function, add a call to `encodeArgIndiciesSatisfying` similar to the snippet below, right where `encodeArgIndiciesSatisfying` is first used
+
+```c++
+encodeArgIndiciesSatisfying(
+    // pass metadata key
+    <your #defined literal>, 
+    FD, // clang's Function Declaration object
+    // lambda inspecting an argument at an index
+    // It returns true if the Arg "corresponds" to the type T (your metadata key)
+    [](ParmVarDecl *Arg, size_t Idx) {
+      auto TypeName = Arg->getType().getCanonicalType().getAsString();
+      return /* a boolean expression */
+    }
+);
+```
+
+To help with the instrumentation of pointer-based (pointer, references) types, you can use
+`isTargetTypeValRefPtr` function.
+
+**Note**: only functions defined in the compiled sources (that are not external to the compilation process) are instrumented!
+
+Now, head to the `llvm-project` build directory, run `ninja -j $(nproc)` and `ninja install`.
+
+#### IR plugin extension
+
+The LLVM IR is the level where our instrumentation is performed. We use the information relayed 
+from the AST plugin to guide our instrumentation. In the previous section, we created a *metadata key* and instructed the AST plugin to mark functions accepting `T` (or pointers/references to `T`).
+
+Now we will make the LLVM IR plugin aware of the new *metadata key* **as well as** the *(de)serialization* function we've written in `hooklib` [earlier](#deserialization).
+
+First, ensure your modifications made to the `llvm-metadata.h` file are available in the non-llvm-project file ([`llvm-metadata.h`](../sandbox/01-llvm-ir/custom-metadata-pass/ast-meta-add/llvm-metadata.h)). Next, head to the `pass.cpp` file and modify the `SCustomSizes` and `SCustomHooks` in the following way:
+
+In `SCustomSizes`, add a tuple (`{ }`) that maps your custom metadata key to an `LlcapSizeType` (defined in [here](../sandbox/01-llvm-ir/llvm-pass/src/typeids.h)). Use the `LLSZ_8` up to `LLSZ_128` for 8 to 128-bit **value** types and `LLSZ_CUSTOM` for a dynamic-sized type.
+Remember that this choice has already been made in the [(de)serialization function](#deserialization) you've written earlier for type `T`.
+
+In `SCustomHooks`, you once again map your custom metadata key, this time to the structure
+`SCustomTypeDescription{ m_hookFnName, m_log_name }` where `m_hookFnName` is the name of the 
+the [(de)serialization function](#deserialization) you've created earlier. and `m_log_name` is *whatever* textual description you'd like the instrumentation to have.
+
+Now, compile the plugin by running `make` in the [`llvm-pass` directory](../sandbox/01-llvm-ir/llvm-pass/).
+
+Now, when you re-compile your program using `T` and instrument the proper function, you should see `T` being captured by the `llcap-server`.

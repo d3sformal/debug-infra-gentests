@@ -236,3 +236,16 @@ The LLVM IR debug metadata may provide enough information to eliminate `2`. (i.e
 We are unsure with regards to `1` though. So far, the only option that avoids the LLVM patch is
 checking of mangled function names which is an ugly and unstable solution.
 
+## More comfortable extension of the AST and IR plugins
+
+In its current form, the AST and IR plugins are extensible only by direct, albeit simple,
+[modification of their sources](./development-manual.md#argument-capture-and-type-detection-mechanisms). We believe the plugins can be adjusted to support extension via some sort of
+configuration files supplied to the plugins as arguments (`-mllvm ...`).
+
+Further, the [(de)serialization code](./development-manual.md#deserialization) facilitating 
+argument capture and replacement of function arguments could be designed so that extension with a 
+custom type would be a matter of creating and linking an additional library (developed alongside 
+`hooklib`, using its headers but not recompiling the `hooklib` directly).
+
+The two improvements above would greatly increase developer experience and encourage experimentation
+with the tool set.
