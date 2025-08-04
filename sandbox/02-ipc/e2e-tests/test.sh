@@ -3,6 +3,9 @@ set -e
 
 # Args: <tested binary directory> <function name> <timeout in seconds> <output-testing script/directory> <clang args>
 
+# debugging: set to -v -vv -vvv or ... to adjust llcap-server verbosity
+LlcapVerbosity=""
+
 # give names to arguments, navigate to the correct working directory (of the binary we will be instrumenting) 
 WorkingDir=$1; shift
 TestedFnName=$1; shift
@@ -38,9 +41,10 @@ cp ../../../../01-llvm-ir/llvm-pass/libfn-pass.so "$BuildDir"
 
 if [ -d "$IRTestScriptDir" ];
 then
+  # TODO: make this a local function (build dir + cmake args?)
   # testing IR - create a twin build directory
   # where we only generate IR and inspect it
-  
+
   TmpBuildDir="$BuildDir"/../build-ir-test
   rm -rf "$TmpBuildDir"
   mkdir "$TmpBuildDir"
@@ -118,14 +122,14 @@ TestOutputsDir="$OutputsDir"/test-outputs
 
 echo "!!! Capturing"
 
-rm -rf "$ArgTraceDir" && "$LlcapSvrBin" --modmap "$ModMapsPath"\
+rm -rf "$ArgTraceDir" && "$LlcapSvrBin" $LlcapVerbosity --modmap "$ModMapsPath"\
  capture-args -s "$SelectionPath" -o "$ArgTraceDir" "$InstrumentedBin"
 
 echo "!!! Testing"
 
 mkdir -p "$TestOutputsDir"
 
-Output=$(rm -rf "${TestOutputsDir:?}"/* && "$LlcapSvrBin" --modmap "$ModMapsPath"\
+Output=$(rm -rf "${TestOutputsDir:?}"/* && "$LlcapSvrBin" $LlcapVerbosity --modmap "$ModMapsPath"\
  test -s "$SelectionPath" -t "$TimeoutSec" -c "$ArgTraceDir"\
  -o "$TestOutputsDir" "$InstrumentedBin")
 
