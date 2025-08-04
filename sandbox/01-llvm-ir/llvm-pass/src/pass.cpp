@@ -455,7 +455,7 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M, Argument *Arg,
         return;
       }
 
-      IF_VERBOSE errs() << "Inserting call" << desc.m_log_name << "\n";
+      IF_VERBOSE errs() << "Inserting call " << desc.m_log_name << "\n";
       auto CallCxxString = GetOrInsertHookFn(desc.m_hookFnName, ArgT);
       instrumentArgHijack(Builder, M, Arg, ArgT, CallCxxString, ModIdConstant,
                           FnIdConstant);
