@@ -10,13 +10,6 @@ If any part of the test fails or is terminated unexpectedly and `llcap-server` i
 
 For each test, artifacts are stored in the `out` and `build` directories.
 
-
-## Example
-
-`./test.sh ./testbin-arg-replacement-simple/ test_target 2 ""`
-
-`./test.sh testbin-arg-replacement-unc-exc/ test_target 4 "" -mllvm -llcap-instrument-fn-exit`
-
 ## Running "all" tests
 
 ```bash
@@ -26,4 +19,7 @@ cd ./test
 
 This runs the `test/timeout-all.sh` check on the output of one of the instrumentation and testing  of `testbin-arg-replacement-simple`.
 
-In each `testbin-*` directory, there shoudl be `cases` folder, which contains similarly-written check scripts (named `tc-*.sh`). These receive "clean" test output and check it. Depending on scripts' exit code, the entire test fails/continues.
+In each `testbin-*` directory, there should be `cases` folder, which contains similarly-written check scripts (named `tc-*.sh`). These receive "clean" test output and check it. Optionally the 
+(call-tracing) instrumentation can be checked by inspecting IR (folder `cases/ir`, scripts `ir-*.sh`).
+
+Depending on scripts' exit code, the entire test fails/continues.
