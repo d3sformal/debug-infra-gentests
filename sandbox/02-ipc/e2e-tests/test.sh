@@ -8,6 +8,7 @@ WorkingDir=$1; shift
 TestedFnName=$1; shift
 TimeoutSec=$1; shift
 OutputTestScriptDir=$1; shift
+IRTestScriptDir=$1; shift
 CppArgs=$*;
 
 cd "$WorkingDir"
@@ -35,12 +36,49 @@ cd "$BuildDir"
 # (avoiding rebuild, because this is quite a long compilation)
 cp ../../../../01-llvm-ir/llvm-pass/libfn-pass.so "$BuildDir"
 
+if [ -d "$IRTestScriptDir" ];
+then
+  # testing IR - create a twin build directory
+  # where we only generate IR and inspect it
+  
+  TmpBuildDir="$BuildDir"/../build-ir-test
+  rm -rf "$TmpBuildDir"
+  mkdir "$TmpBuildDir"
+
+  cp ../../../../01-llvm-ir/llvm-pass/libfn-pass.so "$TmpBuildDir"
+  cd "$TmpBuildDir"
+
+  
+  cmake -D CMAKE_C_COMPILER=clang \
+  -D CMAKE_CXX_COMPILER=clang++ \
+  ../
+
+  cmake   -D CMAKE_C_COMPILER=clang \
+  -D CMAKE_C_FLAGS="-mllvm -Call -mllvm -llcap-mapdir=./mmaps -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=../libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
+  -D CMAKE_CXX_COMPILER=clang++ \
+  -D CMAKE_CXX_FLAGS="-mllvm -Call -mllvm -llcap-mapdir=./mmaps -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so -S -emit-llvm" \
+  ../
+ 
+  # initialize directory for llvm pass artifacts
+  mkdir "./mmaps"
+  make clean
+  make
+
+  echo "pre-testing LLVM IR $IRTestScriptDir"
+  for File in "$IRTestScriptDir"/ir-*.sh; do
+    echo "LLVM IR Test $File"
+    set -e
+    "$File" "$TmpBuildDir"
+    set +e
+  done
+  cd "$BuildDir"
+fi
 
 cmake -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_COMPILER=clang++ \
   ../
 
-cmake   -D CMAKE_C_COMPILER=clang \
+cmake -D CMAKE_C_COMPILER=clang \
   -D CMAKE_C_FLAGS="-mllvm -Call -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
   -D CMAKE_CXX_COMPILER=clang++ \
   -D CMAKE_CXX_FLAGS="-mllvm -Call -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
