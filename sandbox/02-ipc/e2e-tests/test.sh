@@ -85,7 +85,7 @@ cmake -D CMAKE_C_COMPILER=clang \
 cmake -D CMAKE_C_COMPILER=clang \
   -D CMAKE_C_FLAGS="-mllvm -Call -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
   -D CMAKE_CXX_COMPILER=clang++ \
-  -D CMAKE_CXX_FLAGS="-mllvm -Call -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
+  -D CMAKE_CXX_FLAGS="-mllvm -Call -mllvm -llcap-verbose -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
   ../
 
 # re-initialize artifact directories
