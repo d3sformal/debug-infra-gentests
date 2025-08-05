@@ -12,12 +12,13 @@ To run: `podman run -it llcap-env`
 
 To run [e2e tests](../sandbox/02-ipc/e2e-tests/), you need to (**inside** the container) 
 create the `[llcap-server](../sandbox/02-ipc/llcap-server/)/target/debug` directory and
-`cp llcap-server/bn/llcap-server llcap-server/target/debug`.
+`cp llcap-server/bin/llcap-server llcap-server/target/debug`.
 
 ### Push & update notes
 
 * better to rebuild from scratch (or use a constant build argument)
 * build and push `vasutro/llcap-demo-env:Vx:Vy:Vz`
+* update [here](../README.md#containers) and [here](../sandbox/02-ipc/example-arg-replacement/README.md#prerequisites)
 
 ## Development version
 
