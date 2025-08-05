@@ -3,50 +3,155 @@
 #include "typeAlias.hpp"
 #include "typeids.h"
 #include "utility.hpp"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <iterator>
+#include <ranges>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
-Set<size_t> getSretArgumentIndicies(const llvm::Function &Fn) {
-  Set<size_t> Res;
+namespace {
+// parsing the argument mapping list (0-1#1-1#2-1#4294967295-0), see
+// initParseArgMapping
+bool parseArgMappingList(size_t LlArgCnt, size_t AstArgCnt, llvm::StringRef Str,
+                         std::vector<size_t> &OutArgStarts, IdxMappingInfo Seps,
+                         std::vector<size_t> &OutArgSizes) {
+  // it does not make sense to parse more arguments than present in LLVM IR
+  size_t Count = std::min(LlArgCnt, AstArgCnt);
+
+  llvm::SmallVector<llvm::StringRef> Split;
+  Str.split(Split, Seps.group, -1, true);
+
+  if (Split.size() < Count) {
+    llvm::errs() << "Malformed metadata - arg mapping list size ( " << Count
+                 << " )\n";
+    return false;
+  }
+
+  using ParseResT = Maybe<Pair<size_t, size_t>>;
+
+  auto Parsed =
+      std::ranges::take_view(Split, Count) |
+      std::ranges::views::transform([Seps](llvm::StringRef S) -> ParseResT {
+        llvm::SmallVector<llvm::StringRef> PairSplit;
+        S.split(PairSplit, Seps.argParamPair);
+
+        if (PairSplit.size() != 2) {
+          llvm::errs() << "Malformed metadata - mapping pair\n";
+          return NONE;
+        }
+
+        auto LlIdxStart = tryParse<size_t>(PairSplit[0]);
+        auto LlArgSpan = tryParse<size_t>(PairSplit[1]);
+
+        if (!LlIdxStart || !LlArgSpan) {
+          llvm::errs() << "Malformed metadata - pair values";
+          return NONE;
+        }
+
+        return std::make_pair(*LlIdxStart, *LlArgSpan);
+      });
+
+  auto Failed = std::ranges::any_of(
+      Parsed, [](const ParseResT &V) { return !V.has_value(); });
+  if (Failed) {
+    return false;
+  }
+
+  auto Filtered =
+      std::ranges::views::transform(Parsed,
+                                    [](const ParseResT &V) { return *V; }) |
+      std::ranges::views::filter([Seps](const Pair<size_t, size_t> &V) {
+        return V.first != Seps.invalidIndexValue;
+      });
+
+  for (auto &&[IdxStart, ArgSpan] : Filtered) {
+    OutArgStarts.push_back(IdxStart);
+    OutArgSizes.push_back(ArgSpan);
+  }
+
+  return true;
+}
+
+// parsing metadata stirng in the form
+// 3 4 0-1#1-1#2-1#4294967295-0
+// in the form
+// LLVM-args AST-args LIST(size = AST-args)
+// where LIST maps AST index to a pair (LLVM start index, LLVM arg span)
+// Seps (in this case) should be { primary = ' ', group = '#', pair = '-',
+// invalidIdx = 4294967295 }
+bool parseArgMapping(llvm::MDNode *ArgMappingMetadata,
+                     std::vector<size_t> &OutArgStarts, IdxMappingInfo Seps,
+                     std::vector<size_t> &OutArgSizes) {
+  if (ArgMappingMetadata == nullptr) {
+    return false;
+  }
+
+  IF_DEBUG { ArgMappingMetadata->dumpTree(); }
+
+  // "0 0 " is the minimal valid metadata string
+  constexpr auto MIN_MTV_SIZE = sizeof("0 0 ") - 1;
+  llvm::StringRef MetaValue;
+
+  if (auto *Op = llvm::dyn_cast_if_present<llvm::MDString>(
+          ArgMappingMetadata->getOperand(0));
+      Op != nullptr) {
+    MetaValue = Op->getString();
+    if (MetaValue.size() < MIN_MTV_SIZE) {
+      llvm::errs() << "Malformed metadata - size\n";
+      return false;
+    }
+  } else {
+    llvm::errs() << "Missing string value\n";
+    return false;
+  }
+
+  llvm::SmallVector<llvm::StringRef> Split;
+  MetaValue.split(Split, Seps.primary, -1, true);
+
+  if (Split.size() != 3) {
+    llvm::errs() << "Malformed metadata - primary split\n";
+    return false;
+  }
+
+  Vec<size_t> ResStartLLIdxMap;
+  Vec<size_t> ResLLArgSize;
+  Arr<size_t, 2> ArgCounts;
+
+  assert(ArgCounts.size() < Split.size());
+
+  auto Parsed = std::ranges::take_view(Split, ArgCounts.size()) |
+                std::ranges::views::transform(
+                    [](llvm::StringRef S) { return tryParse<size_t>(S); });
+
   size_t Idx = 0;
-  for (const auto *It = Fn.arg_begin(); It != Fn.arg_end(); ++It) {
-    const auto *Arg = It;
-    if (Arg->hasAttribute(llvm::Attribute::AttrKind::StructRet)) {
-      Res.insert(Idx);
+  // TODO if switched to C++23, use zip+iota or enumerate range
+  for (auto MbParsed : Parsed) {
+    if (!MbParsed) {
+      llvm::errs() << "Malformed metadata - primary split at " << Idx << '\n';
+      return false;
     }
-    ++Idx;
+    // ranges::take above should ensure correctness, .at just to be sure
+    ArgCounts.at(Idx) = *MbParsed;
+    Idx++;
   }
-  return Res;
+
+  auto [LlvmArgCount, AstArgCount] = ArgCounts;
+
+  if (AstArgCount == 0) {
+    return true;
+  }
+  return parseArgMappingList(LlvmArgCount, AstArgCount, Split[2], OutArgStarts,
+                             Seps, OutArgSizes);
 }
 
-Vec<size_t> getSretArgumentShiftVec(const llvm::Function &Fn) {
-  auto SretIndicies = getSretArgumentIndicies(Fn);
-
-  Vec<size_t> Res;
-  Res.resize(Fn.arg_size());
-
-  size_t Shift = 0;
-  for (size_t I = 0; I < Fn.arg_size(); ++I) {
-    if (SretIndicies.contains(I)) {
-      // we accumulate shift to Shift
-      // if an AST index would collide with an sret argument's one, the AST
-      // index (A) is translated by A + (current) Shift.
-
-      // Shift is incremented as EACH LLVM sret arg pushes all the remaining
-      // ones to the right
-      Res[I] = ++Shift;
-    } else {
-      Res[I] = Shift;
-    }
-  }
-  return Res;
-}
-
+// parses the metadata that encode the indicies of a custom type
+//
+// indicies are separated by Sep and are decimal numbers
 Vec<size_t> parseCustTypeIndicies(llvm::StringRef MetaValue,
                                   bool IsInstanceMember, char Sep) {
   llvm::SmallVector<llvm::StringRef> Split;
@@ -73,6 +178,8 @@ Vec<size_t> parseCustTypeIndicies(llvm::StringRef MetaValue,
 
   return RealRes;
 }
+
+} // namespace
 
 Maybe<Vec<size_t>> getCustomTypeIndicies(llvm::StringRef MetadataKey,
                                          const llvm::Function &Fn,
@@ -103,7 +210,13 @@ Maybe<Vec<size_t>> getCustomTypeIndicies(llvm::StringRef MetadataKey,
 ClangMetadataToLLVMArgumentMapping::ClangMetadataToLLVMArgumentMapping(
     llvm::Function &Fn, IdxMappingInfo Seps)
     : m_fn(Fn), m_seps(Seps) {
-  m_shiftMap = getSretArgumentShiftVec(m_fn);
+  IF_DEBUG { llvm::errs() << Fn.getName() << ": \n"; }
+  // metadata under this key are inserted in the patched clang
+  // (the literal is part of the patch)
+  assert(parseArgMapping(Fn.getMetadata("LLCAP-CLANG-LLVM-MAP-DATA"),
+                         m_astArgIdxToLlvmArgIdx, m_seps,
+                         m_astArgIdxToLlvmArgLen));
+
   m_instanceMember =
       m_fn.getMetadata(llvm::StringRef(VSTR_LLVM_CXX_THISPTR)) != nullptr;
 }
@@ -154,15 +267,22 @@ bool ClangMetadataToLLVMArgumentMapping::llvmArgNoMatches(
     llvm::errs() << "\nCustom type size enum: "
                  << std::underlying_type_t<LlcapSizeType>(Sz) << '\n';
 
-    llvm::errs() << "\nShiftMap: ";
+    llvm::errs() << "Starts: ";
 
-    for (const auto &I : m_shiftMap) {
+    for (const auto &I : m_astArgIdxToLlvmArgIdx) {
       llvm::errs() << I << " ";
     }
+
+    llvm::errs() << "\nSizes : ";
+
+    for (const auto &I : m_astArgIdxToLlvmArgLen) {
+      llvm::errs() << I << " ";
+    }
+    llvm::errs() << '\n';
   }
 
   auto Res = std::ranges::any_of(CustTypes, [&](size_t AstIndex) {
-    return AstIndex + m_shiftMap[AstIndex] == LlvmArgNo;
+    return m_astArgIdxToLlvmArgIdx.at(AstIndex) == LlvmArgNo;
   });
 
   return Res;

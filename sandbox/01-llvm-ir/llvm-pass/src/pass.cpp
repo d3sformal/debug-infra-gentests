@@ -32,6 +32,7 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
+#include <array>
 #include <fstream>
 #include <ios>
 #include <string>
@@ -486,7 +487,7 @@ bool isStdFn(const Function &Fn, const Str &DemangledName,
 }
 
 ClangMetadataToLLVMArgumentMapping
-getFullyRegisteredArgMapping(Function &Fn, IdxMappingInfo &IdxInfo) {
+createArgumentMapping(Function &Fn, IdxMappingInfo &IdxInfo) {
   ClangMetadataToLLVMArgumentMapping Mapping(Fn, IdxInfo);
   for (auto &&[key, size] : SCustomSizes) {
     Mapping.registerCustomTypeIndicies(key, size);
@@ -508,8 +509,6 @@ public:
 
 class FunctionEntryInsertion : public Instrumentation {
 private:
-  // TODO: forgotten exported metdata? (test foo(u128, std::string) and similar)
-  static constexpr char *MAP_META_KEY = "LLCAP-CLANG-LLVM-MAP-DATA";
   FunctionIDMapper m_fnIdMap;
   Module &m_module;
   IdxMappingInfo m_seps;
@@ -528,13 +527,6 @@ public:
       // Skip library functions
       StringRef MangledName = Fn.getFunction().getName();
       Str DemangledName = llvm::demangle(MangledName);
-
-      IF_DEBUG {
-        if (MDNode *N = Fn.getMetadata(MAP_META_KEY)) {
-          errs() << DemangledName << ": \n";
-          N->dumpTree();
-        }
-      }
 
       if (isStdFn(Fn, DemangledName, MangledName)) {
         continue;
@@ -563,9 +555,9 @@ public:
           }
         }
       }
-      // TODO handle viability - tied to "MAP_META_KEY"?
+
       ClangMetadataToLLVMArgumentMapping Mapping =
-          getFullyRegisteredArgMapping(Fn, m_seps);
+          createArgumentMapping(Fn, m_seps);
       const auto FunId = m_fnIdMap.addFunction(DemangledName, Mapping);
 
       insertFnEntryHook(Builder, m_module, m_fnIdMap.getModuleMapIntId(),
@@ -608,7 +600,7 @@ public:
       IRBuilder<> Builder(&EntryBB.front());
 
       ClangMetadataToLLVMArgumentMapping Mapping =
-          getFullyRegisteredArgMapping(Fn, m_idxInfo);
+          createArgumentMapping(Fn, m_idxInfo);
       insertArgCapturePreambleHook(Builder, m_module, m_moduleId, FnId->second);
 
       for (auto *Arg = Fn.arg_begin(); Arg != Fn.arg_end(); ++Arg) {
@@ -716,11 +708,11 @@ collectTracedFunctionsForModule(Module &M) {
 }
 
 Maybe<IdxMappingInfo> getIdxMappingInfo(Module &M) {
-  constexpr char *PARSE_GUIDE_META_KEY = "LLCAP-CLANG-LLVM-MAP-PRSGD";
-  constexpr char *INVL_IDX_META_KEY = "LLCAP-CLANG-LLVM-MAP-INVLD-IDX";
+  constexpr Arr<char, 27> PARSE_GUIDE_META_KEY { "LLCAP-CLANG-LLVM-MAP-PRSGD" }; 
+  constexpr Arr<char, 31> INVL_IDX_META_KEY { "LLCAP-CLANG-LLVM-MAP-INVLD-IDX" };
   IdxMappingInfo Result;
 
-  if (auto MbStr = getMetadataStrVal(M.getNamedMetadata(PARSE_GUIDE_META_KEY));
+  if (auto MbStr = getMetadataStrVal(M.getNamedMetadata(PARSE_GUIDE_META_KEY.data()));
       MbStr && MbStr->size() == 3) {
     Result.primary = MbStr->at(0);
     Result.group = MbStr->at(1);
@@ -733,7 +725,7 @@ Maybe<IdxMappingInfo> getIdxMappingInfo(Module &M) {
 
   Result.invalidIndexValue = 0xFFFFFFFFFFFFFFFF;
   // try get string from metadata
-  if (auto MbStr = getMetadataStrVal(M.getNamedMetadata(INVL_IDX_META_KEY));
+  if (auto MbStr = getMetadataStrVal(M.getNamedMetadata(INVL_IDX_META_KEY.data()));
       MbStr) {
     // try parse u64 from the string
     if (auto Parsed = tryParse<u64>(*MbStr); Parsed) {

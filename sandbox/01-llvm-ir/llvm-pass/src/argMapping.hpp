@@ -9,21 +9,6 @@
 #include <set>
 #include <vector>
 
-// returns the LLVM argument indicies of Fn's arguments marked with the sret
-// attribute
-std::set<size_t> getSretArgumentIndicies(const llvm::Function &Fn);
-
-// computes the Sret shift vector for Fn's arguments
-// the output vector is the same size as Fn's argument list
-// vec[i] = the shift that mut be applied to an AST arg idx
-// to convert it to the LLVM arg idx
-std::vector<size_t> getSretArgumentShiftVec(const llvm::Function &Fn);
-
-// parses the metadata that encode the indicies of a custom type
-//
-// indicies are separated by Sep and are decimal numbers
-std::vector<size_t> parseCustTypeIndicies(llvm::StringRef MetaValue,
-                                          bool IsInstanceMember, char Sep);
 
 struct IdxMappingInfo {
   char primary;
@@ -38,11 +23,8 @@ getCustomTypeIndicies(llvm::StringRef MetadataKey, const llvm::Function &Fn,
                       bool IsInstanceMember, IdxMappingInfo Info);
 
 class ClangMetadataToLLVMArgumentMapping {
-  // This map encodes at position ShiftMap[i] what shift should we consider
-  // when evaluating i-th argument (i.e. how many additional argumens are
-  // there without the this pointer - which can be detected in the AST phase
-  // and is accounted for)
-  std::vector<size_t> m_shiftMap;
+  std::vector<size_t> m_astArgIdxToLlvmArgIdx;
+  std::vector<size_t> m_astArgIdxToLlvmArgLen;
   bool m_instanceMember;
   // tag (e.g. VSTR_LLVM_CXX_DUMP_STDSTRING) -> pairs of (sizeType, indicies of
   // all arguments of this sizeType)
