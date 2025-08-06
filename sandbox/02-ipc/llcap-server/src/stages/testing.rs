@@ -119,7 +119,7 @@ pub enum TestStatus {
   #[allow(dead_code)]
   Signal(i32),
   /// an unexpected test failure outside the sandboxing and monitoring of the test coordinator
-  /// - could be a test coordinator crash or test job crash
+  /// - could be a test coordinator crash or a test job crash
   #[allow(dead_code)]
   Fatal(String),
 }
@@ -135,7 +135,7 @@ impl TryFrom<&[u8]> for TestStatus {
   ///
   /// `| TAG: 2B | payload: 0-4B |`
   ///
-  /// payload is either empty for [`Timeout`][`TestStatus::Timeout`] and [`Fatal`][`TestStatus::Fatal`] variants
+  /// payload is either empty for [`Timeout`][`TestStatus::Timeout`], [`Exception`][`TestStatus::Exception`], [`Pass`][`TestStatus::Pass`] and [`Fatal`][`TestStatus::Fatal`] variants
   /// or and 4B of [`i32`] representing either the test's
   /// [`Signal`][`TestStatus::Signal`] or [`Exit`][`TestStatus::Exit`] code
   fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
