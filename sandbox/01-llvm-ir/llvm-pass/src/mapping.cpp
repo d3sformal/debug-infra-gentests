@@ -63,8 +63,7 @@ FunctionIDMapper::addFunction(const Str &FnInfo,
 
 bool FunctionIDMapper::flush(FunctionIDMapper &&Mapper, const Str &TargetDir) {
   auto LocalMapper = std::move(Mapper);
-  Str Dir = TargetDir.size() > 0 ? TargetDir : "module-maps";
-  ModuleMappingEncoding Encoding(Dir, LocalMapper.getModuleMapId(),
+  ModuleMappingEncoding Encoding(TargetDir, LocalMapper.getModuleMapId(),
                                  LocalMapper.getFullModuleId());
 
   for (auto &&[FnName, Id, Sizes] : LocalMapper.FunctionIds) {

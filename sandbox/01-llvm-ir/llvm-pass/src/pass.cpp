@@ -58,7 +58,7 @@ cl::opt<bool> Debug("llcap-debug", cl::desc("Debugging output"));
 // -mllvm -llcap-mapdir
 cl::opt<std::string>
     MapFilesDirectory("llcap-mapdir",
-                      cl::desc("Output directory for function ID maps"));
+                      cl::desc("Output directory for function ID maps (default: module-maps)"));
 // -mllvm -Call
 // -mllvm -Arg
 cl::opt<InstrumentationType> InstrumentationType(
@@ -502,7 +502,6 @@ bool instrumentArgs() {
 class Instrumentation {
 public:
   virtual ~Instrumentation() = default;
-  virtual bool prepare() { return true; };
   virtual void run() = 0;
   virtual bool finish() = 0;
 };
@@ -516,10 +515,6 @@ private:
 public:
   FunctionEntryInsertion(Module &M, IdxMappingInfo Seps)
       : m_fnIdMap(M.getModuleIdentifier()), m_module(M), m_seps(Seps) {}
-
-  bool prepare() override {
-    return args::MapFilesDirectory.getValue().length() != 0;
-  }
 
   void run() override {
     for (Function &Fn : m_module) {
@@ -566,8 +561,8 @@ public:
   }
 
   bool finish() override {
-    return FunctionIDMapper::flush(std::move(m_fnIdMap),
-                                   args::MapFilesDirectory.getValue());
+    auto ModMapsDir = args::MapFilesDirectory.getValue().empty() ? "module-maps" : args::MapFilesDirectory.getValue();
+    return FunctionIDMapper::flush(std::move(m_fnIdMap), ModMapsDir);
   }
 };
 
