@@ -6,15 +6,13 @@
 static_assert(sizeof(unsigned int) == 4, "expected size of u32");
 static_assert(sizeof(unsigned short) == 2, "expected size of u16");
 #endif
-// idea: 3 phases: call tracing, arg capture, testing
-// call tracing only needs the first three parameters
-//
 
 typedef struct {
   unsigned int buff_count;
   unsigned int buff_len;
   unsigned int total_len;
   // the above required for call tracing and argument capture
+  
   // false if zero, indicates whether we are in capture mode or not
   unsigned int mode; // required for argument capture and testing, 0 for call
                      // tracing, 1 for capture, 2 for testing
