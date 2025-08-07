@@ -120,7 +120,6 @@ void deinit(void) {
 }
 
 #ifdef MANUAL_INIT_DEINIT
-#define SEMPERMS (S_IROTH | S_IWOTH | S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR)
 // after a crash, there can be a buffer, that needs to be flushed
 // we find this by looking at the payload length of a buffer (the first 4 bytes)
 // if there is 0 -> buffer has been flushed (responsibility of the other side)
