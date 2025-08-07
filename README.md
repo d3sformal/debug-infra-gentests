@@ -16,6 +16,13 @@ target program. The tools and plugins developed as a part of this project aim to
 * hijacking of the arguments of the user-specified functions
 * monitoring of the hijacked program (where the possibly bug-triggering argument sets will stand out)
 
+## Limitations
+
+In its current form, the tool cannot instrument or test:
+
+* multi-threaded code
+* variadic functions
+
 ## Demo
 
 We provide a complete demo in the form of a small C++ program inside the [example-arg-replacement](./sandbox/02-ipc/example-arg-replacement) directory.
