@@ -12,15 +12,16 @@ extern "C" {
 #define HOOKLIB_TESTPASS_VAL 0xFFFFFFFFFAAFF00F
 #define HOOKLIB_TESTEXC_VAL  0xFFFFFFFFFAAEE00E
 #ifdef MANUAL_INIT_DEINIT
-
-int init(void);
-void deinit(void);
+#define HOOKLIB_CTOR_ATTR 
+#define HOOKLIB_DTOR_ATTR
 int init_finalize_after_crash(const char *full_semaphore, uint32_t buff_count);
-
-#else
-int init(void) __attribute__((constructor));
-void deinit(void) __attribute__((destructor));
+#else 
+#define HOOKLIB_CTOR_ATTR __attribute__((constructor))
+#define HOOKLIB_DTOR_ATTR __attribute__((destructor))
 #endif
+
+int init(void) HOOKLIB_CTOR_ATTR;
+void deinit(void) HOOKLIB_DTOR_ATTR;
 
 int push_data(const void *source, uint32_t len);
 

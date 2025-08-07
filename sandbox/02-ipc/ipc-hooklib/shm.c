@@ -119,29 +119,6 @@ void deinit(void) {
   deinit_channel(&s_channel);
 }
 
-#ifdef MANUAL_INIT_DEINIT
-// after a crash, there can be a buffer, that needs to be flushed
-// we find this by looking at the payload length of a buffer (the first 4 bytes)
-// if there is 0 -> buffer has been flushed (responsibility of the other side)
-//  -> we do "nothing" and only signal on the full semaphore (to make sure the
-//  other side reads a "zero-length" buffer and terminates)
-// if there is non-zero -> buffer was used and not flushed (due to a crash)
-//  -> we signal 2 times on the semaphore, once for the outgoing data and once
-//  for the terminating message
-int init_finalize_after_crash(const char *name_full_sem, uint32_t buff_count) {
-  sem_t *sem_full = sem_open(name_full_sem, O_CREAT, SEMPERMS, 0);
-  if (sem_full == SEM_FAILED) {
-    printf("Failed to initialize FULL semaphore %s\n", name_full_sem);
-    perror("");
-    return 1;
-  }
-  // notice no channel_start - we don't want to gain a free buffer at start - we
-  // are trying to flush an already dirty buffer left over by the crashed
-  // process
-  return termination_sequence_raw(sem_full, buff_count);
-}
-#endif // MANUAL_INIT_DEINIT
-
 bool in_testing_mode(void) { return s_buff_info.mode == 2; }
 bool in_testing_fork(void) { return s_buff_info.forked; }
 uint16_t get_test_tout_secs(void) { return in_testing_mode() ? s_buff_info.test_timeout_seconds : 0; }
@@ -241,3 +218,26 @@ bool send_test_pass_to_monitor(bool exception) {
 
   return true;
 }
+
+#ifdef MANUAL_INIT_DEINIT
+// after a crash, there can be a buffer, that needs to be flushed
+// we find this by looking at the payload length of a buffer (the first 4 bytes)
+// if there is 0 -> buffer has been flushed (responsibility of the other side)
+//  -> we do "nothing" and only signal on the full semaphore (to make sure the
+//  other side reads a "zero-length" buffer and terminates)
+// if there is non-zero -> buffer was used and not flushed (due to a crash)
+//  -> we signal 2 times on the semaphore, once for the outgoing data and once
+//  for the terminating message
+int init_finalize_after_crash(const char *name_full_sem, uint32_t buff_count) {
+  sem_t *sem_full = sem_open(name_full_sem, O_CREAT, SEMPERMS, 0);
+  if (sem_full == SEM_FAILED) {
+    printf("Failed to initialize FULL semaphore %s\n", name_full_sem);
+    perror("");
+    return 1;
+  }
+  // notice no channel_start - we don't want to gain a free buffer at start - we
+  // are trying to flush an already dirty buffer left over by the crashed
+  // process
+  return termination_sequence_raw(sem_full, buff_count);
+}
+#endif // MANUAL_INIT_DEINIT

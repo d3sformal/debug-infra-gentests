@@ -2,6 +2,7 @@
 #include "shm.h"
 #include "shm_commons.h"
 #include <array>
+#include <utility>
 #include <cassert>
 #include <csignal>
 #include <cstddef>
@@ -17,7 +18,6 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
-#include <type_traits>
 #define ENDPASS_CODE 231
 
 #define HOOKLIB_EC_PKT_RD 232
@@ -157,21 +157,22 @@ static bool request_packet_from_server(uint64_t index, void **target,
   return true;
 }
 
-enum class EMsgEnd : int8_t {
+enum class EMsgEnd : uint8_t {
   MSG_END_TIMEOUT = 0,
   MSG_END_SIGNAL = 1,
   MSG_END_STATUS = 2,
   MSG_END_PASS = 3,
   MSG_END_EXC = 4,
+  MSG_END_FATAL = 5,
   // keep this one last!
-  MSG_END_FATAL = 5
+  MSG_END_COUNT = 6
 };
 
 static uint16_t get_tag(EMsgEnd end_type) {
-  constexpr uint8_t ENUM_LEN = (std::underlying_type_t<EMsgEnd>) EMsgEnd::MSG_END_FATAL + 1;
+  constexpr uint8_t ENUM_LEN = std::to_underlying(EMsgEnd::MSG_END_COUNT);
   return std::array<uint16_t, ENUM_LEN> {
     TAG_TIMEOUT, TAG_SGNL, TAG_EXIT, TAG_PASS, TAG_EXC, TAG_FATAL
-  }[(std::underlying_type_t<EMsgEnd>) end_type];
+  }[std::to_underlying(end_type)];
 }
 
 static bool send_test_end_message(uint64_t index, EMsgEnd end_type,
