@@ -249,3 +249,8 @@ custom type would be a matter of creating and linking an additional library (dev
 
 The two improvements above would greatly increase developer experience and encourage experimentation
 with the tool set.
+
+## Multithreaded target support
+
+Currently we only support instrumentation of single-threaded programs. The main source of this limitation is the [`hooklib` implementation](../sandbox/02-ipc/ipc-hooklib/) which does not synchronize access to or distribute its mutable state among the running threads.
+ 
