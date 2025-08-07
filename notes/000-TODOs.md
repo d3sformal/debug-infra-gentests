@@ -254,3 +254,8 @@ with the tool set.
 
 Currently we only support instrumentation of single-threaded programs. The main source of this limitation is the [`hooklib` implementation](../sandbox/02-ipc/ipc-hooklib/) which does not synchronize access to or distribute its mutable state among the running threads.
  
+
+ ## Explore fuzzing approaches for injected argument values
+
+ The current form of the workflow simply copies the recorded arguments and "replays" the function calls. We can manually edit the recorded traces to inject other argument values. Creating methods of interactive or automatic addition of argument values would extended the usage of the entire project. Particularly, this setup would allow instrumentation of functions that are "harder to reach" using conventional testing methods in terms of architectural accesibility or the setup of the surrounding program state.
+ 
