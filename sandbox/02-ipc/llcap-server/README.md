@@ -55,6 +55,8 @@ A *function record* is a `0x00`-separated (without tailing `0x00`) list of:
 1. The number of arguments (denoted `n`)
 2. `n` numbers corresponding to the values in the [llvm-pass/src/typeids.h](../../01-llvm-ir/llvm-pass/src/typeids.h) file (specifically the underlying values of the `LlcapSizeType` enum)
 
+Throughout the project, we use the terms **function** and **module** ID. The function ID and module ID pair serves as a **unique** identifier of a function (function UID). Most of the instrumentation and processing refer to the UID in its raw form - a pair of 32-bit unsigned integers.
+
 ##### Recorded argument packets' directory
 
 The argument packets (one set of arguments used to call an instrumented function) recorded by `llcap-server` are saved in the specified `out-dir` directory when performing argument capture.
@@ -204,11 +206,56 @@ For more detail on the message parsing/handling, consult the [`testing.rs` file]
 
 #### Detail of the interactions during individual phases
 
+For a high-level overview, refer to the [high-level phase description](../../../README.md#phases).
+
 ##### Call tracing
+
+The goal of the phase is to trace all executed functions in the instrumented program. The output of the phase is the *function selection* used during instrumentation for argument capture and testing.
+
+This file is again, in format similar to module mapping: a `0x0A`-delimited (with trailing `0x0A`) that contains on each line the following `0x00`-separated items in *(decimal) string* representation:
+
+1. Module LLVM identifier as provided by LLVM (from the module mapping)
+2. Module ID corresponding to the LLVM module ID - as used by the project (parsable into 4-byte unsigned integer)
+3. Function name as demangled by LLVM
+4. Function ID corresponding to the function within the module (used by the project, parsable into a 4-byte unsigned integer)
+
+The instrumentation is trivial: we insert a function call to `hooklib` as the first LLVM instruction (the `front` of the `Entry` Basic Block of the function). We call `hook_start` with 2 constant values: the module and function IDs. When a function is called, it calls `hook_start`, which sends the IDs to the `llcap-server` (writes them into shared memory).
+
+The `llcap-server` is responsible for reading and aggregating the captured data. After the target terminates, `llcap-server` provides a human-readable summary (mapping the numerical IDs to actual function names, ...) and allows for selecting functions to instrument.
+
+The recorded data is also exported to allow regeneration of the *function selection* file without running the target application. This is achieved by utilizing the command-line options of the `llcap-server`:
+
+* `out_file` to customize the path where call tracing results are saved
+* `import_path` to prevent execution of the application, proceeding to the interaction where the user selects functions to instrument
+* `selection_path` to specify the path where the *function selection* will be saved (the artifact used by the later instrumentation)
 
 ##### Argument capture
 
+After instrumenting the application using the *function selection* file generated in the [call tracing](#call-tracing) stage, we seek to record and save the values of the arguments passed to the selected functions. In this phase, we only process the user-selected functions from the previous stage.
+
+We utilize two types of `hooklib` functions in this phase, which are, again, inserted at the beginning of the instrumented function:
+
+* preamble hook - sends the ID of a function (module, function ID)
+* argument hook - sends over data of a single argument
+
+During its execution, a function calls the preamble hook first, followed by the corresponding argument hook for each of its arguments. This results in the function ID followed by some number of bytes of argument packet payload being written into the buffer (sent to the `llcap-server`).
+
+The argument hooks are functions defined to handle a specific primitive or dynamic-sized type.
+For an n-byte fixed-size argument, we decide inside the `llvm-pass`, what argument hook to insert.
+For dynamic-sized types, support for a concrete type must be explicitly [developed](../../../notes/development-manual.md#argument-capture-and-type-detection-mechanisms) and added to the LLVM plugins and the `hooklib`.
+
+The core issue regarding argument capture is the need to synchronize the argument packet size sent by the `hooklib` with the argument packet sizes expected by the `llcap-server`. This is done by encoding argument types/sizes in the module mapping file. We distinguish fixed-size arguments (1 to 16 bytes) and dynamic-sized arguments. The `llcap-server` parses information about argument sizes from the module mapping files, and when processing a buffer, it refers to this information to determine the number of bytes to read (and store). Fixed-size types are encoded in their raw form, as reading/writing them is trivial. The dynamic-sized types must follow the length-followed-by-payload structure.
+
+The `mem-limit` option of both argument capture and testing phases serves as a hint for internal file writing/reading buffers.
+
+Approximate sequence diagram of the argument-capture phase (Tool is the `llcap-server`):
+
+![Sequence diagram of the argument-capture phase](../../../notes/images/diags/interaction-seq-28-apr-2025.png)
+
 ##### Testing
 
-#### Arguments of the `llcap-server`
-* tie it toghether, elaborate on some switches more than `-?`
+TODO
+
+Sequence diagram of the testing phase:
+
+![Sequence diagram of the testing phase](../../../notes/images/diags/testing-phase.png)
