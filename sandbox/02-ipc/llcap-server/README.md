@@ -231,7 +231,7 @@ The recorded data is also exported to allow regeneration of the *function select
 
 ##### Argument capture
 
-After instrumenting the application using the *function selection* file generated in the [call tracing](#call-tracing) stage, we seek to record and save the values of the arguments passed to the selected functions. In this phase, we only process the user-selected functions from the previous stage.
+After instrumenting the application using the *function selection* file generated in the [call tracing](#call-tracing) stage, we instrument the program for both of the upcoming phases: for argument capture and replacement (testing).  During argument capture, we seek to record and save the values of the arguments passed to the selected functions. In this phase, we only process the user-selected functions from the previous stage.
 
 We utilize two types of `hooklib` functions in this phase, which are, again, inserted at the beginning of the instrumented function:
 
@@ -248,14 +248,39 @@ The core issue regarding argument capture is the need to synchronize the argumen
 
 The `mem-limit` option of both argument capture and testing phases serves as a hint for internal file writing/reading buffers.
 
+The `inspect_packets` option (of the `test` subcommand!) provides some basic (and low-level) logging that hints at the way `llcap-server` sees the argument packet data and how it is sent around.
+ 
 Approximate sequence diagram of the argument-capture phase (Tool is the `llcap-server`):
 
 ![Sequence diagram of the argument-capture phase](../../../notes/images/diags/interaction-seq-28-apr-2025.png)
 
 ##### Testing
 
-TODO
+In the testing phase, we attempt to execute the target program, and for each call of a selected function, we try to "replace" the value of the call's arguments with the arguments recorded in the previous phase. We implement this by launching the target application multiple times, once for each unique function's call, in *testing mode*.
 
+Inside `hooklib`, we distinguish between the capture and testing phases via the [shared parameters](#comms-parameters-shared-memory-region). The hook preamble function, for example, branches based on the value of the test mode flag. Similarl is done in argument hooks, which branch to provide conditional deserialization and serialization (during capture).
+
+We must ensure we are instrumenting the correct call (in the order of calls, assuming deterministic execution). This is done by counting down a call counter initialized when fetching the shared parameters. The similar mechanism ensures argument replacement occurs only in the "tested call".
+
+When the call counter value indicates the occurring call should be tested (the execution is inside the tested function, performing the desired call), the preamble launches the `perform_testing` function. This function performs the following sequence of steps **for each** "test case" (**argument packet to be replaced**):
+
+1. signal test start to the `llcap-server` (creates a "session", sends function ID)
+2. prepare a socket pair, `fork`, we call the parent process the *test coordinator*
+3. wait and poll the child, handling its requests (acting as a middleman between the child and the `llcap-server`) or informing `llcap-server` of the status
+
+For example, if we recorded 4 argument packets of `foo`, the target application will be launched 4 times and each of those runs will be forked 4 times, replacing the values of `foo`'s arguments with every recorded argument packet's data. (by launching multiple times, we try to minimize the argument replacement interference).
+
+The forked child will execute the deserializing argument hooks in its address space, effectively replacing the arguments of the call. Depending on the instrumentation used, the `fork`ed child may or may not terminate as soon as the tested call is done. If the `llcap-instrument-fn-exit` option has been passed to the LLVM pass, it will attempt to inject the function exit hook (`hook_test_epilogue` or `hook_test_epilogue_exc`), which terminates the function just before returning from it. Currently, the functionality is incomplete as full exception coverage [is not implemented](../../../notes/000-TODOs.md#ensuring-all-exceptions-are-always-detected).
+
+The *test coordinator* never semantically exits this function, i.e., after all the tests are finished, the *test coordinator* signals the end of the test to the `llcap-server` and terminates.
+ 
 Sequence diagram of the testing phase:
 
 ![Sequence diagram of the testing phase](../../../notes/images/diags/testing-phase.png)
+
+In the testing phase, we consider two timeouts:
+
+* the global timeout (`llcap-server` option `global-timeout`) - the timeout for each test job - a single launch of the instrumented application (testing a single function's call)
+* the test case timeout (`timeout` option) - the timeout for each child to finish running
+
+The timeouts are aimed at supporting, e.g. non-terminating applications and providing some failsafe mechanism (so that users don't have to perform manual cleanup, etc.).
