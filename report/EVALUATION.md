@@ -164,7 +164,7 @@ P | [inspect_packet] Packet index: 60
 P | [inspect_packet] Raw packet: [90, 0, 0, 0]
 ```
 
-Reader shall notice the last few entries - these were created by "clicking" on the left side of the UI slider, incrementing by `10`. The values do correspond to the values set while performing argument capture. The initial recorded values may have been influenced by previous runs of the program.
+Reader shall notice the last few entries - these were created by "clicking" on the right side of the UI slider, incrementing by `10`. The values do correspond to the values set while performing argument capture. The initial recorded values may have been influenced by previous runs of the program.
 
 ## Running the tool - testing
 
