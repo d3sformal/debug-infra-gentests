@@ -2,9 +2,23 @@
 
 ## Build
 
-The build depends on a "shared memory metadata struct" that can be found in the hook library's [shm_commons.h](../ipc-hooklib/shm_commons.h) file. If this file's location does not match (relatively) to this folder, you need to modify the (`header` call in the) `build.rs` file. 
+The build depends on a "shared memory metadata struct" that can be found in the hook library's [shm_commons.h](../ipc-hooklib/shm_commons.h) file. If this file's location does not match (relatively) to this folder, you need to modify the (`header` call in the) `build.rs` file.
 
-For usage examples, use `--help` or refer to the [demo](../example-arg-replacement/README.md).
+Using `cargo`, you can build and run by running:
+
+```shell
+cargo build # or cargo b
+cargo run   # or cargo r
+```
+
+optionally with the release flag:
+
+```shell
+cargo b --release
+cargo r --release
+```
+
+For usage examples, use `--help` (`cargo r --release -- --help`) or refer to the [demo](../example-arg-replacement/README.md).
 
 ## Development documentation
 
