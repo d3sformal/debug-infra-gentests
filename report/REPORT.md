@@ -1,5 +1,10 @@
 # Locating Bugs in C/C++ Programs by Generating Directed Unit Tests
 
+## PDF?
+
+* to PDF: `pandoc ./REPORT.md -o report.pdf`
+  * formatting (margins too wide, smaller gaps between headings?, smaller text?)
+
 ## 1. Introduction
 
 Debugging complex systems may present a time-consuming challenge, especially
