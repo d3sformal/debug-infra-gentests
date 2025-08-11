@@ -129,7 +129,7 @@ llcap-server -vvvv  --modmap //FIXPATH/modmaps trace-calls capture-args -s ./sel
 Then, we inspect the packets:
 
 ```shell
-llcap-server -- -vvvv  --modmap //FIXPATH/modmaps trace-calls test -s ./selected-fnis-kpass.bin -c ./kpass-trcs-dir/ --inspect-packets F3199851-01000000
+llcap-server -- -vvvv  --modmap //FIXPATH/modmaps test -s ./selected-fnis-kpass.bin -c ./kpass-trcs-dir/ --inspect-packets F3199851-01000000
 ```
 
 With the following result:
@@ -175,7 +175,11 @@ Testing a GUI application in the way set up as above can be vague/tricky. Essent
 
 We believe, however, that according to the goals of the project (i.e. to create an initial set of tools that allow this kind of testing) the main evaluation criterion here is demonstrating both instrumentation passes can be performed and function.
 
-We shortened the capture trace to the last seven argument packets.
+We shortened the capture trace to the last seven argument packets and ran testing:
+
+```shell
+llcap-server -- -vvvv  --modmap //FIXPATH/modmaps test -s ./selected-fnis-kpass.bin -c ./kpass-trcs-dir/
+```
  
 While the concerns above have not manifested when testing, we encountered a keepass-specific issue
 that prevented the execution of more tests. When our tool terminated the tested application, it kept
