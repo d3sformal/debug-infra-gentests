@@ -123,13 +123,13 @@ Traces originated from 1 modules
 We selected the `PasswordGenerator::setLength(int)` function (as it is the only valid candidate for the instrumentation) and performed argument capture (again, interacting with the UI element):
 
 ```shell
-llcap-server -vvvv  --modmap //FIXPATH/modmaps trace-calls capture-args -s ./selected-fnis-kpass.bin -o ./kpass-trcs-dir /path/to/keepassxc/build/src/keepassxc
+llcap-server  --modmap //FIXPATH/modmaps trace-calls capture-args -s ./selected-fnis-kpass.bin -o ./kpass-trcs-dir /path/to/keepassxc/build/src/keepassxc
 ```
 
 Then, we inspect the packets:
 
 ```shell
-llcap-server -- -vvvv  --modmap //FIXPATH/modmaps test -s ./selected-fnis-kpass.bin -c ./kpass-trcs-dir/ --inspect-packets F3199851-01000000
+llcap-server --  --modmap //FIXPATH/modmaps test -s ./selected-fnis-kpass.bin -c ./kpass-trcs-dir/ --inspect-packets F3199851-01000000
 ```
 
 With the following result:
@@ -204,6 +204,72 @@ P | [main]  F3199851 |  01000000 |   1 |   6 | Pass
 P | [main] ---------------------------------------------------------------
 P | [main] Exiting...
 ```
+
+## Using `keepassxc-cli`
+
+To avoid the GUI-related hurdles, we can run the `keepassxc-cli` binary compiled along with the `keepassxc` binary. We can supply `generate --length 13` to generate a single 13-character password of the specified length on the standard output. 
+
+Instrumentation of this program should provide observable outcomes **if we use the argument traces recorded from the GUI stage**. This is to have *more than one* argument packet because the CLI version calls `setLength` only once, as expected. 
+
+```shell
+# build with -Call
+
+# perform call tracing
+cargo r -- --modmap /path/to/keepassxc/build/modmaps/ trace-calls -o ./selected-fnis-kpass.bin /path/to/keepassxc/build/src/cli/keepassxc-cli generate --length 13
+
+# copy recorded traces from the GUI phase to some //TEMP
+
+# replace -Call to -Arg to perform second instrumentation, build keepassxc
+# ensure function exit instrumentation is NOT performed
+
+# perform blank argument capture (just to generate proper filesystem structure for the argument traces)
+cargo r -- --modmap /path/to/keepassxc/build/modmaps/ capture-args -s ./selected-fnis-kpass.bin -o ./kpass-trcs-dir /path/to/keepassxc/build/src/cli/keepassxc-cli generate --length 13
+
+# replace the trace in the kpass-trcs-dir with the //TEMP trace
+
+# output of the tested program will get redirected to the stdout of llcap-server
+cargo r -- --modmap /path/to/keepassxc/build/modmaps test -s ./selected-fnis-kpass.bin -c ./kpass-trcs-dir/ /path/to/keepassxc/build/src/cli/keepassxc-cli generate --length 30
+```
+
+With result:
+
+```
+P | [main] Verbosity: 0
+P | [main] Reading function selection
+P | [main] Masking
+P | [main] Setting up function packet reader
+P | [main] Setting up function packet server
+P | [main] Run program for fn m: F3199851 f: 01000000
+P | [main] Waiting for jobs to finish...
+qvXJdWw2akDAe2Ztist4tfg44nTEUt
+nripg5s3n5nYMNneYYtmCrrCbVKoc9ZTRJDLjhwd
+QDT7YQoPMbY4j3KNY3vaEXjrtJPLtm3Hxsq45J2KCm3oStD3g4
+dTaZrcT9merNvsARc373Nr7QtQCSZcPXnRFAKbiy4NXFnZqVuSihcagdjfdA
+9j3JsmxEzq3RnfxT2dMEQwvjTNHWqncdyNu5zgH32ReabDyp4iRqr5aqH7MUnRynufjHmY
+K4tLUEDKrsSgzXViemamRwi5AhCM7Wt2YskbPNNhQv4tUUJeRwXJLFj9FQvjYc5ykedtHTHVcnj4bhua
+NkUsdqsJDkgpoC734RvCScyHbFDWjvArfUvajf7vNJeCDrE4KwHX4QNUXsTA5tcU9YRwbEXfUPgxqoE2M2j9SLh9mZ
+3yMJYtUfz3i5vVhWTrvVp2iC2ia5uE
+ygtDWm5J3chowMgJcPFPM5Wr99hwxZ
+bnFLagzRS9os5YzHCp5ieZz793CCaY
+7bJedxACFFJVHxCtqWDaX2HhMemcxC
+FU9kyxrxug22LSEreJXsKPzEf5EMqo
+ovVsce3tTtVjbztq7mXaHFfH7QbmC7
+P | [main] Waiting for server to exit...
+P | [main] ---------------------------------------------------------------
+P | [main] Test results (7): 
+P | [main] Module ID | Function ID |  Call  | Packet | Result
+P | [main]  F3199851 |  01000000   |   1    |   0    | Exit(0)
+P | [main]  F3199851 |  01000000   |   1    |   1    | Exit(0)
+P | [main]  F3199851 |  01000000   |   1    |   2    | Exit(0)
+P | [main]  F3199851 |  01000000   |   1    |   3    | Exit(0)
+P | [main]  F3199851 |  01000000   |   1    |   4    | Exit(0)
+P | [main]  F3199851 |  01000000   |   1    |   5    | Exit(0)
+P | [main]  F3199851 |  01000000   |   1    |   6    | Exit(0)
+P | [main] ---------------------------------------------------------------
+P | [main] Exiting...
+```
+
+We can see that the program output changes correctly. We provided 7 recorded packets; thus, `llcap-server` expects to instrument all 7 of them and launches the program 7 times. Yet, only one call to `setLength` will be performed, and it will fork and replace the call's arguments 7 times. The other executions result in unchanged behavior and no tests will be registered as the 2nd and later call to the target function is never performed.
 
 ## Conclusion
 
