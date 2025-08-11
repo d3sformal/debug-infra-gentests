@@ -4,7 +4,16 @@
 
 The build depends on a "shared memory metadata struct" that can be found in the hook library's [shm_commons.h](../ipc-hooklib/shm_commons.h) file. If this file's location does not match (relatively) to this folder, you need to modify the (`header` call in the) `build.rs` file.
 
-You can obtain `cargo` and `rustc` from your OS's package distribution system or by installing `rustup`. `rustup` is preffered as it provides the latest version of the toolchain.
+You can obtain `cargo` and `rustc` from your OS's package distribution system (package `cargo` should provide both) or by installing via `rustup`. 
+
+`rustup` is preffered as it provides the latest version of the toolchain.
+
+For clean installations:
+
+    rustup default stable
+    # or
+    rustup install stable
+
 `llcap-server` requires `cargo` and `rustc` version at least 1.88.
 
 Using `cargo`, you can build and run by running:
