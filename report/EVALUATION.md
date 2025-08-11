@@ -178,7 +178,7 @@ We believe, however, that according to the goals of the project (i.e. to create 
 We shortened the capture trace to the last seven argument packets and ran testing:
 
 ```shell
-llcap-server -- -vvvv  --modmap //FIXPATH/modmaps test -s ./selected-fnis-kpass.bin -c ./kpass-trcs-dir/
+llcap-server -- -vvvv  --modmap //FIXPATH/modmaps test -s ./selected-fnis-kpass.bin -c ./kpass-trcs-dir/ /path/to/keepassxc/build/src/keepassxc
 ```
  
 While the concerns above have not manifested when testing, we encountered a keepass-specific issue
