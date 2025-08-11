@@ -258,4 +258,19 @@ Currently we only support instrumentation of single-threaded programs. The main 
  ## Explore fuzzing approaches for injected argument values
 
  The current form of the workflow simply copies the recorded arguments and "replays" the function calls. We can manually edit the recorded traces to inject other argument values. Creating methods of interactive or automatic addition of argument values would extended the usage of the entire project. Particularly, this setup would allow instrumentation of functions that are "harder to reach" using conventional testing methods in terms of architectural accesibility or the setup of the surrounding program state.
- 
+
+ ## Configurability and consistency
+
+The tool suffers from inconsistent behavior concerning, e.g., the existence of input/output folders and files. It is desirable to unify the behavior.
+
+At the same time, some parts of the workflow can be simplified by introducing "configuration" files
+passed to the relevant parts of the tool set. 
+
+One example is the differentiation between the instrumentation phases. Currently, the `llvm-pass` exposes options that have to be appended to the `clang(++)` (compiler) flags with the additional `-mllvm` flag. We switch between call tracing and argument capture/testing instrumentation by supplying either `-mllvm -Test` or `-mllvm -Call`. This is tedious as it requires modification of build files **and regeneration of build infrastructure** every time we want to switch.
+
+By supplying a single configuration file to the `llvm-pass` and providing the configuration in the file, we can make the tool considerably easier to use. Theoretically, this addition would also allow 
+
+* easier integration with a GUI frontend
+* providing more parameters in the configuration file, customizing the instrumentation
+    * other parameters supplied to the pass currently
+    * module-based filtering, etc.
