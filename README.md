@@ -51,6 +51,8 @@ To **build** the tools:
 
 > [!note] Prerequisites: 
 > `git`, `cmake`, C/C++ toolchain, `ninja`, `xargs`
+>
+> `cargo` and `rustc` (both version >=1.88, more on that in the [relevant part of the repo](./sandbox/02-ipc/llcap-server/))
 
 ### Setup LLVM
 
@@ -110,9 +112,9 @@ xargs rm -rf < install_manifest.txt
 ```
 
 Next, you will also need to build (commands shall be executed in the tools' subdirectories):
-* [LLVM pass plugin](./sandbox/01-llvm-ir/llvm-pass/) (**depends on** `llvm-project`) - `cmake ./ && make` 
-* [hook library](./sandbox/02-ipc/ipc-hooklib/) - `cmake ./ && make` (independent)
-* [`llcap-server`](./sandbox/02-ipc/llcap-server/) - `cargo b` or `cargo b --release` (independent)
+* [LLVM pass plugin](./sandbox/01-llvm-ir/llvm-pass) (**depends on** `llvm-project`) - `cmake ./ && make` 
+* [hook library](./sandbox/02-ipc/ipc-hooklib/README.md) - `cmake ./ && make` (independent)
+* [`llcap-server`](./sandbox/02-ipc/llcap-server/README.md) - `cargo b` or `cargo b --release` (independent)
 
 ## Organization
 

@@ -2,6 +2,12 @@
 
 This library allows the instrumented program to communicate with the [`llcap-server`](../llcap-server/). We inject calls to this library into the target program via the [`llvm-pass`](../../01-llvm-ir/llvm-pass/). The library is primarily written in C++ but should be linkable to a C binary.
 
+## Build
+
+Building should be as simple as running 
+
+    cmake ./ && make
+
 ## Terminology
 
 * see the [project's concepts](../../../README.md#concepts)
