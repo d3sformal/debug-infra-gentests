@@ -294,7 +294,7 @@ When the call counter value indicates the occurring call should be tested (the e
 2. prepare a socket pair, `fork`, we call the parent process the *test coordinator*
 3. wait and poll the child, handling its requests (acting as a middleman between the child and the `llcap-server`) or informing `llcap-server` of the status
 
-For example, if we recorded 4 argument packets of `foo`, the target application will be launched 4 times and each of those runs will be forked 4 times, replacing the values of `foo`'s arguments with every recorded argument packet's data. (by launching multiple times, we try to minimize the argument replacement interference).
+For example, if we recorded 4 argument packets of `foo` (i.e. `foo` was called 4 times during argument capture), the target application will be launched 4 times and each of those runs will be forked 4 times, replacing the values of `foo`'s arguments with every recorded argument packet's data. (by launching multiple times, we try to minimize the argument replacement interference).
 
 The forked child will execute the deserializing argument hooks in its address space, effectively replacing the arguments of the call. Depending on the instrumentation used, the `fork`ed child may or may not terminate as soon as the tested call is done. If the `llcap-instrument-fn-exit` option has been passed to the LLVM pass, it will attempt to inject the function exit hook (`hook_test_epilogue` or `hook_test_epilogue_exc`), which terminates the function just before returning from it. Currently, the functionality is incomplete as full exception coverage [is not implemented](../../../notes/000-TODOs.md#ensuring-all-exceptions-are-always-detected).
 

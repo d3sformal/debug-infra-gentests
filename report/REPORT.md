@@ -10,7 +10,7 @@
 Debugging complex systems may present a time-consuming challenge, especially
 if the bugfix requires finding the root cause of the error. The initiative
 started at Charles University, focused on techniques and tools for debugging
-large systems, led by Pavel Parizek, Ph.D., already addresses this
+large systems, led by prof. Pavel Parizek ([webiste](https://d3s.mff.cuni.cz/people/pavelparizek/)), already addresses this
 area of research in the Java/JVM ecosystem.
 
 The initiative proposes a methodology that combines dynamic runtime analysis/recording
@@ -58,6 +58,9 @@ and the alternative solutions we considered.
 * LLVM IR plugin
 * llcap-server
 * hooklib
+* demo
+* tests
+* extensible
 
 * aside: llvm patch, explained later
 
