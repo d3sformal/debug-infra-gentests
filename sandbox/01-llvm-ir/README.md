@@ -22,5 +22,4 @@ We attempt to instrument the LLVM IR with calls to a tracing library ([`hooklib`
     * contains a [`llvm-project` **patch**](./custom-metadata-pass/custom-metadata.diff) adding custom metadata functionality to the `FunctionDecl` class (later evolved into [the final patch](./clang-ir-mapping-llvm.diff))
         * allows setting key-value *string* pairs that are available in the LLVM IR represenation
         * the final patch is required & forces recompilation of at least 1500 files, **be sure to apply it** before attempting to run related scripts (usually they have `meta` or `meta-plugin` in their name)
-    * contains a clang plugin that modifies the metadata based on the AST walkthrough
-        * ~~so far just~~ adds `custom key`-`dummy value` pair to the metadata that indicates whether the function is **not** in a system header file (as opposed to analyzing name mangling)
+    * contains [a clang AST plugin](./custom-metadata-pass/ast-meta-add/README.md) that modifies the metadata based on the AST walkthrough

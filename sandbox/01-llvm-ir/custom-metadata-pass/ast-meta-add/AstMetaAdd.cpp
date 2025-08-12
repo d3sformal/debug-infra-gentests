@@ -8,20 +8,20 @@
 //===----------------------------------------------------------------------===//
 #include "./llvm-metadata.h"
 #include "clang/AST/ASTConsumer.h"
+#include <clang/AST/ASTContext.h>
 #include "clang/AST/Decl.h"
+#include <clang/AST/Decl.h>
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/PrettyPrinter.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/LangOptions.h"
 #include "clang/Frontend/CompilerInstance.h"
+#include <clang/Frontend/FrontendAction.h>
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/Sema/Sema.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
-#include <clang/AST/ASTContext.h>
-#include <clang/AST/Decl.h>
-#include <clang/Frontend/FrontendAction.h>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -34,19 +34,22 @@ namespace {
 // the lifetime of our metadata strings survives up until the IR generation
 static std::set<std::string> StringBackings;
 
-bool isTargetTypeValRefPtr(const std::string &s, const std::string &tgt) {
-  return s == tgt || s == tgt + " *" || s == tgt + " &" || s == tgt + " &&";
+bool isTargetTypeValRefPtr(const std::string &S, const std::string &Target) {
+  return S == Target || S == Target + " *" || S == Target + " &" ||
+         S == Target + " &&";
 }
 
-// Predicate :: (ParmVarDecl* param, size_t ParamIndex) -> bool
-template <typename Predicate>
-std::vector<size_t> filterParmIndicies(const FunctionDecl *FD, Predicate pred) {
+// PredicateT :: (ParmVarDecl* param, size_t ParamIndex) -> bool
+// selects parameter indicies of FD which satisfy pred predicate
+template <typename PredicateT>
+std::vector<size_t> filterParmIndicies(const FunctionDecl *FD,
+                                       PredicateT Predicate) {
   std::vector<size_t> Indicies;
   size_t ParamIndex = 0;
-  for (ParmVarDecl *const *it = FD->param_begin(); it != FD->param_end();
-       ++it) {
-    auto *param = *it;
-    if (pred(param, ParamIndex)) {
+  for (ParmVarDecl *const *It = FD->param_begin(); It != FD->param_end();
+       ++It) {
+    auto *Param = *It;
+    if (Predicate(Param, ParamIndex)) {
       Indicies.push_back(ParamIndex);
     }
     ++ParamIndex;
@@ -54,6 +57,8 @@ std::vector<size_t> filterParmIndicies(const FunctionDecl *FD, Predicate pred) {
   return Indicies;
 }
 
+// inserts metadata encoding argument indicies under the specified metadata key
+// for the function represented by FD
 void addIndiciesMetadata(const llvm::StringRef MetaKey, const FunctionDecl *FD,
                          const std::vector<size_t> &Indicies) {
   std::stringstream ResStream("");
@@ -81,13 +86,15 @@ void encodeArgIndiciesSatisfying(const StringRef MetadataKey,
   addIndiciesMetadata(MetadataKey, FD, Indicies);
 }
 
-void addFunctionLocationMetadata(const FunctionDecl *FD, bool log = false) {
+// adds all metadata of interest to FD
+// log parameter is only for debugging purposes
+void addFunctionMetadata(const FunctionDecl *FD, bool Log = false) {
   auto &SourceManager = FD->getASTContext().getSourceManager();
   auto Loc = SourceManager.getExpansionLoc(FD->getBeginLoc());
   bool InSystemHeader = SourceManager.isInSystemHeader(Loc) ||
                         SourceManager.isInExternCSystemHeader(Loc) ||
                         SourceManager.isInSystemMacro(Loc);
-  if (log) {
+  if (Log) {
     llvm::errs() << FD->getDeclName() << ' '
                  << FD->getSourceRange().printToString(
                         FD->getASTContext().getSourceManager())
@@ -96,11 +103,7 @@ void addFunctionLocationMetadata(const FunctionDecl *FD, bool log = false) {
     llvm::errs() << '\n';
   }
   if (!InSystemHeader) {
-    if (log) {
-      llvm::errs() << "GOT "
-                      "\n";
-    }
-
+    // we insert indicies of parameters that are std::string
     encodeArgIndiciesSatisfying(
         VSTR_LLVM_CXX_DUMP_STDSTRING, FD, [](ParmVarDecl *Arg, size_t Idx) {
           auto TypeName = Arg->getType().getCanonicalType().getAsString();
@@ -108,24 +111,25 @@ void addFunctionLocationMetadata(const FunctionDecl *FD, bool log = false) {
                                        "class std::basic_string<char>");
         });
 
+    // are unsigned numeric types
     encodeArgIndiciesSatisfying(
         VSTR_LLVM_UNSIGNED_IDCS, FD, [](ParmVarDecl *Arg, size_t Idx) {
           return Arg->getType()->isUnsignedIntegerType();
         });
 
+    // we also insert metadata regarding the locaiton of the function, we use
+    // this to filter functions during IR instrumentation
     FD->setIrMetadata(VSTR_LLVM_NON_SYSTEMHEADER_FN_KEY,
                       VSTR_LVVM_NON_SYSTEMHEADER_FN_VAL);
+    // we also delegate whether this pointer is present
     if (FD->isCXXInstanceMember()) {
       FD->setIrMetadata(VSTR_LLVM_CXX_THISPTR, "");
     }
-  } else {
-
-    if (log) {
-      llvm::errs() << "NOT GOT\n"
-                   << SourceManager.isInSystemHeader(Loc) << " "
-                   << SourceManager.isInExternCSystemHeader(Loc) << " "
-                   << SourceManager.isInSystemMacro(Loc) << '\n';
-    }
+  } else if (Log) {
+    llvm::errs() << "Function in system header due to:\n"
+                 << SourceManager.isInSystemHeader(Loc) << " "
+                 << SourceManager.isInExternCSystemHeader(Loc) << " "
+                 << SourceManager.isInSystemMacro(Loc) << '\n';
   }
 }
 
@@ -142,7 +146,7 @@ public:
 
   void HandleDecl(Decl *D) {
     if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
-      addFunctionLocationMetadata(FD);
+      addFunctionMetadata(FD);
     } else if (const NamespaceDecl *ND = dyn_cast<NamespaceDecl>(D)) {
       HandleNamespaceDecl(ND);
     }
@@ -157,7 +161,7 @@ public:
     struct LambdaVisitor : public RecursiveASTVisitor<LambdaVisitor> {
       bool VisitLambdaExpr(const LambdaExpr *LE) {
         if (CXXMethodDecl *MD = LE->getCallOperator(); MD != nullptr) {
-          addFunctionLocationMetadata(MD->getAsFunction());
+          addFunctionMetadata(MD->getAsFunction());
         }
         return true;
       }
@@ -166,7 +170,7 @@ public:
   }
 
   bool HandleTopLevelDecl(DeclGroupRef DG) override {
-    // TODO - HandleDecl is recursive via HandleNamespaceDecl -> if
+    // NOTE - HandleDecl is recursive via HandleNamespaceDecl -> if
     // NamespaceDecls are NOT acyclic, we need to setup a set of visited/handled
     // namespaces
     for (DeclGroupRef::iterator i = DG.begin(), e = DG.end(); i != e; ++i) {
@@ -177,7 +181,7 @@ public:
   }
 
   void HandleInlineFunctionDefinition(FunctionDecl *FD) override {
-    addFunctionLocationMetadata(FD);
+    addFunctionMetadata(FD);
   }
 };
 
@@ -198,4 +202,4 @@ protected:
 } // namespace
 
 static FrontendPluginRegistry::Add<AddMetadataAction>
-    X("ast-meta-add", "Propagates function location metadata from the AST");
+    X("ast-meta-add", "Inserts metadata alongside non-system functions");

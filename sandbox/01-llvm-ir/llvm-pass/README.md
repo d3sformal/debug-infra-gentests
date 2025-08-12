@@ -1,6 +1,6 @@
 # `llvm-pass`
 
-This LLVM pass plugin performs instrumentation of the target program.
+This LLVM pass plugin performs instrumentation of the target program. To build, run `cmake ./ && make`.
 
 ## File Structure (`src` directory)
 
