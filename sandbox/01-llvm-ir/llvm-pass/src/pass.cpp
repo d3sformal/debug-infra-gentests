@@ -97,7 +97,7 @@ struct InstrumentationPass : public PassInfoMixin<InstrumentationPass> {
         return PreservedAnalyses::none();
       }
 
-      Work.run();
+      Work.instrument();
 
       if (!Work.finish()) {
         errs() << "Instrumentation failed - ArgumentInstrumentation!\n";
@@ -112,7 +112,7 @@ struct InstrumentationPass : public PassInfoMixin<InstrumentationPass> {
         return PreservedAnalyses::none();
       }
 
-      Work.run();
+      Work.instrument();
 
       if (!Work.finish()) {
         errs() << "Instrumentation failed - FunctionEntryInstrumentation!\n";

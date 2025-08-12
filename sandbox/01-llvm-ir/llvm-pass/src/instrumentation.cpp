@@ -42,13 +42,22 @@
 
 using namespace llvm;
 
+// functions common to both instrumentations
 namespace common {
 namespace {
+
+// data helping to implement custom type support
+
 struct SCustomTypeDescription {
+  // the exact name of the hook as available in the hooklib
   const char *m_hookFnName;
+  // display name that may appear in log entries
   const char *m_log_name;
 };
 
+// maps metadata key (correspoding to a custom type) to the size of the type
+// argument, for custom types, LLSZ_CUSTOM is the only one valid at this point
+// and instrumentation is done via pointer/reference
 const std::unordered_map<const char *, LlcapSizeType> SCustomSizes{
     {LLCAP_TYPE_STD_STRING, LlcapSizeType::LLSZ_CUSTOM},
     // invalid size means
@@ -62,6 +71,8 @@ const std::unordered_map<const char *, SCustomTypeDescription> SCustomHooks{
      SCustomTypeDescription{.m_hookFnName = "llcap_hooklib_extra_cxx_string",
                             .m_log_name = "std::string"}}};
 
+// creates argument index mapping for a particular function, taking into account
+// all of the above-registered custom type metadata keys
 ClangMetadataToLLVMArgumentMapping
 createArgumentMapping(Function &Fn, IdxMappingInfo &IdxInfo) {
   ClangMetadataToLLVMArgumentMapping Mapping(Fn, IdxInfo);
@@ -71,26 +82,43 @@ createArgumentMapping(Function &Fn, IdxMappingInfo &IdxInfo) {
   return Mapping;
 }
 
+// helper container for IR-level constants
+// these are used in calls to hooklib functions which accept module and function
+// IDs (the IDs are inserted during the instrumentation as constants)
 struct SFnUidConstants {
   ConstantInt *module;
   ConstantInt *function;
+
+  // creates the constant pair inside the supplied module
+  static SFnUidConstants getModFunIdConstants(llcap::ModuleId ModuleIntId,
+                                              Module &M,
+                                              llcap::FunctionId FunctionIntId) {
+    static_assert(sizeof(llcap::FunctionId) ==
+                  4); // this does not imply incorrectness, just that everything
+    // must be checked
+    auto *FnIdConstant = ConstantInt::get(
+        M.getContext(), APInt(llcap::FUNID_BITSIZE, FunctionIntId));
+    static_assert(sizeof(llcap::ModuleId) == 4);
+    auto *ModIdConstant = ConstantInt::get(
+        M.getContext(), APInt(llcap::MODID_BITSIZE, ModuleIntId));
+    return {.module = ModIdConstant, .function = FnIdConstant};
+  }
 };
 
-SFnUidConstants getModFunIdConstants(llcap::ModuleId ModuleIntId, Module &M,
-                                     llcap::FunctionId FunctionIntId) {
-  static_assert(sizeof(llcap::FunctionId) ==
-                4); // this does not imply incorrectness, just that everything
-  // must be checked
-  auto *FnIdConstant = ConstantInt::get(
-      M.getContext(), APInt(llcap::FUNID_BITSIZE, FunctionIntId));
-  static_assert(sizeof(llcap::ModuleId) == 4);
-  auto *ModIdConstant = ConstantInt::get(
-      M.getContext(), APInt(llcap::MODID_BITSIZE, ModuleIntId));
-  return {.module = ModIdConstant, .function = FnIdConstant};
+// inserts a call to the string-specified function
+// and supplies the Module and Function ID to it (in this order)
+void insertInfraFnCall(IRBuilder<> &Builder, Module &M, StringRef Name,
+                       const common::SFnUidConstants C) {
+  auto Callee = M.getOrInsertFunction(
+      Name,
+      FunctionType::get(Type::getVoidTy(M.getContext()),
+                        {C.module->getType(), C.function->getType()}, false));
+  Builder.CreateCall(Callee, {C.module, C.function});
 }
 } // namespace
 } // namespace common
 
+// functions relevant only to the call tracing instrumentation
 namespace callTracing {
 namespace {
 
@@ -107,6 +135,8 @@ bool isStdFnDanger(const StringRef Mangled) {
          Mangled.starts_with("_ZNSa") || Mangled.starts_with("__");
 }
 
+// decides whether the function is "in a system header" by inspecting metadata
+// and looking for keys inserted by the AST pass
 bool isStdFnBasedOnMetadata(const Function &Fn,
                             const std::string &DemangledName,
                             const StringRef MangledName) {
@@ -114,8 +144,8 @@ bool isStdFnBasedOnMetadata(const Function &Fn,
   if (MDNode *N = Fn.getMetadata(LLCAP_FN_NOT_IN_SYS_HEADER_KEY)) {
     if (N->getNumOperands() == 0) {
       VERBOSE_LOG << "Warning! Unexpected metadata node with no "
-                           "operands! Function: "
-                        << MangledName << ' ' << DemangledName << '\n';
+                     "operands! Function: "
+                  << MangledName << ' ' << DemangledName << '\n';
     }
 
     if (auto *Op = dyn_cast_if_present<MDString>(N->getOperand(0));
@@ -131,6 +161,8 @@ bool isStdFnBasedOnMetadata(const Function &Fn,
   return true;
 }
 
+// decides whether the function is "in a system header"
+// we do not instrument such functions
 bool isStdFn(const Function &Fn, const Str &DemangledName, const StringRef Name,
              bool UseMangledNames) {
   if (UseMangledNames && isStdFnDanger(Name)) {
@@ -144,17 +176,17 @@ bool isStdFn(const Function &Fn, const Str &DemangledName, const StringRef Name,
 
 void insertFnEntryHook(IRBuilder<> &Builder, Module &M,
                        const common::SFnUidConstants C) {
-  auto Callee = M.getOrInsertFunction(
-      "hook_start",
-      FunctionType::get(Type::getVoidTy(M.getContext()),
-                        {C.module->getType(), C.function->getType()}, false));
-  Builder.CreateCall(Callee, {C.module, C.function});
+  common::insertInfraFnCall(Builder, M, "hook_start", C);
 }
 } // namespace
 } // namespace callTracing
 
 namespace argCapture {
 
+// inserts test-terminating call to hooklib before every potentially-exitting IR
+// instruction this includes exception-related instructions
+//
+// WARNING: exceptions are only partially covered
 void insertTestEpilogueHook(Function &Fn, Module &M,
                             const common::SFnUidConstants C) {
   auto Types = {C.module->getType(), C.function->getType()};
@@ -169,17 +201,25 @@ void insertTestEpilogueHook(Function &Fn, Module &M,
   // cleanupret instructions and place a call before them
 
   // all the crappery below simply modifies the instructions ret, resume,
-  // catchswitch, cleanupret by INSERTING A CALL BEFORE those instructions due
-  // to various method deprecations & mainly iterator invalidation
-  // (inst_iterator), with each modified instruction, we must re-iterate the
-  // instructions (hence the while true) - or at least I haven't found a better,
-  // correct way furthermore, we mark "how many instructions should we skip to
-  // get back to the place we left of" (ToSkip, the small for-loop)
-  size_t ToSkip = 0;
+  // catchswitch, cleanupret by INSERTING A CALL BEFORE those instructions
+
+  // it looks ugly due to various method deprecations & mainly iterator
+  // invalidation (inst_iterator) - with each modified instruction, we must
+  // re-iterate the instructions (hence the while true)
+
+  // so far, I haven't found a better, correct way to do this. Furthermore,
+  // we mark "how many instructions should we skip to
+  // get back to the place we left off" to make this scan linear
+  // (ToSkip, the small for-loop)
+  u32 ToSkip = 0;
   while (true) {
     inst_iterator I = inst_begin(Fn);
     inst_iterator E = inst_end(Fn);
-    for (size_t Skip = 0; Skip < ToSkip && I != E; ++Skip) {
+    // skip instructions to get to the last "instrumented" instruction
+    // (i cannot take the difference between I and E to make this
+    // straightforward, via I += std::min(ToSkip, E - I) and using std::distance
+    // returns an int which cannot be added to the inst_iterator...)
+    for (u32 Skip = 0; Skip < ToSkip && I != E; ++Skip) {
       ++I;
     }
 
@@ -220,11 +260,7 @@ void insertTestEpilogueHook(Function &Fn, Module &M,
 
 void insertArgCapturePreambleHook(IRBuilder<> &Builder, Module &M,
                                   const common::SFnUidConstants &C) {
-  auto Callee = M.getOrInsertFunction(
-      "hook_arg_preamble",
-      FunctionType::get(Type::getVoidTy(M.getContext()),
-                        {C.module->getType(), C.function->getType()}, false));
-  Builder.CreateCall(Callee, {C.module, C.function});
+  common::insertInfraFnCall(Builder, M, "hook_arg_preamble", C);
 }
 
 void instrumentArgHijack(IRBuilder<> &Builder, Module &M, Argument *Arg,
@@ -291,49 +327,26 @@ void instrumentArgHijack(IRBuilder<> &Builder, Module &M, Argument *Arg,
   }
 }
 
-// terminology:
-// LLVM Argument Index = 0-based index of an argument as seen directly in the
-// LLVM IR
+FunctionCallee getOrInsertHookFn(const char *HookName, Type *TypePtr, Module &M,
+                                 LLVMContext &Ctx) {
+  return M.getOrInsertFunction(
+      HookName,
+      FunctionType::get(Type::getVoidTy(Ctx),
+                        {TypePtr, PointerType::getUnqual(Ctx),
+                         Type::getInt32Ty(Ctx), Type::getInt32Ty(Ctx)},
+                        false));
+}
 
-//  AST Argument Index  = 0-based idx as seen in the Clang AST
-
-// key differences accounted for: this pointer & sret arguments (returning a
-// struct in a register)
-
-void insertArgCaptureHook(IRBuilder<> &Builder, Module &M,
-                          const common::SFnUidConstants &C, Argument *Arg,
-                          const ClangMetadataToLLVMArgumentMapping &Mapping,
-                          const Vec<Pair<size_t, LlcapSizeType>> &Sizes) {
-  auto &Ctx = M.getContext();
-  auto GetOrInsertHookFn = [&](const char *HookName, auto *TypePtr) {
-    return M.getOrInsertFunction(
-        HookName,
-        FunctionType::get(Type::getVoidTy(Ctx),
-                          {TypePtr, PointerType::getUnqual(Ctx),
-                           Type::getInt32Ty(Ctx), Type::getInt32Ty(Ctx)},
-                          false));
+// returns false if argument instrumentation shoudl attempt different types of
+// arguments
+bool tryInsertIntegerArgCapture(
+    IRBuilder<> &Builder, LLVMContext &Ctx, Module &M, unsigned int ArgNum,
+    Type *ArgT, const common::SFnUidConstants &C, Argument *Arg,
+    const ClangMetadataToLLVMArgumentMapping &Mapping,
+    const Vec<Pair<size_t, LlcapSizeType>> &Sizes) {
+  auto GetOrInsertHookFn = [&](const char *HookName, Type *TypePtr) {
+    return getOrInsertHookFn(HookName, TypePtr, M, Ctx);
   };
-
-  auto ArgNum = Arg->getArgNo();
-  auto *ArgT = Arg->getType();
-
-  if (ArgT->isFloatTy()) {
-    VERBOSE_LOG << "Inserting call f32\n";
-    auto *TPtr = Type::getFloatTy(Ctx);
-    auto CallFloat = GetOrInsertHookFn("hook_float", TPtr);
-    instrumentArgHijack(Builder, M, Arg, TPtr, CallFloat, C.module, C.function);
-    return;
-  }
-
-  if (ArgT->isDoubleTy()) {
-    VERBOSE_LOG << "Inserting call f64\n";
-    auto *TPtr = Type::getDoubleTy(Ctx);
-    auto CallDouble = GetOrInsertHookFn("hook_double", TPtr);
-    instrumentArgHijack(Builder, M, Arg, TPtr, CallDouble, C.module,
-                        C.function);
-    return;
-  }
-
   auto CallByte = GetOrInsertHookFn("hook_char", Type::getInt8Ty(Ctx));
   auto CallUnsByte = GetOrInsertHookFn("hook_uchar", Type::getInt8Ty(Ctx));
   auto CallShort = GetOrInsertHookFn("hook_short", Type::getInt8Ty(Ctx));
@@ -356,8 +369,7 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M,
                     1,
                 "Failed basic check");
 
-  auto IsAttrUnsgined =
-      Mapping.llvmArgNoMatches(ArgNum, LLCAP_UNSIGNED_IDCS);
+  auto IsAttrUnsgined = Mapping.llvmArgNoMatches(ArgNum, LLCAP_UNSIGNED_IDCS);
   auto ThisArgSize = Sizes[ArgNum].second;
   if (!isValid(ThisArgSize)) {
     errs()
@@ -367,7 +379,7 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M,
       Arg->dump();
     }
     errs() << "\n";
-    return;
+    return true;
   }
 
   if (IntTypeSizeMap.contains(ThisArgSize)) {
@@ -376,15 +388,69 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M,
     if (ArgT->isIntegerTy(Bits)) {
       auto &&[UnsFn, SignFn, TPtr] = IntTypeSizeMap.at(ThisArgSize);
       VERBOSE_LOG << "Inserting call " << std::to_string(Bits)
-                        << (IsAttrUnsgined ? "U\n" : "S\n");
+                  << (IsAttrUnsgined ? "U\n" : "S\n");
       instrumentArgHijack(Builder, M, Arg, TPtr,
                           IsAttrUnsgined ? UnsFn : SignFn, C.module,
                           C.function);
-      return;
+      return true;
     }
   }
+  return false;
+}
 
-  bool Instrumented = false;
+// terminology:
+// LLVM Argument Index = 0-based index of an argument as seen directly in the
+// LLVM IR
+
+//  AST Argument Index  = 0-based idx as seen in the Clang AST
+
+// key differences accounted for: this pointer & sret arguments (returning a
+// struct in a register)
+
+void insertArgCaptureHook(IRBuilder<> &Builder, Module &M,
+                          const common::SFnUidConstants &C, Argument *Arg,
+                          const ClangMetadataToLLVMArgumentMapping &Mapping,
+                          const Vec<Pair<size_t, LlcapSizeType>> &Sizes) {
+  auto &Ctx = M.getContext();
+  auto GetOrInsertHookFn = [&](const char *HookName, Type *TypePtr) {
+    return getOrInsertHookFn(HookName, TypePtr, M, Ctx);
+  };
+
+  auto ArgNum = Arg->getArgNo();
+  auto *ArgT = Arg->getType();
+
+  // we first attempt to insert floating point type's instrumentation
+  // then integers,
+  // then custom types
+
+  // NOTE: the fine-grained branching on the LLVM type is not necessary
+  // and was left behind in case it is needed, reducing hooks to 1, 2, 4 and
+  // 8-byte hooks inspecting only the size of the argument should be enough to
+  // perform everything in the curent implentation of the workflow
+
+  if (ArgT->isFloatTy()) {
+    VERBOSE_LOG << "Inserting call f32\n";
+    auto *TPtr = Type::getFloatTy(Ctx);
+    auto CallFloat = GetOrInsertHookFn("hook_float", TPtr);
+    instrumentArgHijack(Builder, M, Arg, TPtr, CallFloat, C.module, C.function);
+    return;
+  }
+
+  if (ArgT->isDoubleTy()) {
+    VERBOSE_LOG << "Inserting call f64\n";
+    auto *TPtr = Type::getDoubleTy(Ctx);
+    auto CallDouble = GetOrInsertHookFn("hook_double", TPtr);
+    instrumentArgHijack(Builder, M, Arg, TPtr, CallDouble, C.module,
+                        C.function);
+    return;
+  }
+
+  if (tryInsertIntegerArgCapture(Builder, Ctx, M, ArgNum, ArgT, C, Arg, Mapping,
+                                 Sizes)) {
+    return;
+  }
+
+  bool CustomTypeInstrumented = false;
   for (auto &&[key, desc] : common::SCustomHooks) {
     if (Mapping.llvmArgNoMatches(ArgNum, key)) {
       if (!ArgT->isPointerTy()) {
@@ -398,24 +464,27 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M,
       auto CallCxxString = GetOrInsertHookFn(desc.m_hookFnName, ArgT);
       instrumentArgHijack(Builder, M, Arg, ArgT, CallCxxString, C.module,
                           C.function);
-      Instrumented = true;
+      CustomTypeInstrumented = true;
       break;
     }
   }
 
-  if (Instrumented) {
+  if (CustomTypeInstrumented) {
     return;
   }
 
-  errs() << "Encountered an unknown argument size specifier "
-         << std::underlying_type_t<LlcapSizeType>(ThisArgSize) << '\n';
+  IF_VERBOSE errs() << "Encountered an unknown argument size specifier "
+                    << std::underlying_type_t<LlcapSizeType>(
+                           Sizes[ArgNum].second)
+                    << '\n';
   IF_VERBOSE Arg->dump();
 }
 
+// parses the function selection file
+// returns the module id and the function name -> function ID mapping
 Maybe<Pair<llcap::ModuleId, Map<Str, uint32_t>>>
 collectTracedFunctionsForModule(Module &M, const Str &SelectionPath) {
   Map<Str, uint32_t> Map;
-
   Maybe<llcap::ModuleId> NumericModId = NONE;
 
   if (SelectionPath.empty()) {
@@ -428,7 +497,10 @@ collectTracedFunctionsForModule(Module &M, const Str &SelectionPath) {
     return NONE;
   }
 
-  auto NextPosMove = [](Str &Data, u64 &Pos, auto &NextPos, const char *Msg) {
+  // finds the next 0x00 after Pos in Data, writes the found position to NextPos
+  // returns true if NextPos is valid
+  auto NextPosMove = [](const Str &Data, const u64 &Pos, auto &NextPos,
+                        const char *Msg) {
     constexpr char SEP = '\x00';
     NextPos = Data.find(SEP, Pos);
     if (NextPos == Str::npos) {
@@ -440,6 +512,9 @@ collectTracedFunctionsForModule(Module &M, const Str &SelectionPath) {
 
   Str Data;
   u64 Pos = 0;
+  // this loop implements split by `0x0` for each line of the selection file
+  // and passes the items of the split into string, number, string and a number
+  // corresponding to the module name, id, function name id
   while (std::getline(Targets, Data, '\n')) {
     if (Data.empty()) {
       DEBUG_LOG << "Skip empty\n";
@@ -447,7 +522,7 @@ collectTracedFunctionsForModule(Module &M, const Str &SelectionPath) {
       continue;
     }
 
-    u64 NextPos = Pos;
+    u64 NextPos = Pos; // Module name
     if (!NextPosMove(Data, Pos, NextPos, "mod id")) {
       return NONE;
     }
@@ -458,39 +533,39 @@ collectTracedFunctionsForModule(Module &M, const Str &SelectionPath) {
       Pos = 0;
       continue;
     }
-
+    // incrementing the next index to skip the 0x00
     Pos = NextPos + 1;
 
+    // module numerical id
     if (!NextPosMove(Data, Pos, NextPos, "mod id n")) {
       return NONE;
     }
-
     Maybe<u64> ModIdRes =
         tryParse<llcap::ModuleId>(Data.substr(Pos, NextPos - Pos));
     if (!ModIdRes) {
-      DEBUG_LOG
-          << "functions-to-trace mapping: format invalid (mod id n)\n";
+      DEBUG_LOG << "functions-to-trace mapping: format invalid (mod id n)\n";
       return NONE;
     }
     NumericModId = ModIdRes;
-
     Pos = NextPos + 1;
+
+    // Function name
     if (!NextPosMove(Data, Pos, NextPos, "fn id")) {
       return NONE;
     }
-
     auto FnId = Data.substr(Pos, NextPos - Pos);
-
     Pos = NextPos + 1;
-    auto FnIdNumeric = tryParse<llcap::ModuleId>(Data.substr(Pos));
+
+    // the rest is expected to be the
+    // Function numeric ID
+    auto FnIdNumeric = tryParse<llcap::FunctionId>(Data.substr(Pos));
     if (!FnIdNumeric) {
-      DEBUG_LOG
-          << "functions-to-trace mapping: format invalid (fn id n)\n";
+      DEBUG_LOG << "functions-to-trace mapping: format invalid (fn id n)\n";
       return NONE;
     }
 
     VERBOSE_LOG << "Add \"to trace\" " << FnId << ", ID: " << *FnIdNumeric
-                      << "\n";
+                << "\n";
     Map[FnId] = *FnIdNumeric;
     Pos = 0;
   }
@@ -517,22 +592,20 @@ Instrumentation::Instrumentation(llvm::Module &M,
   }
 }
 
-void FunctionEntryInstrumentation::run() {
+void FunctionEntryInstrumentation::instrument() {
   if (m_skip) {
-    VERBOSE_LOG << "Skipping entire module " +
-                             m_module.getModuleIdentifier()
-                      << '\n';
+    VERBOSE_LOG << "Skipping entire module " + m_module.getModuleIdentifier()
+                << '\n';
     return;
   }
   if (!m_ready) {
     VERBOSE_LOG << "Instrumentation not ready, module " +
-                             m_module.getModuleIdentifier()
-                      << '\n';
+                       m_module.getModuleIdentifier()
+                << '\n';
     exit(1);
   }
 
   for (Function &Fn : m_module) {
-
     // Skip library functions
     StringRef MangledName = Fn.getFunction().getName();
     Str DemangledName = llvm::demangle(MangledName);
@@ -570,7 +643,7 @@ void FunctionEntryInstrumentation::run() {
         common::createArgumentMapping(Fn, m_idxInfo);
     const auto FunId = m_fnIdMap.addFunction(DemangledName, Mapping);
 
-    common::SFnUidConstants Constants = common::getModFunIdConstants(
+    auto Constants = common::SFnUidConstants::getModFunIdConstants(
         m_fnIdMap.getModuleMapIntId(), m_module, FunId);
 
     callTracing::insertFnEntryHook(Builder, m_module, Constants);
@@ -598,17 +671,16 @@ ArgumentInstrumentation::ArgumentInstrumentation(
   }
 }
 
-void ArgumentInstrumentation::run() {
+void ArgumentInstrumentation::instrument() {
   if (m_skip) {
-    VERBOSE_LOG << "Skipping entire module " +
-                             m_module.getModuleIdentifier()
-                      << '\n';
+    VERBOSE_LOG << "Skipping entire module " + m_module.getModuleIdentifier()
+                << '\n';
     return;
   }
   if (!m_ready) {
     VERBOSE_LOG << "Instrumentation not ready, module " +
-                             m_module.getModuleIdentifier()
-                      << '\n';
+                       m_module.getModuleIdentifier()
+                << '\n';
     exit(1);
   }
 
@@ -625,8 +697,8 @@ void ArgumentInstrumentation::run() {
 
     BasicBlock &EntryBB = Fn.getEntryBlock();
     IRBuilder<> Builder(&EntryBB.front());
-    common::SFnUidConstants Constants =
-        common::getModFunIdConstants(m_moduleId, m_module, FnId->second);
+    auto Constants = common::SFnUidConstants::getModFunIdConstants(
+        m_moduleId, m_module, FnId->second);
 
     ClangMetadataToLLVMArgumentMapping Mapping =
         common::createArgumentMapping(Fn, m_idxInfo);

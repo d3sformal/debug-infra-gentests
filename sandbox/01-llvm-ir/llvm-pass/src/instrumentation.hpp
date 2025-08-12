@@ -23,8 +23,10 @@
 
 class Instrumentation {
 public:
+  
+  // a dumb wrapper around some src/pass.cpp "args" namespace items
+  // which are required by the two instrumentation modes 
   struct Config {
-    // mappable to the pass.cpp::args namespace arguments
     bool useMangledNames{false};
     std::string modMapsDir;
     bool performFnExitInstrumentation{false};
@@ -32,16 +34,20 @@ public:
   };
 
   virtual ~Instrumentation() = default;
+  
   [[nodiscard]] bool ready() const { return m_ready; }
-  virtual void run() = 0;
+  
+  virtual void instrument() = 0;
+  // saves artifacts and deinitializes the instrumentation
   virtual bool finish() = 0;
 
 protected:
+  // module being instrumented
   llvm::Module &m_module;
   IdxMappingInfo m_idxInfo;
   // error state flag
   bool m_ready{false};
-  // skip the module, run() shall not instrument
+  // skip the module, instrument() shall not instrument
   bool m_skip{false};
   std::shared_ptr<const Config> m_cfg;
   Instrumentation(llvm::Module &M, std::shared_ptr<const Config> Cfg);
@@ -58,7 +64,7 @@ public:
     m_ready = true;
   }
 
-  void run() override;
+  void instrument() override;
 
   bool finish() override;
 };
@@ -70,7 +76,7 @@ class ArgumentInstrumentation : public Instrumentation {
 public:
   ArgumentInstrumentation(llvm::Module &M, std::shared_ptr<const Config> Cfg);
 
-  void run() override;
+  void instrument() override;
 
   bool finish() override { return true; }
 };
