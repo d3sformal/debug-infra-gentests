@@ -31,17 +31,28 @@ class ClangMetadataToLLVMArgumentMapping {
   llvm::Function &m_fn;
   IdxMappingInfo m_seps;
 
+  // returns the size type hint corresponding to the specified LLVM IR argument (by index)
   [[nodiscard]] LlcapSizeType llvmArgNoSizeType(unsigned int LlvmArgNo) const;
 
 public:
   ClangMetadataToLLVMArgumentMapping(llvm::Function &Fn, IdxMappingInfo Seps);
 
+  // uses registered argument indicies to check whether the llvm argument number (index) 
+  // matches with registered extension type at the specified metadata key
   [[nodiscard]] bool llvmArgNoMatches(size_t LlvmArgNo,
                                       const llvm::StringRef &MetadataKey) const;
 
+  // reads metadata of the current function and tries to register indicies
+  // of the custom types
+  // indicies are expected to be encoded under a metedata key, if such key is not
+  // present, functions does not contain arguments of the custom type associated with
+  // the supplied metadatata key
   bool registerCustomTypeIndicies(const llvm::StringRef &MetadataKey,
                                   LlcapSizeType AssociatedSize);
 
+  // returns pairs of (LLVM arg index) - (size type)
+  // where LlcapSizeType::LLSZ_INVALID means that no size can be determined via
+  // neither custom type mapping as registered in this object or a primitive type
   [[nodiscard]] std::vector<std::pair<size_t, LlcapSizeType>>
   getArgumentSizeTypes() const;
 };

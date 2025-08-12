@@ -106,6 +106,12 @@ struct InstrumentationPass : public PassInfoMixin<InstrumentationPass> {
     } else {
       IF_VERBOSE errs() << "Instrumenting fn entry...\n";
       FunctionEntryInstrumentation Work(M, Cfg);
+
+      if (!Work.ready()) {
+        errs() << "Failed to parse instrumentation targets\n";
+        return PreservedAnalyses::none();
+      }
+      
       Work.run();
 
       if (!Work.finish()) {
