@@ -70,10 +70,4 @@ inline bool isValid(LlcapSizeType T) {
          T != LlcapSizeType::LLSZ_MAX_EXCL;
 }
 
-inline bool isCustom(LlcapSizeType T) {
-  return T == LlcapSizeType::LLSZ_CUSTOM;
-}
-
-inline bool isCStr(LlcapSizeType T) { return T == LlcapSizeType::LLSZ_CSTR; }
-
 #endif // LLCAP_TYPEIDS
