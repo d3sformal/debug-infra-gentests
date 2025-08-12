@@ -8,7 +8,7 @@ This LLVM pass plugin performs instrumentation of the target program. To build, 
   * `namespace args` declares command line arguments
   * `InstrumentationPass::run` method delegates instrumentation to the correct code
 * [`instrumentation`](./src/instrumentation.hpp) - implements both instrumentation passes
-  * relevant methods: `FunctionEntryInstrumentation::run` (call tracing), `ArgumentInstrumentation::run` (argument capture/testing)
+  * relevant methods: `FunctionEntryInstrumentation::instrument` (call tracing), `ArgumentInstrumentation::instrument` (argument capture/testing)
   * simple hook insertion: `insertFnEntryHook`
 * [`argMapping`](./src/argMapping.hpp) - metadata parsing and interpretation of Clang-LLVM argument index mapping
 * [`modMapping`](./src/modMapping.hpp) - implements module mapping generation (both runtime bookkeeping and encoding into a file)
