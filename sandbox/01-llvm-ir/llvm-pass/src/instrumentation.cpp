@@ -509,9 +509,8 @@ Instrumentation::Instrumentation(llvm::Module &M,
     : m_module(M), m_cfg(std::move(Cfg)) {
   if (auto MbInfo = IdxMappingInfo::parseFromModule(m_module); MbInfo) {
     m_idxInfo = *MbInfo;
+    m_skip = false;
   } else {
-    IF_VERBOSE errs() << "Skipping entire module " + M.getModuleIdentifier()
-                      << '\n';
     // not really sure if "all" collides with other modules or not? => remain
     // pessimistic
     m_skip = true;
