@@ -179,8 +179,8 @@ Vec<size_t> parseCustTypeIndicies(llvm::StringRef MetaValue,
   return RealRes;
 }
 
-} // namespace
-
+// obtains the positions of custom types by inspecting the specified MetadataKey
+// attached to the function Fn
 Maybe<Vec<size_t>> getCustomTypeIndicies(llvm::StringRef MetadataKey,
                                          const llvm::Function &Fn,
                                          bool IsInstanceMember,
@@ -207,6 +207,8 @@ Maybe<Vec<size_t>> getCustomTypeIndicies(llvm::StringRef MetadataKey,
   return NONE;
 }
 
+} // namespace
+
 ClangMetadataToLLVMArgumentMapping::ClangMetadataToLLVMArgumentMapping(
     llvm::Function &Fn, IdxMappingInfo Seps)
     : m_fn(Fn), m_seps(Seps) {
@@ -226,7 +228,7 @@ bool ClangMetadataToLLVMArgumentMapping::registerCustomTypeIndicies(
   auto CustTypeIdcs =
       getCustomTypeIndicies(MetadataKey, m_fn, m_instanceMember, m_seps);
   IF_DEBUG {
-    llvm::errs() << "CustType indicies: ";
+    llvm::errs() << "Custom type idxs: ";
     if (CustTypeIdcs) {
       for (auto &&I : *CustTypeIdcs) {
         llvm::errs() << I << " ";
@@ -249,10 +251,9 @@ bool ClangMetadataToLLVMArgumentMapping::registerCustomTypeIndicies(
 bool ClangMetadataToLLVMArgumentMapping::llvmArgNoMatches(
     size_t LlvmArgNo, const llvm::StringRef &MetadataKey) const {
   IF_DEBUG {
-    llvm::errs()
-        << "Checking argument index match for argument with llvm index "
-        << LlvmArgNo << '\n'
-        << "Custom type indicies " << MetadataKey << ": ";
+    llvm::errs() << "Checking argument idx match for argument with llvm idx "
+                 << LlvmArgNo << '\n'
+                 << "Custom type idxs " << MetadataKey << ": ";
   }
   if (!m_typeIndicies.contains(MetadataKey)) {
     IF_DEBUG { llvm::errs() << "none\n"; }

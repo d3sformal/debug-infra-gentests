@@ -2,13 +2,12 @@
 #define LLCAP_TYPEMAP
 
 #include "typeids.h"
-#include "verbosity.hpp"
+#include "utility.hpp"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Function.h"
 #include <map>
 #include <set>
 #include <vector>
-
 
 struct IdxMappingInfo {
   char primary;
@@ -17,10 +16,6 @@ struct IdxMappingInfo {
   char custom;
   uint64_t invalidIndexValue;
 };
-
-std::optional<std::vector<size_t>>
-getCustomTypeIndicies(llvm::StringRef MetadataKey, const llvm::Function &Fn,
-                      bool IsInstanceMember, IdxMappingInfo Info);
 
 class ClangMetadataToLLVMArgumentMapping {
   std::vector<size_t> m_astArgIdxToLlvmArgIdx;
