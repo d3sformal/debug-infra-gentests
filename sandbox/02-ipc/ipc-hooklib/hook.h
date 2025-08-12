@@ -32,7 +32,7 @@ An argument tracing hook.
 Called first during argument capture or testing mode inside instrumented
 function. Ensures correct dispatch according to the test parameters.
 */
-void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id);
+void hook_arg_preamble(uint32_t module_id, uint32_t fn_id);
 
 /*
 A testing hook.

@@ -31,7 +31,7 @@ The `GENFN_TEST_PRIMITIVE` creates a function definition with the appropriate bo
 
 ```c
 void foo(int a, float b) {
-  hook_arg_preabmle(CONST_FOO_MOD_ID, CONST_FOO_FN_ID);   //*
+  hook_arg_preamble(CONST_FOO_MOD_ID, CONST_FOO_FN_ID);   //*
   int a1;                                                 //*
   hook_int32(&a, &a1, CONST_FOO_MOD_ID, CONST_FOO_FN_ID); //*
   int b1;                                                 //*
@@ -61,7 +61,7 @@ The exact mechanism of the `fork`ing is thus:
 
 1. The test coordinator is spawned, it is the instrumented binary running seemingly without any change - assume its parameters are that we are testing the function `foo`'s 3rd call 
 2. Test coordinator approaches target function `foo`
-3. In each target function (not just `foo`), the `hook_arg_preabmle` is called, for the first call of `foo`, only `register_call` is called, and `should_hijack_arg` indicates that we should wait a few more calls
+3. In each target function (not just `foo`), the `hook_arg_preamble` is called, for the first call of `foo`, only `register_call` is called, and `should_hijack_arg` indicates that we should wait a few more calls
 4. For each argument of `foo`, the "deserialization" hook function is called; each of those, however, checks whether the `should_hijack_arg` holds, and if not, we ensure arguments are not replaced
 5. On another entry of `foo`, `should_hijack_arg` once again indicates we should wait with argument replacement; the argument hooks once again do nothing
 6. The third (desired) call of `foo` flips `should_hijack_arg` to true and `perform_testing` is called

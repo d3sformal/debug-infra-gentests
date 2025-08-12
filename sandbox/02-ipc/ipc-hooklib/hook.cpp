@@ -421,7 +421,7 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
   exit(0);
 }
 
-void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id) {
+void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
   // CONTEXT TO KEEP IN MIND:
   // we just entered an instrumented function
   if (!in_testing_mode()) {
@@ -434,7 +434,7 @@ void hook_arg_preabmle(uint32_t module_id, uint32_t fn_id) {
   }
 
   // in testing mode we discriminate based on the function that is under the
-  // test if THIS function (the caller of hook_arg_preabmle, see context) is the
+  // test if THIS function (the caller of hook_arg_preamble, see context) is the
   // desired one we must furhter determine whether we are in the "right" call
   // (n-th call)
   if (!in_testing_fork() && is_fn_under_test(module_id, fn_id)) {

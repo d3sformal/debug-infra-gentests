@@ -221,7 +221,7 @@ void insertTestEpilogueHook(Function &Fn, Module &M,
 void insertArgCapturePreambleHook(IRBuilder<> &Builder, Module &M,
                                   const common::SFnUidConstants &C) {
   auto Callee = M.getOrInsertFunction(
-      "hook_arg_preabmle",
+      "hook_arg_preamble",
       FunctionType::get(Type::getVoidTy(M.getContext()),
                         {C.module->getType(), C.function->getType()}, false));
   Builder.CreateCall(Callee, {C.module, C.function});
