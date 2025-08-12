@@ -4,6 +4,7 @@
 #include "typeids.h"
 #include "utility.hpp"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cassert>
@@ -15,6 +16,23 @@
 #include <vector>
 
 namespace {
+
+Maybe<Str> getMetadataStrVal(llvm::NamedMDNode *Node) {
+  if (Node == nullptr || Node->getNumOperands() == 0) {
+    return NONE;
+  }
+  llvm::MDNode *Inner = Node->getOperand(0);
+
+  if (Inner->getNumOperands() == 0) {
+    return NONE;
+  }
+
+  if (auto *Op = dyn_cast_if_present<llvm::MDString>(Inner->getOperand(0));
+      Op != nullptr) {
+    return Op->getString().str();
+  }
+  return NONE;
+}
 // parsing the argument mapping list (0-1#1-1#2-1#4294967295-0), see
 // initParseArgMapping
 bool parseArgMappingList(size_t LlArgCnt, size_t AstArgCnt, llvm::StringRef Str,
@@ -208,6 +226,42 @@ Maybe<Vec<size_t>> getCustomTypeIndicies(llvm::StringRef MetadataKey,
 }
 
 } // namespace
+
+std::optional<IdxMappingInfo> IdxMappingInfo::parseFromModule(llvm::Module &M) {
+  constexpr Arr<char, 27> PARSE_GUIDE_META_KEY{"LLCAP-CLANG-LLVM-MAP-PRSGD"};
+  constexpr Arr<char, 31> INVL_IDX_META_KEY{"LLCAP-CLANG-LLVM-MAP-INVLD-IDX"};
+  IdxMappingInfo Result;
+
+  if (auto MbStr =
+          getMetadataStrVal(M.getNamedMetadata(PARSE_GUIDE_META_KEY.data()));
+      MbStr && MbStr->size() == 3) {
+    Result.primary = MbStr->at(0);
+    Result.group = MbStr->at(1);
+    Result.argParamPair = MbStr->at(2);
+    Result.custom = VSTR_LLVM_CXX_SINGLECHAR_SEP;
+  } else {
+    llvm::errs() << "Module missing parse guide\n";
+    return NONE;
+  }
+
+  Result.invalidIndexValue = std::numeric_limits<uint64_t>::max();
+  // try get string from metadata
+  if (auto MbStr =
+          getMetadataStrVal(M.getNamedMetadata(INVL_IDX_META_KEY.data()));
+      MbStr) {
+    // try parse u64 from the string
+    if (auto Parsed = tryParse<u64>(*MbStr); Parsed) {
+      Result.invalidIndexValue = *Parsed;
+    } else {
+      llvm::errs() << "Module invalid index hint could not be parsed\n";
+    }
+  } else {
+    llvm::errs() << "Module missing invalid index hint\n";
+  }
+
+  IF_DEBUG llvm::errs() << "Module Index Map parsing OK\n";
+  return Result;
+}
 
 ClangMetadataToLLVMArgumentMapping::ClangMetadataToLLVMArgumentMapping(
     llvm::Function &Fn, IdxMappingInfo Seps)

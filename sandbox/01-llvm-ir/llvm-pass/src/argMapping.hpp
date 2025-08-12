@@ -15,6 +15,8 @@ struct IdxMappingInfo {
   char argParamPair;
   char custom;
   uint64_t invalidIndexValue;
+
+  static std::optional<IdxMappingInfo> parseFromModule(llvm::Module &M);
 };
 
 class ClangMetadataToLLVMArgumentMapping {

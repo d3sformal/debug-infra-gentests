@@ -1,4 +1,5 @@
 #include "instrumentation.hpp"
+
 #include "../../custom-metadata-pass/ast-meta-add/llvm-metadata.h"
 #include "argMapping.hpp"
 #include "constants.hpp"
@@ -34,7 +35,6 @@
 #include <cstdint>
 #include <fstream>
 #include <ios>
-#include <limits>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -87,59 +87,6 @@ SFnUidConstants getModFunIdConstants(llcap::ModuleId ModuleIntId, Module &M,
   auto *ModIdConstant = ConstantInt::get(
       M.getContext(), APInt(llcap::MODID_BITSIZE, ModuleIntId));
   return {.module = ModIdConstant, .function = FnIdConstant};
-}
-
-Maybe<Str> getMetadataStrVal(NamedMDNode *Node) {
-  if (Node == nullptr || Node->getNumOperands() == 0) {
-    return NONE;
-  }
-  MDNode *Inner = Node->getOperand(0);
-
-  if (Inner->getNumOperands() == 0) {
-    return NONE;
-  }
-
-  if (auto *Op = dyn_cast_if_present<MDString>(Inner->getOperand(0));
-      Op != nullptr) {
-    return Op->getString().str();
-  }
-  return NONE;
-}
-
-Maybe<IdxMappingInfo> getIdxMappingInfo(Module &M) {
-  constexpr Arr<char, 27> PARSE_GUIDE_META_KEY{"LLCAP-CLANG-LLVM-MAP-PRSGD"};
-  constexpr Arr<char, 31> INVL_IDX_META_KEY{"LLCAP-CLANG-LLVM-MAP-INVLD-IDX"};
-  IdxMappingInfo Result;
-
-  if (auto MbStr =
-          getMetadataStrVal(M.getNamedMetadata(PARSE_GUIDE_META_KEY.data()));
-      MbStr && MbStr->size() == 3) {
-    Result.primary = MbStr->at(0);
-    Result.group = MbStr->at(1);
-    Result.argParamPair = MbStr->at(2);
-    Result.custom = VSTR_LLVM_CXX_SINGLECHAR_SEP;
-  } else {
-    llvm::errs() << "Module missing parse guide\n";
-    return NONE;
-  }
-
-  Result.invalidIndexValue = std::numeric_limits<uint64_t>::max();
-  // try get string from metadata
-  if (auto MbStr =
-          getMetadataStrVal(M.getNamedMetadata(INVL_IDX_META_KEY.data()));
-      MbStr) {
-    // try parse u64 from the string
-    if (auto Parsed = tryParse<u64>(*MbStr); Parsed) {
-      Result.invalidIndexValue = *Parsed;
-    } else {
-      llvm::errs() << "Module invalid index hint could not be parsed\n";
-    }
-  } else {
-    llvm::errs() << "Module missing invalid index hint\n";
-  }
-
-  IF_DEBUG llvm::errs() << "Module Index Map parsing OK\n";
-  return Result;
 }
 } // namespace
 } // namespace common
@@ -560,7 +507,7 @@ collectTracedFunctionsForModule(Module &M, const Str &SelectionPath) {
 Instrumentation::Instrumentation(llvm::Module &M,
                                  std::shared_ptr<const Config> Cfg)
     : m_module(M), m_cfg(std::move(Cfg)) {
-  if (auto MbInfo = common::getIdxMappingInfo(m_module); MbInfo) {
+  if (auto MbInfo = IdxMappingInfo::parseFromModule(m_module); MbInfo) {
     m_idxInfo = *MbInfo;
   } else {
     IF_VERBOSE errs() << "Skipping entire module " + M.getModuleIdentifier()
@@ -584,7 +531,6 @@ void FunctionEntryInstrumentation::run() {
                       << '\n';
     exit(1);
   }
-
 
   for (Function &Fn : m_module) {
 
@@ -659,7 +605,7 @@ void ArgumentInstrumentation::run() {
                              m_module.getModuleIdentifier()
                       << '\n';
     return;
-  } 
+  }
   if (!m_ready) {
     IF_VERBOSE errs() << "Instrumentation not ready, module " +
                              m_module.getModuleIdentifier()
