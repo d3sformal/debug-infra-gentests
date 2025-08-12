@@ -1,7 +1,20 @@
+#ifndef IF_VERBOSE
+
+bool verbose(bool Set, bool Value);
+#define IF_VERBOSE if (debug(false, false) || verbose(false, false))
+
+#endif
+
+#ifndef IF_DEBUG
+
+bool debug(bool Set, bool Value);
+#define IF_DEBUG if (debug(false, false))
+
+#endif
+
 #ifndef LLCAP_UTILS
 #define LLCAP_UTILS
 
-#include "argMapping.hpp"
 #include "llvm/Support/raw_ostream.h"
 #include <charconv>
 #include <optional>
