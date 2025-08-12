@@ -50,15 +50,15 @@ struct SCustomTypeDescription {
 };
 
 const std::unordered_map<const char *, LlcapSizeType> SCustomSizes{
-    {VSTR_LLVM_CXX_DUMP_STDSTRING, LlcapSizeType::LLSZ_CUSTOM},
+    {LLCAP_TYPE_STD_STRING, LlcapSizeType::LLSZ_CUSTOM},
     // invalid size means
     // that this type index is just a "flag" and
     // has no effect on the "real argument size" that the instrumentation will
     // work with
-    {VSTR_LLVM_UNSIGNED_IDCS, LlcapSizeType::LLSZ_INVALID}};
+    {LLCAP_UNSIGNED_IDCS, LlcapSizeType::LLSZ_INVALID}};
 
 const std::unordered_map<const char *, SCustomTypeDescription> SCustomHooks{
-    {VSTR_LLVM_CXX_DUMP_STDSTRING,
+    {LLCAP_TYPE_STD_STRING,
      SCustomTypeDescription{.m_hookFnName = "llcap_hooklib_extra_cxx_string",
                             .m_log_name = "std::string"}}};
 
@@ -111,7 +111,7 @@ bool isStdFnBasedOnMetadata(const Function &Fn,
                             const std::string &DemangledName,
                             const StringRef MangledName) {
   VERBOSE_LOG << "Metadata of function " << DemangledName << '\n';
-  if (MDNode *N = Fn.getMetadata(VSTR_LLVM_NON_SYSTEMHEADER_FN_KEY)) {
+  if (MDNode *N = Fn.getMetadata(LLCAP_FN_NOT_IN_SYS_HEADER_KEY)) {
     if (N->getNumOperands() == 0) {
       VERBOSE_LOG << "Warning! Unexpected metadata node with no "
                            "operands! Function: "
@@ -357,7 +357,7 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M,
                 "Failed basic check");
 
   auto IsAttrUnsgined =
-      Mapping.llvmArgNoMatches(ArgNum, VSTR_LLVM_UNSIGNED_IDCS);
+      Mapping.llvmArgNoMatches(ArgNum, LLCAP_UNSIGNED_IDCS);
   auto ThisArgSize = Sizes[ArgNum].second;
   if (!isValid(ThisArgSize)) {
     errs()

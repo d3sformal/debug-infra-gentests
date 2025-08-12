@@ -1,5 +1,5 @@
-#ifndef VSTR_HOOK_LIB
-#define VSTR_HOOK_LIB
+#ifndef LLCAP_HOOKLIB
+#define LLCAP_HOOKLIB
 
 #ifdef __cplusplus
 #include <cstdint>
@@ -72,4 +72,4 @@ void llcap_hooklib_extra_cxx_string(std::string *str, std::string **target,
 }
 #endif
 
-#endif // VSTR_HOOK_LIB
+#endif // LLCAP_HOOKLIB

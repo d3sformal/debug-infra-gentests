@@ -65,7 +65,7 @@ void addIndiciesMetadata(const llvm::StringRef MetaKey, const FunctionDecl *FD,
   for (size_t i = 0; i < Indicies.size(); ++i) {
     ResStream << std::to_string(Indicies[i]);
     if (i != Indicies.size() - 1) {
-      ResStream << VSTR_LLVM_CXX_SINGLECHAR_SEP;
+      ResStream << LLCAP_SINGLECHAR_SEP;
     }
   }
   // all this could be theoretically done in a much more lightweight fashion
@@ -105,7 +105,7 @@ void addFunctionMetadata(const FunctionDecl *FD, bool Log = false) {
   if (!InSystemHeader) {
     // we insert indicies of parameters that are std::string
     encodeArgIndiciesSatisfying(
-        VSTR_LLVM_CXX_DUMP_STDSTRING, FD, [](ParmVarDecl *Arg, size_t Idx) {
+        LLCAP_TYPE_STD_STRING, FD, [](ParmVarDecl *Arg, size_t Idx) {
           auto TypeName = Arg->getType().getCanonicalType().getAsString();
           return isTargetTypeValRefPtr(TypeName,
                                        "class std::basic_string<char>");
@@ -113,17 +113,17 @@ void addFunctionMetadata(const FunctionDecl *FD, bool Log = false) {
 
     // are unsigned numeric types
     encodeArgIndiciesSatisfying(
-        VSTR_LLVM_UNSIGNED_IDCS, FD, [](ParmVarDecl *Arg, size_t Idx) {
+        LLCAP_UNSIGNED_IDCS, FD, [](ParmVarDecl *Arg, size_t Idx) {
           return Arg->getType()->isUnsignedIntegerType();
         });
 
     // we also insert metadata regarding the locaiton of the function, we use
     // this to filter functions during IR instrumentation
-    FD->setIrMetadata(VSTR_LLVM_NON_SYSTEMHEADER_FN_KEY,
-                      VSTR_LVVM_NON_SYSTEMHEADER_FN_VAL);
+    FD->setIrMetadata(LLCAP_FN_NOT_IN_SYS_HEADER_KEY,
+                      LLCAP_FN_NOT_IN_SYS_HEADER_VAL);
     // we also delegate whether this pointer is present
     if (FD->isCXXInstanceMember()) {
-      FD->setIrMetadata(VSTR_LLVM_CXX_THISPTR, "");
+      FD->setIrMetadata(LLCAP_THIS_PTR_MARKER_KEY, "");
     }
   } else if (Log) {
     llvm::errs() << "Function in system header due to:\n"

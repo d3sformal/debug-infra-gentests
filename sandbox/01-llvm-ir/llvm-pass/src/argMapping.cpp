@@ -254,7 +254,7 @@ std::optional<IdxMappingInfo> IdxMappingInfo::parseFromModule(llvm::Module &M) {
     Result.primary = MbStr->at(0);
     Result.group = MbStr->at(1);
     Result.argParamPair = MbStr->at(2);
-    Result.custom = VSTR_LLVM_CXX_SINGLECHAR_SEP;
+    Result.custom = LLCAP_SINGLECHAR_SEP;
   } else {
     llvm::errs() << "Module missing parse guide\n";
     return NONE;
@@ -289,7 +289,7 @@ ClangMetadataToLLVMArgumentMapping::ClangMetadataToLLVMArgumentMapping(
                          m_astArgIdxToLlvmArgLen));
 
   m_instanceMember =
-      m_fn.getMetadata(llvm::StringRef(VSTR_LLVM_CXX_THISPTR)) != nullptr;
+      m_fn.getMetadata(llvm::StringRef(LLCAP_THIS_PTR_MARKER_KEY)) != nullptr;
 }
 
 bool ClangMetadataToLLVMArgumentMapping::registerCustomTypeIndicies(
