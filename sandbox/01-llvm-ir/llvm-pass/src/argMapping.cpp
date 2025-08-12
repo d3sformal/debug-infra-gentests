@@ -233,7 +233,7 @@ Maybe<Vec<size_t>> getCustomTypeIndicies(llvm::StringRef MetadataKey,
         << "Warning - unexpected string metadata node with non-MDString "
            "0th operand!\n";
   } else {
-    IF_VERBOSE llvm::errs() << "No meta key " << MetadataKey << " found\n";
+    VERBOSE_LOG << "No meta key " << MetadataKey << " found\n";
   }
   return NONE;
 }
@@ -274,7 +274,7 @@ std::optional<IdxMappingInfo> IdxMappingInfo::parseFromModule(llvm::Module &M) {
     llvm::errs() << "Module missing invalid index hint\n";
   }
 
-  IF_DEBUG llvm::errs() << "Module Index Map parsing OK\n";
+  DEBUG_LOG << "Module Index Map parsing OK\n";
   return Result;
 }
 
@@ -327,7 +327,7 @@ bool ClangMetadataToLLVMArgumentMapping::llvmArgNoMatches(
   if (!m_typeIndicies.contains(MetadataKey)) {
     // this function does not have any arguments that registered with this
     // metadata key
-    IF_DEBUG { llvm::errs() << "none\n"; }
+    DEBUG_LOG << "none\n";
     return false;
   }
 

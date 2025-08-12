@@ -79,7 +79,7 @@ struct InstrumentationPass : public PassInfoMixin<InstrumentationPass> {
     verbose(args::Verbose.getValue(), args::Verbose.getValue());
     debug(args::Debug.getValue(), args::Debug.getValue());
 
-    IF_VERBOSE errs() << "Running pass on module " << M.getModuleIdentifier()
+    VERBOSE_LOG << "Running pass on module " << M.getModuleIdentifier()
                       << "\n";
 
     auto Cfg = std::make_shared<Instrumentation::Config>();
@@ -89,7 +89,7 @@ struct InstrumentationPass : public PassInfoMixin<InstrumentationPass> {
     Cfg->SelectionPath = args::TargetsFilePath;
 
     if (instrumentArgs()) {
-      IF_VERBOSE errs() << "Instrumenting args...\n";
+      VERBOSE_LOG << "Instrumenting args...\n";
       ArgumentInstrumentation Work(M, Cfg);
 
       if (!Work.ready()) {
@@ -104,14 +104,14 @@ struct InstrumentationPass : public PassInfoMixin<InstrumentationPass> {
         exit(1);
       }
     } else {
-      IF_VERBOSE errs() << "Instrumenting fn entry...\n";
+      VERBOSE_LOG << "Instrumenting fn entry...\n";
       FunctionEntryInstrumentation Work(M, Cfg);
 
       if (!Work.ready()) {
         errs() << "Failed to parse instrumentation targets\n";
         return PreservedAnalyses::none();
       }
-      
+
       Work.run();
 
       if (!Work.finish()) {
@@ -122,7 +122,7 @@ struct InstrumentationPass : public PassInfoMixin<InstrumentationPass> {
         exit(1);
       }
     }
-    IF_VERBOSE errs() << "Instrumentation DONE!\n";
+    VERBOSE_LOG << "Instrumentation DONE!\n";
 
     return PreservedAnalyses::none();
   }

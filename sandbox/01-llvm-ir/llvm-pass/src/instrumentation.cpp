@@ -110,10 +110,10 @@ bool isStdFnDanger(const StringRef Mangled) {
 bool isStdFnBasedOnMetadata(const Function &Fn,
                             const std::string &DemangledName,
                             const StringRef MangledName) {
-  IF_VERBOSE errs() << "Metadata of function " << DemangledName << '\n';
+  VERBOSE_LOG << "Metadata of function " << DemangledName << '\n';
   if (MDNode *N = Fn.getMetadata(VSTR_LLVM_NON_SYSTEMHEADER_FN_KEY)) {
     if (N->getNumOperands() == 0) {
-      IF_VERBOSE errs() << "Warning! Unexpected metadata node with no "
+      VERBOSE_LOG << "Warning! Unexpected metadata node with no "
                            "operands! Function: "
                         << MangledName << ' ' << DemangledName << '\n';
     }
@@ -318,7 +318,7 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M,
   auto *ArgT = Arg->getType();
 
   if (ArgT->isFloatTy()) {
-    IF_VERBOSE errs() << "Inserting call f32\n";
+    VERBOSE_LOG << "Inserting call f32\n";
     auto *TPtr = Type::getFloatTy(Ctx);
     auto CallFloat = GetOrInsertHookFn("hook_float", TPtr);
     instrumentArgHijack(Builder, M, Arg, TPtr, CallFloat, C.module, C.function);
@@ -326,7 +326,7 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M,
   }
 
   if (ArgT->isDoubleTy()) {
-    IF_VERBOSE errs() << "Inserting call f64\n";
+    VERBOSE_LOG << "Inserting call f64\n";
     auto *TPtr = Type::getDoubleTy(Ctx);
     auto CallDouble = GetOrInsertHookFn("hook_double", TPtr);
     instrumentArgHijack(Builder, M, Arg, TPtr, CallDouble, C.module,
@@ -375,7 +375,7 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M,
         std::underlying_type_t<LlcapSizeType>(ThisArgSize) * 8;
     if (ArgT->isIntegerTy(Bits)) {
       auto &&[UnsFn, SignFn, TPtr] = IntTypeSizeMap.at(ThisArgSize);
-      IF_VERBOSE errs() << "Inserting call " << std::to_string(Bits)
+      VERBOSE_LOG << "Inserting call " << std::to_string(Bits)
                         << (IsAttrUnsgined ? "U\n" : "S\n");
       instrumentArgHijack(Builder, M, Arg, TPtr,
                           IsAttrUnsgined ? UnsFn : SignFn, C.module,
@@ -394,7 +394,7 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M,
         return;
       }
 
-      IF_VERBOSE errs() << "Inserting call " << desc.m_log_name << "\n";
+      VERBOSE_LOG << "Inserting call " << desc.m_log_name << "\n";
       auto CallCxxString = GetOrInsertHookFn(desc.m_hookFnName, ArgT);
       instrumentArgHijack(Builder, M, Arg, ArgT, CallCxxString, C.module,
                           C.function);
@@ -442,7 +442,7 @@ collectTracedFunctionsForModule(Module &M, const Str &SelectionPath) {
   u64 Pos = 0;
   while (std::getline(Targets, Data, '\n')) {
     if (Data.empty()) {
-      IF_DEBUG errs() << "Skip empty\n";
+      DEBUG_LOG << "Skip empty\n";
       Pos = 0;
       continue;
     }
@@ -454,7 +454,7 @@ collectTracedFunctionsForModule(Module &M, const Str &SelectionPath) {
 
     Str ModId = Data.substr(Pos, NextPos - Pos);
     if (ModId != M.getModuleIdentifier()) {
-      IF_DEBUG errs() << "Skip on module mismatch " << ModId << "\n";
+      DEBUG_LOG << "Skip on module mismatch " << ModId << "\n";
       Pos = 0;
       continue;
     }
@@ -468,7 +468,7 @@ collectTracedFunctionsForModule(Module &M, const Str &SelectionPath) {
     Maybe<u64> ModIdRes =
         tryParse<llcap::ModuleId>(Data.substr(Pos, NextPos - Pos));
     if (!ModIdRes) {
-      IF_DEBUG errs()
+      DEBUG_LOG
           << "functions-to-trace mapping: format invalid (mod id n)\n";
       return NONE;
     }
@@ -484,12 +484,12 @@ collectTracedFunctionsForModule(Module &M, const Str &SelectionPath) {
     Pos = NextPos + 1;
     auto FnIdNumeric = tryParse<llcap::ModuleId>(Data.substr(Pos));
     if (!FnIdNumeric) {
-      IF_DEBUG errs()
+      DEBUG_LOG
           << "functions-to-trace mapping: format invalid (fn id n)\n";
       return NONE;
     }
 
-    IF_VERBOSE errs() << "Add \"to trace\" " << FnId << ", ID: " << *FnIdNumeric
+    VERBOSE_LOG << "Add \"to trace\" " << FnId << ", ID: " << *FnIdNumeric
                       << "\n";
     Map[FnId] = *FnIdNumeric;
     Pos = 0;
@@ -519,13 +519,13 @@ Instrumentation::Instrumentation(llvm::Module &M,
 
 void FunctionEntryInstrumentation::run() {
   if (m_skip) {
-    IF_VERBOSE errs() << "Skipping entire module " +
+    VERBOSE_LOG << "Skipping entire module " +
                              m_module.getModuleIdentifier()
                       << '\n';
     return;
   }
   if (!m_ready) {
-    IF_VERBOSE errs() << "Instrumentation not ready, module " +
+    VERBOSE_LOG << "Instrumentation not ready, module " +
                              m_module.getModuleIdentifier()
                       << '\n';
     exit(1);
@@ -600,13 +600,13 @@ ArgumentInstrumentation::ArgumentInstrumentation(
 
 void ArgumentInstrumentation::run() {
   if (m_skip) {
-    IF_VERBOSE errs() << "Skipping entire module " +
+    VERBOSE_LOG << "Skipping entire module " +
                              m_module.getModuleIdentifier()
                       << '\n';
     return;
   }
   if (!m_ready) {
-    IF_VERBOSE errs() << "Instrumentation not ready, module " +
+    VERBOSE_LOG << "Instrumentation not ready, module " +
                              m_module.getModuleIdentifier()
                       << '\n';
     exit(1);
@@ -618,10 +618,10 @@ void ArgumentInstrumentation::run() {
 
     auto FnId = m_traced_functions.find(DemangledName);
     if (FnId == m_traced_functions.end()) {
-      IF_DEBUG errs() << "Skipping fn " << DemangledName << "\n";
+      DEBUG_LOG << "Skipping fn " << DemangledName << "\n";
       continue;
     }
-    IF_VERBOSE errs() << "Instrumenting fn " << DemangledName << "\n";
+    VERBOSE_LOG << "Instrumenting fn " << DemangledName << "\n";
 
     BasicBlock &EntryBB = Fn.getEntryBlock();
     IRBuilder<> Builder(&EntryBB.front());
