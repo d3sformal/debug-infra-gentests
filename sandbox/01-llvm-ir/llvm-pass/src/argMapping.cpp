@@ -4,6 +4,7 @@
 #include "typeids.h"
 #include "utility.hpp"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -17,18 +18,21 @@
 
 namespace {
 
+llvm::MDString *getStringOperand(const llvm::MDNode *N, unsigned int I) {
+  if (N == nullptr || N->getNumOperands() <= I) {
+    return nullptr;
+  }
+  return dyn_cast_if_present<llvm::MDString>(N->getOperand(I));
+}
+
+// extracts string metadat from a metadata node
 Maybe<Str> getMetadataStrVal(llvm::NamedMDNode *Node) {
   if (Node == nullptr || Node->getNumOperands() == 0) {
     return NONE;
   }
   llvm::MDNode *Inner = Node->getOperand(0);
 
-  if (Inner->getNumOperands() == 0) {
-    return NONE;
-  }
-
-  if (auto *Op = dyn_cast_if_present<llvm::MDString>(Inner->getOperand(0));
-      Op != nullptr) {
+  if (auto *Op = getStringOperand(Inner, 0); Op != nullptr) {
     return Op->getString().str();
   }
   return NONE;
@@ -52,6 +56,8 @@ bool parseArgMappingList(size_t LlArgCnt, size_t AstArgCnt, llvm::StringRef Str,
 
   using ParseResT = Maybe<Pair<size_t, size_t>>;
 
+  // creates a sequence of (index, span) of the llvm parguments
+  // (one clang argument can span multiple llvm ir arguments)
   auto Parsed =
       std::ranges::take_view(Split, Count) |
       std::ranges::views::transform([Seps](llvm::StringRef S) -> ParseResT {
@@ -80,6 +86,9 @@ bool parseArgMappingList(size_t LlArgCnt, size_t AstArgCnt, llvm::StringRef Str,
     return false;
   }
 
+  // invalid Seps.invalidIndexValue is used for arguments that cannot be
+  // instrumented (mostly this is just the result of the LLVM-clang mapping
+  // creating "ghost" arguments)
   auto Filtered =
       std::ranges::views::transform(Parsed,
                                     [](const ParseResT &V) { return *V; }) |
@@ -105,19 +114,16 @@ bool parseArgMappingList(size_t LlArgCnt, size_t AstArgCnt, llvm::StringRef Str,
 bool parseArgMapping(llvm::MDNode *ArgMappingMetadata,
                      std::vector<size_t> &OutArgStarts, IdxMappingInfo Seps,
                      std::vector<size_t> &OutArgSizes) {
-  if (ArgMappingMetadata == nullptr) {
-    return false;
-  }
-
-  IF_DEBUG { ArgMappingMetadata->dumpTree(); }
-
   // "0 0 " is the minimal valid metadata string
   constexpr auto MIN_MTV_SIZE = sizeof("0 0 ") - 1;
   llvm::StringRef MetaValue;
 
-  if (auto *Op = llvm::dyn_cast_if_present<llvm::MDString>(
-          ArgMappingMetadata->getOperand(0));
-      Op != nullptr) {
+  IF_DEBUG if (ArgMappingMetadata != nullptr) {
+    ArgMappingMetadata->dumpTree();
+  }
+
+  // obtain the value of metadata
+  if (auto *Op = getStringOperand(ArgMappingMetadata, 0); Op != nullptr) {
     MetaValue = Op->getString();
     if (MetaValue.size() < MIN_MTV_SIZE) {
       llvm::errs() << "Malformed metadata - size\n";
@@ -128,7 +134,8 @@ bool parseArgMapping(llvm::MDNode *ArgMappingMetadata,
     return false;
   }
 
-  llvm::SmallVector<llvm::StringRef> Split;
+  llvm::SmallVector<llvm::StringRef>
+      Split; // split by primary separator (see above)
   MetaValue.split(Split, Seps.primary, -1, true);
 
   if (Split.size() != 3) {
@@ -142,6 +149,7 @@ bool parseArgMapping(llvm::MDNode *ArgMappingMetadata,
 
   assert(ArgCounts.size() < Split.size());
 
+  // we expect 2 numbers here - the LLVM and clang count of arguments
   auto Parsed = std::ranges::take_view(Split, ArgCounts.size()) |
                 std::ranges::views::transform(
                     [](llvm::StringRef S) { return tryParse<size_t>(S); });
@@ -169,10 +177,12 @@ bool parseArgMapping(llvm::MDNode *ArgMappingMetadata,
 
 // parses the metadata that encode the indicies of a custom type
 //
-// indicies are separated by Sep and are decimal numbers
+// indicies are separated by Sep and are base-10 string representations of
+// numbers
 Vec<size_t> parseCustTypeIndicies(llvm::StringRef MetaValue,
                                   bool IsInstanceMember, char Sep) {
   llvm::SmallVector<llvm::StringRef> Split;
+  // use ssize to be able to indicate parsing failure
   Vec<ssize_t> Res;
 
   MetaValue.split(Split, Sep, -1, false);
@@ -181,6 +191,7 @@ Vec<size_t> parseCustTypeIndicies(llvm::StringRef MetaValue,
     return valOrDefault(tryParse<long long>(S), -1LL);
   });
 
+  // filter out non-numbers and check there are none
   auto [EndRes, _] =
       std::ranges::remove_if(Res, [](ssize_t I) { return I == -1; });
 
@@ -188,6 +199,9 @@ Vec<size_t> parseCustTypeIndicies(llvm::StringRef MetaValue,
   assert(std::distance(Res.begin(), EndRes) >= 0);
   RealRes.reserve(static_cast<size_t>(std::distance(Res.begin(), EndRes)));
 
+  // transform the ssize to size
+  // adding +1 here based on IsInstance member because the indicies
+  // DO NOT account for the "this" pointer (passed as the first extra argument)
   std::transform(Res.begin(), EndRes, std::back_inserter(RealRes),
                  [IsInstanceMember](ssize_t I) {
                    assert(I >= 0);
@@ -210,8 +224,7 @@ Maybe<Vec<size_t>> getCustomTypeIndicies(llvm::StringRef MetadataKey,
       return NONE;
     }
 
-    if (auto *Op = llvm::dyn_cast_if_present<llvm::MDString>(N->getOperand(0));
-        Op != nullptr) {
+    if (auto *Op = getStringOperand(N, 0); Op != nullptr) {
       return parseCustTypeIndicies(Op->getString(), IsInstanceMember,
                                    Info.custom);
     }
@@ -228,13 +241,16 @@ Maybe<Vec<size_t>> getCustomTypeIndicies(llvm::StringRef MetadataKey,
 } // namespace
 
 std::optional<IdxMappingInfo> IdxMappingInfo::parseFromModule(llvm::Module &M) {
+  // metadata under the these keys used are inserted in the patched llvm
   constexpr Arr<char, 27> PARSE_GUIDE_META_KEY{"LLCAP-CLANG-LLVM-MAP-PRSGD"};
   constexpr Arr<char, 31> INVL_IDX_META_KEY{"LLCAP-CLANG-LLVM-MAP-INVLD-IDX"};
   IdxMappingInfo Result;
 
+  // try get string from metadata (metadata are key-value pairs)
   if (auto MbStr =
           getMetadataStrVal(M.getNamedMetadata(PARSE_GUIDE_META_KEY.data()));
       MbStr && MbStr->size() == 3) {
+    // this metadata contains the separators used in index mapping
     Result.primary = MbStr->at(0);
     Result.group = MbStr->at(1);
     Result.argParamPair = MbStr->at(2);
@@ -245,11 +261,10 @@ std::optional<IdxMappingInfo> IdxMappingInfo::parseFromModule(llvm::Module &M) {
   }
 
   Result.invalidIndexValue = std::numeric_limits<uint64_t>::max();
-  // try get string from metadata
   if (auto MbStr =
           getMetadataStrVal(M.getNamedMetadata(INVL_IDX_META_KEY.data()));
       MbStr) {
-    // try parse u64 from the string
+    // this metadata contains the "invalid value" constant
     if (auto Parsed = tryParse<u64>(*MbStr); Parsed) {
       Result.invalidIndexValue = *Parsed;
     } else {
@@ -267,7 +282,7 @@ ClangMetadataToLLVMArgumentMapping::ClangMetadataToLLVMArgumentMapping(
     llvm::Function &Fn, IdxMappingInfo Seps)
     : m_fn(Fn), m_seps(Seps) {
   IF_DEBUG { llvm::errs() << Fn.getName() << ": \n"; }
-  // metadata under this key are inserted in the patched clang
+  // metadata under this key are inserted in the patched llvm
   // (the literal is part of the patch)
   assert(parseArgMapping(Fn.getMetadata("LLCAP-CLANG-LLVM-MAP-DATA"),
                          m_astArgIdxToLlvmArgIdx, m_seps,
@@ -310,12 +325,14 @@ bool ClangMetadataToLLVMArgumentMapping::llvmArgNoMatches(
                  << "Custom type idxs " << MetadataKey << ": ";
   }
   if (!m_typeIndicies.contains(MetadataKey)) {
+    // this function does not have any arguments that registered with this
+    // metadata key
     IF_DEBUG { llvm::errs() << "none\n"; }
     return false;
   }
 
   const auto &[Sz, CustTypes] = m_typeIndicies.at(MetadataKey);
-  IF_DEBUG {
+  IF_DEBUG { // ignore this when reading for the first time
     for (const auto &I : CustTypes) {
       llvm::errs() << I << " ";
     }
@@ -336,16 +353,19 @@ bool ClangMetadataToLLVMArgumentMapping::llvmArgNoMatches(
     llvm::errs() << '\n';
   }
 
+  // CustTypes contains AST indicies matching the custom type in this function
+  // example: if the metadata key corresponds to type Tauri and the m_fn is
+  // void foo(Tauri& x, int b, Tauri& z), the CustTypes will be [0, 2]
   auto Res = std::ranges::any_of(CustTypes, [&](size_t AstIndex) {
+    // m_astArgIdxToLlvmArgIdx then maps the AST index the LLVM IR argument
+    // position and if it matches, the argument at this LLVM IR position must be
+    // "Tauri" (or the custom type that corresponds to the metadata key)
     return m_astArgIdxToLlvmArgIdx.at(AstIndex) == LlvmArgNo;
   });
 
   return Res;
 }
 
-// returns pairs of (LLVM arg index) - (size type)
-// where LlcapSizeType::LLSZ_INVALID means that no size can be determined via
-// neither custom type mapping as registered in this object or a primitive type
 Vec<Pair<size_t, LlcapSizeType>>
 ClangMetadataToLLVMArgumentMapping::getArgumentSizeTypes() const {
   Vec<Pair<size_t, LlcapSizeType>> Res;
@@ -360,6 +380,8 @@ ClangMetadataToLLVMArgumentMapping::getArgumentSizeTypes() const {
 LlcapSizeType ClangMetadataToLLVMArgumentMapping::llvmArgNoSizeType(
     unsigned int LlvmArgNo) const {
   LlcapSizeType Res = LlcapSizeType::LLSZ_INVALID;
+
+  // first check for custom types
   for (auto &&[CustTName, Desc] : m_typeIndicies) {
     auto &&[SizeType, _] = Desc;
     const auto Sz = SizeType;
@@ -374,7 +396,7 @@ LlcapSizeType ClangMetadataToLLVMArgumentMapping::llvmArgNoSizeType(
                      << " found to be associated with > 1 custom size "
                         "types!\nThe current one is: "
                      << CustTName << "\nThis should not happen!";
-        // exit here?
+        exit(1);
       }
     }
   }
@@ -386,6 +408,7 @@ LlcapSizeType ClangMetadataToLLVMArgumentMapping::llvmArgNoSizeType(
   const auto *Arg = m_fn.getArg(LlvmArgNo);
   const auto *ArgT = Arg->getType();
 
+  // then try float/double
   if (ArgT->isFloatTy()) {
     return LlcapSizeType::LLSZ_32;
   }
@@ -394,6 +417,7 @@ LlcapSizeType ClangMetadataToLLVMArgumentMapping::llvmArgNoSizeType(
     return LlcapSizeType::LLSZ_64;
   }
 
+  // then all other primitive-sized types
   const Arr<Pair<unsigned int, LlcapSizeType>, 4> IntTypeSizeMap = {
       Pair{8, LlcapSizeType::LLSZ_8},
       {16, LlcapSizeType::LLSZ_16},
