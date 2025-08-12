@@ -148,7 +148,8 @@ from the AST plugin to guide our instrumentation. In the previous section, we cr
 
 Now we will make the LLVM IR plugin aware of the new *metadata key* **as well as** the *(de)serialization* function we've written in `hooklib` [earlier](#deserialization).
 
-First, ensure your modifications made to the `llvm-metadata.h` file are available in the non-llvm-project file ([`llvm-metadata.h`](../sandbox/01-llvm-ir/custom-metadata-pass/ast-meta-add/llvm-metadata.h)). Next, head to the `pass.cpp` file and modify the `SCustomSizes` and `SCustomHooks` in the following way:
+First, ensure your modifications made to the `llvm-metadata.h` file are available in the non-llvm-project file ([`llvm-metadata.h`](../sandbox/01-llvm-ir/custom-metadata-pass/ast-meta-add/llvm-metadata.h)). Next, head to the [`instrumentation.cpp`](../sandbox/01-llvm-ir/llvm-pass/src/instrumentation.cpp) file and modify the `SCustomSizes` and `SCustomHooks` (namespace `common`)
+in the following way:
 
 In `SCustomSizes`, add a tuple (`{ }`) that maps your custom metadata key to an `LlcapSizeType` (defined in [here](../sandbox/01-llvm-ir/llvm-pass/src/typeids.h)). Use the `LLSZ_8` up to `LLSZ_128` for 8 to 128-bit **value** types and `LLSZ_CUSTOM` for a dynamic-sized type.
 Remember that this choice has already been made in the [(de)serialization function](#deserialization) you've written earlier for type `T`.
