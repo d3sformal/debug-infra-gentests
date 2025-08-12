@@ -578,6 +578,13 @@ void FunctionEntryInstrumentation::run() {
                       << '\n';
     return;
   }
+  if (!m_ready) {
+    IF_VERBOSE errs() << "Instrumentation not ready, module " +
+                             m_module.getModuleIdentifier()
+                      << '\n';
+    exit(1);
+  }
+
 
   for (Function &Fn : m_module) {
 
@@ -652,6 +659,12 @@ void ArgumentInstrumentation::run() {
                              m_module.getModuleIdentifier()
                       << '\n';
     return;
+  } 
+  if (!m_ready) {
+    IF_VERBOSE errs() << "Instrumentation not ready, module " +
+                             m_module.getModuleIdentifier()
+                      << '\n';
+    exit(1);
   }
 
   for (Function &Fn : m_module) {
