@@ -9,6 +9,7 @@
 #include <set>
 #include <vector>
 
+// this struct hold separator characters used when parsing the index mapping metadata
 struct IdxMappingInfo {
   char primary;
   char group;

@@ -73,7 +73,7 @@ bool instrumentArgs() {
   return args::InstrumentationType.getValue() == args::InstrumentationType::Arg;
 }
 
-struct InsertFunctionCallPass : public PassInfoMixin<InsertFunctionCallPass> {
+struct InstrumentationPass : public PassInfoMixin<InstrumentationPass> {
 
   PreservedAnalyses run(Module &M, [[maybe_unused]] ModuleAnalysisManager &AM) {
     verbose(args::Verbose.getValue(), args::Verbose.getValue());
@@ -129,13 +129,13 @@ llvm::PassPluginLibraryInfo getInsertFunctionCallPassPluginInfo() {
   const auto Callback = [](PassBuilder &PB) {
     PB.registerPipelineStartEPCallback(
         [](ModulePassManager &MPM, OptimizationLevel) {
-          MPM.addPass(InsertFunctionCallPass());
+          MPM.addPass(InstrumentationPass());
           return true;
         });
   };
   return {.APIVersion = LLVM_PLUGIN_API_VERSION,
-          .PluginName = "InsertFunctionCallPass",
-          .PluginVersion = "0.0.1",
+          .PluginName = "Llcap-pass",
+          .PluginVersion = "0.1.0",
           .RegisterPassBuilderCallbacks = Callback};
 }
 } // namespace

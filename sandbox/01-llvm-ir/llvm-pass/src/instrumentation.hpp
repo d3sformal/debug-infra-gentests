@@ -24,6 +24,7 @@
 class Instrumentation {
 public:
   struct Config {
+    // mappable to the pass.cpp::args namespace arguments
     bool useMangledNames{false};
     std::string modMapsDir;
     bool performFnExitInstrumentation{false};
@@ -38,7 +39,9 @@ public:
 protected:
   llvm::Module &m_module;
   IdxMappingInfo m_idxInfo;
+  // error state flag
   bool m_ready{false};
+  // skip the module, run() shall not instrument
   bool m_skip{false};
   std::shared_ptr<const Config> m_cfg;
   Instrumentation(llvm::Module &M, std::shared_ptr<const Config> Cfg);
