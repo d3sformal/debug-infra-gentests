@@ -89,18 +89,21 @@ void deinit(void) {
 
 bool in_testing_mode(void) { return s_buff_info.mode == 2; }
 bool in_testing_fork(void) { return s_buff_info.forked; }
-uint16_t get_test_tout_secs(void) { return in_testing_mode() ? s_buff_info.test_timeout_seconds : 0; }
+uint16_t get_test_tout_secs(void) {
+  return in_testing_mode() ? s_buff_info.test_timeout_seconds : 0;
+}
 uint32_t test_count(void) { return s_buff_info.test_count; }
 
 void set_fork_flag(void) { s_buff_info.forked = true; }
 
-// returns 1-based index of the current call (being/ that was) executed
-uint32_t get_call_num(void) { return s_buff_info.target_call_number + 1 - s_call_countdown; }
+uint32_t get_call_num(void) {
+  return s_buff_info.target_call_number + 1 - s_call_countdown;
+}
 void register_call(void) {
   if (s_call_countdown > 0) {
     // s_call_countdown 0 means, that the testing has already been performed
-    // 1 means we will be testing the call that caused register_call to be called
-    // otherwise "we are not at the desired call yet"
+    // 1 means we will be testing the call that caused register_call to be
+    // called otherwise "we are not at the desired call yet"
     s_call_countdown--;
   }
 }
@@ -115,13 +118,17 @@ bool is_fn_under_test(uint32_t mod, uint32_t fn) {
          s_buff_info.target_fnid == fn;
 }
 
+// local argument packet storage
 static void *s_packet = NULL;
+// how much data has been alread read
 static size_t s_current_idx = 0;
 static uint32_t s_packet_size = 0;
 
 #define PAYLOAD_T uint64_t
 
+// parent socket
 static int s_socket_fd = -1;
+// packet index that will be replacing the arguments of the desired call
 static PAYLOAD_T s_packet_idx = 0;
 
 void init_packet_socket(int fd, PAYLOAD_T request_idx) {
@@ -130,11 +137,12 @@ void init_packet_socket(int fd, PAYLOAD_T request_idx) {
 }
 
 bool receive_packet(void) {
+  // send a request to the test coordinator (parent)
   if (write(s_socket_fd, &s_packet_idx, sizeof(s_packet_idx)) !=
       sizeof(s_packet_idx)) {
     return false;
   }
-
+  // read the lenght and the payload
   if (read(s_socket_fd, &s_packet_size, sizeof(s_packet_size)) !=
       sizeof(s_packet_size)) {
     perror("Failed to recv packet sz");
@@ -149,8 +157,11 @@ bool receive_packet(void) {
 
   if (read(s_socket_fd, s_packet, s_packet_size) != s_packet_size) {
     perror("Failed to recv packet data");
+    free(s_packet);
     return false;
   }
+  // the packet is freed once all of its bytes are read (see
+  // consume_bytes_from_packet)
   return true;
 }
 

@@ -358,7 +358,9 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
     std::cerr << "Failed send start message" << std::endl;
     exit(HOOKLIB_EC_START);
   }
-  set_fork_flag();
+  set_fork_flag(); // setting the flag in both parent and the fork should not
+                   // matter, this function never returns in the fork's parent
+                   // (test coordinator)
 
   for (uint32_t test_idx = 0; test_idx < test_count(); ++test_idx) {
     int sockets[2];
