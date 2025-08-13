@@ -43,7 +43,7 @@ use crate::{
 fn create_meta_svr(params: &CommonStageParams) -> Result<Arc<Mutex<MetadataPublisher>>> {
   Ok(Arc::new(Mutex::new(
     MetadataPublisher::new(
-      params.meta_cstr()?,
+      params.shmem_path_cstr()?,
       &params.data_semaphore_name,
       &params.ack_semaphore_name,
     )

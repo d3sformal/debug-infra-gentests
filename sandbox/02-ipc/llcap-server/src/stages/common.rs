@@ -196,7 +196,7 @@ impl CommonStageParams {
     })
   }
 
-  pub fn meta_cstr(&self) -> Result<&CStr> {
+  pub fn shmem_path_cstr(&self) -> Result<&CStr> {
     std::ffi::CStr::from_bytes_with_nul(&self.meta_mem_name_null_term).map_err(|e| anyhow!(e))
   }
 

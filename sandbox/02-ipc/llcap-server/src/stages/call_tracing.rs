@@ -53,9 +53,10 @@ fn get_line_input() -> Result<String> {
 
 type SelectionResult = Result<Vec<TextFunUid>>;
 
+/// returns the list of textual identifiers of functions `fn_uids` whose function name contains the `substring`
 fn try_name_selection(
   substring: &str,
-  ordered_traces: &[NumFunUid],
+  fn_uids: &[NumFunUid],
   mapping: &ExtModuleMap,
 ) -> SelectionResult {
   let lg = Log::get("try_name_selection");
@@ -65,7 +66,7 @@ fn try_name_selection(
 
   let mut result = vec![];
 
-  for id in ordered_traces {
+  for id in fn_uids {
     if let Some(fn_name) = mapping
       .get_function_name(*id)
       .filter(|n| n.contains(substring))
@@ -79,9 +80,11 @@ fn try_name_selection(
   Ok(result)
 }
 
+// parses the input as list of ' '-separated indicies into `fn_uids`
+// returns `fn_uids` selected in the input
 fn try_index_selection(
   input: &str,
-  ordered_traces: &[NumFunUid],
+  fn_uids: &[NumFunUid],
   mapping: &ExtModuleMap,
 ) -> SelectionResult {
   let lg = Log::get("try_index_selection");
@@ -90,8 +93,8 @@ fn try_index_selection(
   for inp in input.trim().split(' ').map(|v| v.trim()) {
     let i = inp.parse::<usize>()?;
 
-    if i < ordered_traces.len() {
-      let id = ordered_traces[i];
+    if i < fn_uids.len() {
+      let id = fn_uids[i];
       let fn_str = mapping.get_function_name(id);
       let mod_str = mapping.get_module_string_id(id.module_id);
 

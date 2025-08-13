@@ -531,6 +531,7 @@ pub fn send_test_metadata(
   )
 }
 
+// sends the communication/testing parameters to the hooklib
 fn send_metadata(meta_pub: &mut MetadataPublisher, target_descriptor: ShmMeta) -> Result<()> {
   Log::get("send_metadata").info("Waiting for a cooperating program");
   meta_pub.publish(target_descriptor)
@@ -595,14 +596,14 @@ unsafe impl Send for MetadataPublisher {}
 // (the type is Arc-Mutexed anyway)
 
 trait CaptureLoopState: Default {
-  /// returns the number of empty buffers
+  /// returns the number of empty buffers received
   fn get_end_message_count(&self) -> usize;
 
-  /// resets the number of empty buffers to zero
+  /// resets the counter of empty buffers to zero
   fn reset_end_message_count(&mut self);
 }
 
-trait CaptureLoop {
+trait CaptureLoop: Sized {
   type State: CaptureLoopState;
   /// updates the incoming state according to the buffer contents, consumes all the buffer contents
   ///
@@ -620,36 +621,32 @@ trait CaptureLoop {
   ///
   /// returns state that may be used for another [`Self::update_from_buffer`] iteration  
   fn process_state(&mut self, state: Self::State) -> Result<Self::State>;
-}
 
-// runs the capture until the terminating condition is reached
-// (received #buffers empty messages)
-fn run_capture<S: CaptureLoopState, C: CaptureLoop<State = S>>(
-  mut capture: C,
-  infra: &mut TracingInfra,
-  modules: &ExtModuleMap,
-) -> Result<C> {
-  let lg = Log::get("run_capture");
-  let mut state = S::default();
-  // bookkeeping variable to be able to call reset_end_message_count
-  let mut last_end_msg_count = 0;
-  loop {
-    lg.trace(format!("Waiting for free buff: {last_end_msg_count}"));
-    let base_ptr: BorrowedReadBuffer<'_> = infra.wait_for_full_buffer()?;
-    lg.trace("Received buffer");
-    let st = capture.update_from_buffer(state, base_ptr, modules)?;
-    infra.finish_buffer()?;
+  // runs the capture until the terminating condition is reached
+  // (received #buffers empty messages)
+  fn run(mut self, infra: &mut TracingInfra, modules: &ExtModuleMap) -> Result<Self> {
+    let lg = Log::get("CaptureLoop::run");
+    let mut state = Self::State::default();
+    // bookkeeping variable to be able to call reset_end_message_count
+    let mut last_end_msg_count = 0;
+    loop {
+      lg.trace(format!("Waiting for free buff: {last_end_msg_count}"));
+      let base_ptr: BorrowedReadBuffer<'_> = infra.wait_for_full_buffer()?;
+      lg.trace("Received buffer");
+      let st = self.update_from_buffer(state, base_ptr, modules)?;
+      infra.finish_buffer()?;
 
-    let mut st: S = capture.process_state(st)?;
-    if st.get_end_message_count() == infra.buffer_count() {
-      return Ok(capture);
-    } else if last_end_msg_count == st.get_end_message_count() {
-      // only count consecutive messages
-      st.reset_end_message_count();
-      last_end_msg_count = 0;
-    } else {
-      last_end_msg_count = st.get_end_message_count()
+      let mut st: <Self as CaptureLoop>::State = self.process_state(st)?;
+      if st.get_end_message_count() == infra.buffer_count() {
+        return Ok(self);
+      } else if last_end_msg_count == st.get_end_message_count() {
+        // only count consecutive messages
+        st.reset_end_message_count();
+        last_end_msg_count = 0;
+      } else {
+        last_end_msg_count = st.get_end_message_count()
+      }
+      state = st;
     }
-    state = st;
   }
 }

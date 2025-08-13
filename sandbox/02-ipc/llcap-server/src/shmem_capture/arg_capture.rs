@@ -1,12 +1,10 @@
 use crate::{
   log::Log,
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
-  shmem_capture::{
-    BorrowedReadBuffer, CaptureLoop, CaptureLoopState, ReadOnlyBufferPtr, run_capture,
-  },
+  shmem_capture::{BorrowedReadBuffer, CaptureLoop, CaptureLoopState, ReadOnlyBufferPtr},
   sizetype_handlers::{
-    ArgSizeTypeRef, CStringTypeReader, CustomTypeReader, FixedSizeTyData, FixedSizeTyReader,
-    ReadProgress, SizeTypeReader,
+    ArgSizeTypeRef, CStringTypeReader, CustomTypeReader, FixedSizeTyReader, ReadProgress,
+    SizeTypeReader,
   },
   stages::arg_capture::ArgPacketDumper,
 };
@@ -21,11 +19,14 @@ struct SizeTypeReaders {
 }
 
 fn boxed_ty_reader(size: usize) -> Box<FixedSizeTyReader> {
-  Box::new(FixedSizeTyReader::new(FixedSizeTyData::of_size(size)))
+  Box::new(FixedSizeTyReader::of_size(size))
 }
 
-fn create_sizetype_cache() -> SizeTypeReaders {
+// the readers returned by this function are reused for every argument
+// (by .reset()ing the reader)
+fn get_sizetype_readers() -> SizeTypeReaders {
   SizeTypeReaders {
+    // one can index by the size itself to obtain the correct reader
     fixed: [
       boxed_ty_reader(0),
       boxed_ty_reader(1),
@@ -221,6 +222,7 @@ impl PartialCaptureState {
     Ok(Self::Done { id, buff })
   }
 
+  /// tries to parse an argument packet using the data from raw_buff
   /// This function mutates (shifts) the raw_buff
   pub fn progress(
     self,
@@ -245,27 +247,17 @@ impl PartialCaptureState {
 
 #[derive(Debug)]
 struct ArgCaptureState {
+  // the state of the packet capture
   partial_state: PartialCaptureState,
-  payload: Vec<(NumFunUid, Vec<u8>)>,
-  endmessage_counter: usize,
+  endmsg_counter: usize,
 }
 
 impl Default for ArgCaptureState {
   fn default() -> Self {
     Self {
-      endmessage_counter: 0,
-      payload: Vec::new(),
+      endmsg_counter: 0,
       partial_state: PartialCaptureState::Empty,
     }
-  }
-}
-
-impl ArgCaptureState {
-  #[allow(dead_code)]
-  fn extract_messages(&mut self) -> Vec<(NumFunUid, Vec<u8>)> {
-    let mut res = vec![];
-    std::mem::swap(&mut res, &mut self.payload);
-    res
   }
 }
 
@@ -275,26 +267,28 @@ pub fn perform_arg_capture(
   capture_target: &mut ArgPacketDumper,
 ) -> Result<()> {
   let capture = ArgCapture {
-    cache: create_sizetype_cache(),
+    readers: get_sizetype_readers(),
     capture_target,
   };
 
-  run_capture(capture, infra, modules).map_err(|e| e.context("arg_capture"))?;
+  capture
+    .run(infra, modules)
+    .map_err(|e| e.context("arg_capture"))?;
   Ok(())
 }
 
 struct ArgCapture<'a> {
-  cache: SizeTypeReaders,
+  readers: SizeTypeReaders,
   capture_target: &'a mut ArgPacketDumper,
 }
 
 impl CaptureLoopState for ArgCaptureState {
   fn get_end_message_count(&self) -> usize {
-    self.endmessage_counter
+    self.endmsg_counter
   }
 
   fn reset_end_message_count(&mut self) {
-    self.endmessage_counter = 0;
+    self.endmsg_counter = 0;
   }
 }
 
@@ -314,22 +308,22 @@ impl<'a> CaptureLoop for ArgCapture<'a> {
         "Comms corruption - partial state with empty message following it! Partial state: {:?}",
         state.partial_state
       );
-      state.endmessage_counter += 1;
+      state.endmsg_counter += 1;
       return Ok(state);
     }
     while !buff.empty() {
       let partial_state = state
         .partial_state
-        .progress(buff, modules, &mut self.cache)?;
+        .progress(buff, modules, &mut self.readers)?;
 
       state.partial_state = match partial_state {
         PartialCaptureState::Done { id, mut buff } => {
+          // save the received packet
           if let Some(dumper) = self.capture_target.get_packet_dumper(id) {
             dumper.dump(&mut buff)?;
           }
           Log::get("argCap update_from_buffer").trace(format!("{buff:?}"));
-          state.payload.push((id, buff));
-          // start from an empty state
+          // restart from an empty state
           PartialCaptureState::Empty
         }
         st => st, // continue from the non-Done state
@@ -340,8 +334,6 @@ impl<'a> CaptureLoop for ArgCapture<'a> {
   }
 
   fn process_state(&mut self, state: Self::State) -> Result<Self::State> {
-    // let mut msgs = state.extract_messages();
-    // can be useful for debugging
     Ok(state)
   }
 }

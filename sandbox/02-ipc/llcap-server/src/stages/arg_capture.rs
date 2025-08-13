@@ -164,7 +164,9 @@ struct CaptureReader {
   path: PathBuf,
   file: BufReader<File>,
   packets: usize,
-  args: usize,
+  args_per_packet: usize,
+  // the index of the argument packet that will be read
+  // also, the number of packets read so far (if not reset)
   idx: usize,
 }
 
@@ -175,6 +177,24 @@ pub struct PacketReader {
 }
 
 impl PacketReader {
+  // verifies that argument packets can be read
+  // returns the number of packets, fails if even one causes read failure
+  fn validate_packets(path: &Path, capacity_hint: usize) -> Result<usize> {
+    let mut record = CaptureReader {
+      path: path.to_path_buf(),
+      file: BufReader::with_capacity(capacity_hint, File::open(path)?),
+      packets: 0,
+      args_per_packet: 0,
+      idx: 0,
+    };
+    let mut tests = 0;
+    // a single pass on all packets to count them (and validate them)
+    while record.read_next_packet()?.is_some() {
+      tests += 1;
+    }
+    Ok(tests)
+  }
+
   pub fn new(dir: &Path, module_maps: &ExtModuleMap, buff_limit: usize) -> Result<Self> {
     let lg = Log::get("PacketReader");
     let mod_count = module_maps.modules().count();
@@ -201,51 +221,38 @@ impl PacketReader {
             module_maps.get_module_string_id(*module)
           ));
           captures.insert(key, Arc::new(Mutex::new(EmptyPacketIter {})));
-        } else {
-          let mut tests = 0;
-          lg.info(format!(
-            "Setup {} {}",
-            module.hex_string(),
-            function.hex_string()
-          ));
-          {
-            let mut record = CaptureReader {
-              path: path.clone(),
-              file: BufReader::with_capacity(capacity, File::open(path.clone())?),
-              packets: 0,
-              args: 0,
-              idx: 0,
-            };
-
-            // a single pass on all packets to count them (and validate them)
-            while record.read_next_packet()?.is_some() {
-              tests += 1;
-            }
-          }
-          lg.info(format!("\ttests {tests} "));
-          let id = (*module, *function).into();
-
-          let args = if let Some(v) = module_maps.get_function_arg_size_descriptors(id) {
-            Ok(
-              v.iter()
-                .filter(|x| !matches!(x, crate::sizetype_handlers::ArgSizeTypeRef::Fixed(0)))
-                .count(),
-            )
-          } else {
-            Err(anyhow!("Failed look up function argument types"))
-          }?;
-          lg.info(format!("\targs {args} "));
-          captures.insert(
-            id,
-            Arc::new(Mutex::new(CaptureReader {
-              path: path.clone(),
-              file: BufReader::with_capacity(capacity, File::open(path)?),
-              packets: tests,
-              args,
-              idx: 0,
-            })),
-          );
+          continue;
         }
+
+        lg.trace(format!(
+          "Setup {} {}",
+          module.hex_string(),
+          function.hex_string()
+        ));
+        let packet_count = Self::validate_packets(&path, capacity)?;
+        lg.info(format!("\ttests {packet_count} "));
+        let id = (*module, *function).into();
+
+        let args = module_maps
+          .get_function_arg_size_descriptors(id)
+          .ok_or(anyhow!("Failed look up function argument types"))?;
+        // get the number of non-zero-sized arguments (the number of actual arguments we will read)
+        let args = args
+          .iter()
+          .filter(|x| !matches!(x, crate::sizetype_handlers::ArgSizeTypeRef::Fixed(0)))
+          .count();
+        lg.trace(format!("\targs {args} "));
+
+        captures.insert(
+          id,
+          Arc::new(Mutex::new(CaptureReader {
+            path: path.clone(),
+            file: BufReader::with_capacity(capacity, File::open(path)?),
+            packets: packet_count,
+            args_per_packet: args,
+            idx: 0,
+          })),
+        );
       }
     }
 
@@ -346,7 +353,7 @@ impl PacketIterator for CaptureReader {
   }
 
   fn arg_count(&self) -> u32 {
-    self.args as u32
+    self.args_per_packet as u32
   }
 
   fn try_reset(&mut self) -> Result<()> {

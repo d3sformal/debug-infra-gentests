@@ -1,5 +1,7 @@
 use anyhow::{Result, anyhow, ensure};
 
+use crate::log::Log;
+
 #[derive(Debug)]
 pub enum ReadProgress {
   /// reading of a value is done
@@ -35,10 +37,11 @@ impl TryFrom<u16> for ArgSizeTypeRef {
   }
 }
 
+// interface for argument readers
 pub trait SizeTypeReader {
-  /// resets the reader, acts as a noop if reader is not finished
+  /// resets the reader, acts as a no-op if reader is not finished
   ///
-  /// returns true when reader was reset
+  /// returns true if reader was reset
   fn read_reset(&mut self) -> bool;
   /// consumes bytes from data
   /// may consume any number of bytes (up to length), refer to ReadProgress
@@ -48,29 +51,17 @@ pub trait SizeTypeReader {
   fn done(&self) -> bool;
 }
 
-pub struct FixedSizeTyData {
-  required_size: usize,
-}
-
-impl FixedSizeTyData {
-  pub fn of_size(size: usize) -> Self {
-    Self {
-      required_size: size,
-    }
-  }
-}
-
 pub struct FixedSizeTyReader {
-  data: FixedSizeTyData,
+  size: usize,
   done_read: bool,
   buffer: Vec<u8>,
 }
 
 impl FixedSizeTyReader {
-  pub fn new(data: FixedSizeTyData) -> Self {
+  pub fn of_size(size: usize) -> Self {
     Self {
-      buffer: Vec::with_capacity(data.required_size),
-      data,
+      buffer: Vec::with_capacity(size),
+      size,
       done_read: false,
     }
   }
@@ -78,7 +69,8 @@ impl FixedSizeTyReader {
 
 impl SizeTypeReader for FixedSizeTyReader {
   fn read(&mut self, data: &[u8]) -> Result<ReadProgress> {
-    if self.data.required_size == 0 {
+    if self.size == 0 {
+      // special case of the zero-sized reader
       self.done_read = true;
       return Ok(ReadProgress::Done {
         payload: Vec::with_capacity(0),
@@ -91,11 +83,12 @@ impl SizeTypeReader for FixedSizeTyReader {
     }
 
     ensure!(
-      self.data.required_size >= self.buffer.len(),
+      self.size >= self.buffer.len(),
       "Invalid fixed reader condition - len!"
     );
 
-    let remaining = self.data.required_size - self.buffer.len();
+    // what we wish to read
+    let remaining = self.size - self.buffer.len();
     ensure!(
       remaining != 0,
       "Invalid fixed reader condition - remaining!"
@@ -107,7 +100,8 @@ impl SizeTypeReader for FixedSizeTyReader {
     }
 
     if remaining == to_cpy {
-      let mut buff = Vec::with_capacity(self.data.required_size);
+      // we read everything we needed
+      let mut buff = Vec::with_capacity(self.size);
       std::mem::swap(&mut buff, &mut self.buffer);
       self.done_read = true;
       Ok(ReadProgress::Done {
@@ -120,10 +114,13 @@ impl SizeTypeReader for FixedSizeTyReader {
   }
 
   fn read_reset(&mut self) -> bool {
+    const FN: &str = "read_reset";
     if !self.done_read {
+      Log::get(FN).warn("Reset on unfinished reader");
       return false;
     }
     if !self.buffer.is_empty() {
+      Log::get(FN).warn("Reset without consuming the reader's buffer");
       return false;
     }
 
@@ -136,6 +133,8 @@ impl SizeTypeReader for FixedSizeTyReader {
   }
 }
 
+// reads a 0x00-terminated string
+// (so far unused in the instrumentation)
 pub enum CStringTypeReader {
   Start,
   Reading { payload: Vec<u8> },
@@ -232,14 +231,17 @@ fn take_num_into_slice(n: usize, start: usize, out: &mut [u8; 8], inp: &[u8]) ->
   offs
 }
 
+// the size of the mandatory "length" field of the LLSZ_CUSTOM types
 const CUSTOM_TYPE_SIZE_SPEC_SIZE: usize = 8;
 #[derive(Debug)]
 pub enum CustomTypeReader {
   Start,
+  // in the middle of reading the 8-byte size
   ReadingTgtSize {
     idx: u8,
     bytes: [u8; CUSTOM_TYPE_SIZE_SPEC_SIZE],
   },
+  // finished reading the size, now reading the payload (of length target_size)
   Reading {
     target_size: u64,
     payload: Vec<u8>,
@@ -365,16 +367,20 @@ fn perform_reading_stage(
 mod tests {
   use super::*;
 
+  // various tests checking (among other things) that the readers output
+  // the correct state when presented with differently chunked data
+
+  // fix_r => fixed-size reader
   #[test]
   fn fix_r_zero_done_on_init() {
-    let zero_reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 0 });
+    let zero_reader = FixedSizeTyReader::of_size(0);
     assert!(!zero_reader.done());
   }
 
   #[test]
   fn fix_r_zero_does_not_consume() {
     let data = [0u8, 0u8];
-    let mut zero_reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 0 });
+    let mut zero_reader = FixedSizeTyReader::of_size(0);
     assert!(
       matches!(zero_reader.read(&data), Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() == 0 && consumed_bytes == 0 )
     );
@@ -383,7 +389,7 @@ mod tests {
   #[test]
   fn fix_r_zero_does_not_consume_empty() {
     let data = [];
-    let mut zero_reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 0 });
+    let mut zero_reader = FixedSizeTyReader::of_size(0);
     assert!(
       matches!(zero_reader.read(&data), Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() == 0 && consumed_bytes == 0 )
     );
@@ -392,23 +398,21 @@ mod tests {
   #[test]
   fn fix_r_zero_done_after_read() {
     let data = [0u8, 0u8];
-    let mut zero_reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 0 });
+    let mut zero_reader = FixedSizeTyReader::of_size(0);
     let _ = zero_reader.read(&data);
     assert!(zero_reader.done());
   }
 
   #[test]
   fn fix_r_nonzero_done_on_init() {
-    let reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 2 });
+    let reader = FixedSizeTyReader::of_size(2);
     assert!(!reader.done());
   }
 
   #[test]
   fn fix_r_nonzero_read_exact() {
     let data = [1u8, 2u8];
-    let mut reader = FixedSizeTyReader::new(FixedSizeTyData {
-      required_size: data.len(),
-    });
+    let mut reader = FixedSizeTyReader::of_size(data.len());
     assert!(
       matches!(reader.read(&data), Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() ==  data.len() && payload[0] == data[0] && payload[1] == data[1] && consumed_bytes == data.len() )
     );
@@ -417,9 +421,7 @@ mod tests {
   #[test]
   fn fix_r_nonzero_done_after_read_exact() {
     let data = [1u8, 2u8];
-    let mut reader = FixedSizeTyReader::new(FixedSizeTyData {
-      required_size: data.len(),
-    });
+    let mut reader = FixedSizeTyReader::of_size(data.len());
     let _ = reader.read(&data);
     assert!(reader.done());
   }
@@ -428,7 +430,7 @@ mod tests {
   fn fix_r_nonzero_read_more() {
     let data = [1u8, 2u8, 3u8];
     let sz = data.len() - 1;
-    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: sz });
+    let mut reader = FixedSizeTyReader::of_size(sz);
     assert!(
       matches!(reader.read(&data), Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() == sz && payload[0] == data[0] && payload[1] == data[1] && consumed_bytes == sz )
     );
@@ -438,7 +440,7 @@ mod tests {
   fn fix_r_nonzero_done_after_read_more() {
     let data = [1u8, 2u8, 3u8];
     let sz = data.len() - 1;
-    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: sz });
+    let mut reader = FixedSizeTyReader::of_size(sz);
     let _ = reader.read(&data);
     assert!(reader.done());
   }
@@ -447,7 +449,7 @@ mod tests {
   fn fix_r_nonzero_not_done_after_read_less() {
     let data = [1u8, 2u8];
     let sz = data.len() + 1;
-    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: sz });
+    let mut reader = FixedSizeTyReader::of_size(sz);
     let _ = reader.read(&data);
     assert!(!reader.done());
   }
@@ -456,7 +458,7 @@ mod tests {
   fn fix_r_nonzero_read_less() {
     let data = [1u8, 2u8];
     let sz = data.len() + 1;
-    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: sz });
+    let mut reader = FixedSizeTyReader::of_size(sz);
     matches!(reader.read(&data), Ok(ReadProgress::NotYet));
   }
 
@@ -464,7 +466,7 @@ mod tests {
   fn fix_r_nonzero_read_zero() {
     let data = [];
     let sz = 1;
-    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: sz });
+    let mut reader = FixedSizeTyReader::of_size(sz);
     matches!(reader.read(&data), Ok(ReadProgress::NotYet));
   }
 
@@ -473,7 +475,7 @@ mod tests {
     let data = [2u8];
     let data2 = [111u8];
     let sz = data.len() + 1;
-    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: sz });
+    let mut reader = FixedSizeTyReader::of_size(sz);
     let _ = reader.read(&data);
     let res = reader.read(&data2);
     assert!(
@@ -486,7 +488,7 @@ mod tests {
     let data = [2u8];
     let data2 = [111u8];
     let sz = data.len() + 1;
-    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: sz });
+    let mut reader = FixedSizeTyReader::of_size(sz);
     let _ = reader.read(&data);
     let _ = reader.read(&data2);
     assert!(reader.done());
@@ -494,7 +496,7 @@ mod tests {
 
   #[test]
   fn fix_r_nonzero_empty_reset() {
-    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 1 });
+    let mut reader = FixedSizeTyReader::of_size(1);
     assert!(!reader.read_reset());
   }
 
@@ -502,9 +504,7 @@ mod tests {
   fn fix_r_nonzero_nonnempty_reset() {
     let data = [1u8, 2u8];
     let data_smaller = [1u8];
-    let mut reader = FixedSizeTyReader::new(FixedSizeTyData {
-      required_size: data.len(),
-    });
+    let mut reader = FixedSizeTyReader::of_size(data.len());
     let _ = reader.read(&data_smaller);
     assert!(!reader.read_reset());
   }
@@ -512,9 +512,7 @@ mod tests {
   #[test]
   fn fix_r_nonzero_read_after_reset() {
     let data = [1u8, 2u8];
-    let mut reader = FixedSizeTyReader::new(FixedSizeTyData {
-      required_size: data.len(),
-    });
+    let mut reader = FixedSizeTyReader::of_size(data.len());
     let _ = reader.read(&data);
     reader.read_reset();
     assert!(
@@ -524,20 +522,20 @@ mod tests {
 
   #[test]
   fn fix_r_zero_empty_reset() {
-    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 0 });
+    let mut reader = FixedSizeTyReader::of_size(0);
     assert!(!reader.read_reset());
   }
 
   #[test]
   fn fix_r_zero_reset_after_empty_read() {
-    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 0 });
+    let mut reader = FixedSizeTyReader::of_size(0);
     let _ = reader.read(&[]);
     assert!(reader.read_reset());
   }
 
   #[test]
   fn fix_r_zero_reset_after_nonempty_read() {
-    let mut reader = FixedSizeTyReader::new(FixedSizeTyData { required_size: 0 });
+    let mut reader = FixedSizeTyReader::of_size(0);
     let _ = reader.read(&[1, 2]);
     assert!(reader.read_reset());
   }

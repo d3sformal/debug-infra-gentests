@@ -3,9 +3,7 @@ use std::collections::HashMap;
 use crate::{
   log::Log,
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
-  shmem_capture::{
-    BorrowedReadBuffer, CaptureLoop, CaptureLoopState, ReadOnlyBufferPtr, run_capture,
-  },
+  shmem_capture::{BorrowedReadBuffer, CaptureLoop, CaptureLoopState, ReadOnlyBufferPtr},
   stages::call_tracing::Message,
 };
 
@@ -15,6 +13,10 @@ use super::TracingInfra;
 
 #[derive(Default)]
 struct CallTraceMessageState {
+  // we are guaranteed we can always read 4-byte sections
+  // so we are in the state, when we either have the module ID or not
+  // if not, we will read the module ID
+  // if yes, we will read the function ID and finish (store result in `messages`)
   mod_id_wip: Option<IntegralModId>,
   messages: Vec<Message>,
   pub end_message_counter: usize,
@@ -57,11 +59,10 @@ pub fn perform_call_tracing(
   infra: &mut TracingInfra,
   modules: &ExtModuleMap,
 ) -> Result<HashMap<NumFunUid, u64>> {
-  let capture = CallTracing {
+  let result = CallTracing {
     recorded_frequencies: HashMap::new(),
-  };
-
-  let result = run_capture(capture, infra, modules)?;
+  }
+  .run(infra, modules)?;
   Ok(result.recorded_frequencies)
 }
 
@@ -120,7 +121,7 @@ impl CaptureLoop for CallTracing {
         state.mod_id_wip = Some(mod_id);
         return Ok(state);
       }
-      // (we also assume the cooperating application follows protocol)
+      // during call tracing, only moduleID-functionID messages are sent to us
       let fn_id: u32 = buff
         .unaligned_shift_num_read()
         .map_err(|e| e.context("funciton id"))?;
