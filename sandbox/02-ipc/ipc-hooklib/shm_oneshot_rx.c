@@ -12,6 +12,9 @@
 
 bool oneshot_shm_read(const char *data_sem_name, const char *ack_sem_name,
                       const char *shm_name, void *target, size_t size) {
+  // initialize channel semaphores
+  // we have 2 - the "data available" semaphore and an "ack" semaphore (signals we read the data
+  // and are ready to proceed)
   sem_t *semaphore = sem_open(data_sem_name, O_CREAT, SEMPERMS, 0);
   if (semaphore == SEM_FAILED) {
     printf("Failed to initialize oneshot data semaphore %s\n", data_sem_name);
@@ -27,6 +30,7 @@ bool oneshot_shm_read(const char *data_sem_name, const char *ack_sem_name,
     return false;
   }
 
+  // map memory synchronized by the semaphores
   int fd = -1;
   void *source;
   if (mmap_shmem(shm_name, &source, &fd, size, false) == -1) {
@@ -35,6 +39,7 @@ bool oneshot_shm_read(const char *data_sem_name, const char *ack_sem_name,
     return false;
   }
 
+  // wait for data to be ready
   bool rv = false;
   if (sem_wait(semaphore) == -1) {
     printf("Oneshot readout from shared memory failed on semaphore wait %s\n",
@@ -42,8 +47,9 @@ bool oneshot_shm_read(const char *data_sem_name, const char *ack_sem_name,
     perror("");
     goto end;
   }
+  // copy the data to the target
   memcpy(target, source, size);
-
+  // inform we're done, cleanup
   if (sem_post(ack) != 0) {
     printf("Oneshot failed to ack on sem %s\n", ack_sem_name);
     perror("");

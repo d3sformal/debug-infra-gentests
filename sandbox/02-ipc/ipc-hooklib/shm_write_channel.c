@@ -12,9 +12,11 @@
 #include <sys/stat.h> /* For mode constants */
 #include <unistd.h>
 
-static const unsigned long MAX_NAME_LEN = 251; // inc null terminator
+static const unsigned long MAX_NAME_LEN = 251; // including the null terminator
 static const char *CHANNEL_NAME_BASE = "/llcap";
 
+// allocates a channel-related resource name in the form "%s-%s-%s-%s" for the first 4 arguments
+// not that for the semaphore and shared-memory resources, they must start with /
 static bool alloc_name(const char *name_base, const char *name,
                        const char *type_id, const char *postfix, char **out) {
   // must ensure out is written only if allocation is successful!
@@ -50,8 +52,11 @@ static bool alloc_name(const char *name_base, const char *name,
 
 static void dealloc_channel_infra_names(ChannelNames *names) {
   free(names->name_sem_free);
+  names->name_sem_free = NULL;
   free(names->name_sem_full);
+  names->name_sem_full = NULL;
   free(names->name_buff_mem);
+  names->name_buff_mem = NULL;
 }
 
 static bool alloc_channel_infra_names(const char *name_base,
@@ -93,7 +98,7 @@ static bool semaphore_close(sem_t *sem, const char *name) {
 
 // returns the total number of bytes in all buffers
 static size_t get_buff_total_sz(ChannelInfo *info) {
-  return info->buff_count * info->buff_len;
+  return (size_t)info->buff_count * info->buff_len;
 }
 
 int init_write_channel_with_info(const char *channel_name, const char *type,
@@ -201,9 +206,9 @@ static bool termination_sequence(WriteChannel *self) {
 }
 
 static void *get_buffer(WriteChannel *self, size_t idx) {
-  _Static_assert(sizeof(char) == 1, "Byte is a byte");
+  static_assert(sizeof(char) == 1, "Byte is a byte");
   assert(idx < self->info.buff_count);
-  return (void *)((char *)self->buffer_base + idx * self->info.buff_len);
+  return (void *)((char *)self->buffer_base + (idx * self->info.buff_len));
 }
 
 static void *get_buffer_end(WriteChannel *self) {
@@ -240,7 +245,7 @@ static int unchecked_write(WriteChannel *self, const void *source,
 }
 
 static uint32_t get_buff_data_space(WriteChannel *self) {
-  _Static_assert(sizeof(self->bumper_offset) < (size_t)UINT32_MAX,
+  static_assert(sizeof(self->bumper_offset) < (size_t)UINT32_MAX,
                  "Needed for the line below");
   return self->info.buff_len - (uint32_t)sizeof(self->bumper_offset);
 }
@@ -311,5 +316,6 @@ int deinit_channel(WriteChannel *self) {
               UNMAP_SHMEM_FLAG_TRY_ALL);
   semaphore_close(self->sem_free, self->names.name_sem_free);
   semaphore_close(self->sem_full, self->names.name_sem_full);
+  dealloc_channel_infra_names(&self->names);
   return 0;
 }
