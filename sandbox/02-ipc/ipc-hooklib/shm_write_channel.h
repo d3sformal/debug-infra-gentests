@@ -11,21 +11,25 @@ extern "C" {
 
 #define SEMPERMS (S_IROTH | S_IWOTH | S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR)
 
-// on a higher level, channel is a simple shared memory area guarded / synchronized
-// via 2 semaphores
+// on a higher level, channel is a simple shared memory area guarded /
+// synchronized via 2 semaphores
 
-// for "writable" channels, we implement a chunk-based approach - underlying shared memory
-// is split into a same-sized chunks (called buffers), each write is either pushed inside the "current" chunk
-// or (when the payload does not fit the remaining space in the chunk) the "current" chunks is
-// flused, we wait for a new chunk and push the data to the new chunk (new chunk becoming the "current")
+// for "writable" channels, we implement a chunk-based approach - underlying
+// shared memory is split into a same-sized chunks (called buffers), each write
+// is either pushed inside the "current" chunk or (when the payload does not fit
+// the remaining space in the chunk) the "current" chunks is flused, we wait for
+// a new chunk and push the data to the new chunk (new chunk becoming the
+// "current")
 
-// the free and full semaphores are the consumer/producer synchronization poitns for "free" chunks
-// available to the writer and "full" chunks available to the reader
+// the free and full semaphores are the consumer/producer synchronization poitns
+// for "free" chunks available to the writer and "full" chunks available to the
+// reader
 
-// the end of the communication is a special sequence of 2*n buffer flushes, implemented by
-// termination_sequence_raw
+// the end of the communication is a special sequence of 2*n buffer flushes,
+// implemented by termination_sequence_raw
 
-// for raw details on the inner buffer, see get_buffer_end and similar functions in the implementation
+// for raw details on the inner buffer, see get_buffer_end and similar functions
+// in the implementation
 
 typedef struct {
   uint32_t buff_count;
@@ -66,7 +70,7 @@ int channel_write(WriteChannel *self, const void *source, uint32_t len);
 int deinit_channel(WriteChannel *self);
 
 // returns 0 on success
-int termination_sequence_raw(sem_t* sem_full, uint32_t buffer_count);
+int termination_sequence_raw(sem_t *sem_full, uint32_t buffer_count);
 
 #ifdef __cplusplus
 }

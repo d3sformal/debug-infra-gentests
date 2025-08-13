@@ -15,8 +15,9 @@
 static const unsigned long MAX_NAME_LEN = 251; // including the null terminator
 static const char *CHANNEL_NAME_BASE = "/llcap";
 
-// allocates a channel-related resource name in the form "%s-%s-%s-%s" for the first 4 arguments
-// not that for the semaphore and shared-memory resources, they must start with /
+// allocates a channel-related resource name in the form "%s-%s-%s-%s" for the
+// first 4 arguments not that for the semaphore and shared-memory resources,
+// they must start with /
 static bool alloc_name(const char *name_base, const char *name,
                        const char *type_id, const char *postfix, char **out) {
   // must ensure out is written only if allocation is successful!
@@ -184,10 +185,10 @@ static bool move_to_next_buff(WriteChannel *self) {
   return update_buffer_idx(self);
 }
 
-int termination_sequence_raw(sem_t* sem_full, uint32_t buffer_count) {
+int termination_sequence_raw(sem_t *sem_full, uint32_t buffer_count) {
   // we'll post to the "full" semaphore exactly 2 * N times (N = number of
   // buffers) this is in order to guarantee N consecutive "empty" buffers being
-  // sent 
+  // sent
 
   // the above relies on the fact that the other side of the communication
   // sets the payload length (inside a buffer) to zero before "pushing it back"
@@ -246,7 +247,7 @@ static int unchecked_write(WriteChannel *self, const void *source,
 
 static uint32_t get_buff_data_space(WriteChannel *self) {
   static_assert(sizeof(self->bumper_offset) < (size_t)UINT32_MAX,
-                 "Needed for the line below");
+                "Needed for the line below");
   return self->info.buff_len - (uint32_t)sizeof(self->bumper_offset);
 }
 

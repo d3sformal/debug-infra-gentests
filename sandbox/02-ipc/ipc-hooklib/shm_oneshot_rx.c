@@ -13,8 +13,8 @@
 bool oneshot_shm_read(const char *data_sem_name, const char *ack_sem_name,
                       const char *shm_name, void *target, size_t size) {
   // initialize channel semaphores
-  // we have 2 - the "data available" semaphore and an "ack" semaphore (signals we read the data
-  // and are ready to proceed)
+  // we have 2 - the "data available" semaphore and an "ack" semaphore (signals
+  // we read the data and are ready to proceed)
   sem_t *semaphore = sem_open(data_sem_name, O_CREAT, SEMPERMS, 0);
   if (semaphore == SEM_FAILED) {
     printf("Failed to initialize oneshot data semaphore %s\n", data_sem_name);
