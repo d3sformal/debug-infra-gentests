@@ -16,8 +16,8 @@ Building should be as simple as running
 ## Structure
 
 * [`shm_commons.h`](./shm_commons.h) - header used by both this library and the [`llcap-server`](../llcap-server/README.md#comms-parameters-shared-memory-region) to share constants related to their communication protocols
-* [`shm_oneshot_rx.c/h`](./shm_oneshot_rx.h) implements a one-shot read channel
-* [`shm_write_channel.c/h](./shm_write_channel.h) implements a writable channel (used to [capture](../llcap-server/README.md#capturing-data-from-the-target) data from the target program)
+* [`shm_oneshot_rx.c/h`](./shm_oneshot_rx.h) implements a one-shot reader of a shared-memory "channel"
+* [`shm_write_channel.c/h](./shm_write_channel.h) implements a writable "channel" (used to [capture](../llcap-server/README.md#capturing-data-from-the-target) data from the target program)
 * [`shm.c/h`](./shm.h) implements the "backend" side of the library, managing and querying of capture/testing parameters
 * [`hook.cpp`](./hook.cpp), [`hook.h`](./hook.h)
   * main logic of the instrumentation - defines argument hooks as well as core functions driving the testing process
@@ -26,6 +26,7 @@ Building should be as simple as running
 Notable code structures:
 
 * `GENFN_TEST_PRIMITIVE` macro ([`hook.cpp`](./hook.cpp)) defining how instrumentation behaves for a fixed-size primitive types
+  * pure declarations of hooks are in [`hook.h`](./hook.h)
 * `perform_testing` ([`hook.cpp`](./hook.cpp)) which implements the `fork`ing approach for testing
 * `oneshot_shm_read`, `send_start_msg`, `request_packet_from_server`, `send_test_end_message`, `send_finish_message` for the core communcation
 

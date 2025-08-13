@@ -2,7 +2,6 @@
 #include "shm.h"
 #include "shm_commons.h"
 #include <array>
-#include <utility>
 #include <cassert>
 #include <csignal>
 #include <cstddef>
@@ -18,6 +17,7 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <utility>
 #define ENDPASS_CODE 231
 
 #define HOOKLIB_EC_PKT_RD 232
@@ -30,36 +30,10 @@
 #define HOOKLIB_EC_TX_FIN 240
 #define HOOKLIB_EC_IMPL 241
 
-#define GENFN_TEST_PRIMITIVE(name, argt, argvar)                               \
-  GENFNDECLTEST(name, argt, argvar) {                                          \
-    if (in_testing_mode()) {                                                   \
-      if (!is_fn_under_test(module, fn)) {                                     \
-        goto just_copy_arg;                                                    \
-      } else {                                                                 \
-        /* Makes sure this is the right call (call order-wise) */              \
-        if (!should_hijack_arg()) {                                            \
-          goto just_copy_arg;                                                  \
-        }                                                                      \
-        register_argument();                                                   \
-        if (!consume_bytes_from_packet(sizeof(argvar), target)) {              \
-          std::cerr << "Failed to get " << sizeof(argvar) << " bytes"          \
-                    << std::endl;                                              \
-          perror("");                                                          \
-          exit(HOOKLIB_EC_PKT_RD);                                             \
-        }                                                                      \
-      }                                                                        \
-      return;                                                                  \
-    }                                                                          \
-    push_data(&argvar, sizeof(argvar));                                        \
-                                                                               \
-  just_copy_arg:                                                               \
-    *target = argvar;                                                          \
-    return;                                                                    \
-  }
-
 static int s_server_socket = -1;
 
 static bool connect_to_server(const char *path) {
+  // https://beej.us/guide/bgipc/html/split/unixsock.html#unixsock
   socklen_t len;
   struct sockaddr_un remote;
   remote.sun_family = AF_UNIX;
@@ -117,8 +91,9 @@ static bool do_srv_recv(void *target, size_t size, const char *desc) {
 static bool send_start_msg(uint32_t mod, uint32_t fun, uint32_t call_idx) {
   char message[MSG_SIZE];
   static_assert(sizeof(TAG_START) + sizeof(mod) + sizeof(fun) +
-                    sizeof(call_idx) <=
-                MSG_SIZE);
+                        sizeof(call_idx) <=
+                    MSG_SIZE &&
+                sizeof(TAG_START) == 2 && sizeof(mod) == 4 && sizeof(fun) == 4);
   memcpy(message, &TAG_START, sizeof(TAG_START));
   memcpy(message + 2, &mod, sizeof(mod));
   memcpy(message + 6, &fun, sizeof(fun));
@@ -132,6 +107,9 @@ static bool request_packet_from_server(uint64_t index, void **target,
   *target = NULL;
   *packet_size = 0;
   char message[MSG_SIZE];
+  static_assert(sizeof(TAG_PKT) == 2 &&
+                sizeof(TAG_PKT) + sizeof(index) <= MSG_SIZE);
+
   memcpy(message, &TAG_PKT, sizeof(TAG_PKT));
   memcpy(message + 2, &index, sizeof(index));
   if (!do_srv_send(message, sizeof(message), "pktrq")) {
@@ -170,9 +148,9 @@ enum class EMsgEnd : uint8_t {
 
 static uint16_t get_tag(EMsgEnd end_type) {
   constexpr uint8_t ENUM_LEN = std::to_underlying(EMsgEnd::MSG_END_COUNT);
-  return std::array<uint16_t, ENUM_LEN> {
-    TAG_TIMEOUT, TAG_SGNL, TAG_EXIT, TAG_PASS, TAG_EXC, TAG_FATAL
-  }[std::to_underlying(end_type)];
+  return std::array<uint16_t, ENUM_LEN>{TAG_TIMEOUT, TAG_SGNL, TAG_EXIT,
+                                        TAG_PASS,    TAG_EXC,  TAG_FATAL}
+      [std::to_underlying(end_type)];
 }
 
 static bool send_test_end_message(uint64_t index, EMsgEnd end_type,
@@ -180,9 +158,10 @@ static bool send_test_end_message(uint64_t index, EMsgEnd end_type,
   uint16_t tag = get_tag(end_type);
 
   char message[MSG_SIZE];
-  static_assert(sizeof(TAG_TEST_END) + sizeof(index) + sizeof(tag) +
-                    sizeof(status) <=
-                MSG_SIZE);
+  static_assert(
+      sizeof(TAG_TEST_END) + sizeof(index) + sizeof(tag) + sizeof(status) <=
+          MSG_SIZE &&
+      sizeof(TAG_TEST_END) == 2 && sizeof(index) == 8 && sizeof(tag) == 2);
   memcpy(message, &TAG_TEST_END, 2);
   memcpy(message + 2, &index, sizeof(index));
   memcpy(message + 10, &tag, sizeof(tag));
@@ -196,11 +175,6 @@ static bool send_finish_message() {
 
   memcpy(message, &TAG_TEST_FINISH, sizeof(TAG_TEST_FINISH));
   return do_srv_send(message, sizeof(message), "test finish msg");
-}
-
-void hook_start(uint32_t module_id, uint32_t fn_id) {
-  push_data(&module_id, sizeof(module_id));
-  push_data(&fn_id, sizeof(fn_id));
 }
 
 static bool try_wait_pid(pid_t pid, int32_t *status, EMsgEnd *result) {
@@ -259,7 +233,12 @@ static PollResult do_poll(int fd, short events, int timeout_ms, int *result) {
   return PollResult::ResultFDReady;
 }
 
-enum class ERequestResult : uint8_t { Error, Continue, TestPass, TestException };
+enum class ERequestResult : uint8_t {
+  Error,
+  Continue,
+  TestPass,
+  TestException
+};
 
 static ERequestResult handle_requests(int rq_sock) {
   int poll_rv;
@@ -324,7 +303,8 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
         // the test could have passed due to the "special" exit code
         // (we just didnt catch it - yet)
         // we therefore check the requet socket once more in case we missed it
-        switch (handle_requests(test_requests_socket)) {
+        ERequestResult req_result = handle_requests(test_requests_socket);
+        switch (req_result) {
         case ERequestResult::TestPass:
           return EMsgEnd::MSG_END_PASS;
         case ERequestResult::TestException:
@@ -334,6 +314,10 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
         case ERequestResult::Error:
         case ERequestResult::Continue:
           break;
+        default:
+          std::cerr << "serve_for_child_until_end: invalid ERequestResult: "
+                    << std::to_underlying(req_result);
+          return EMsgEnd::MSG_END_FATAL;
         }
       }
       return result;
@@ -344,7 +328,8 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
       return EMsgEnd::MSG_END_TIMEOUT;
     }
 
-    switch (handle_requests(test_requests_socket)) {
+    ERequestResult req_result = handle_requests(test_requests_socket);
+    switch (req_result) {
     case ERequestResult::Error:
       std::cerr << "Request handler failed" << std::endl;
       return EMsgEnd::MSG_END_FATAL;
@@ -354,6 +339,10 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
       return EMsgEnd::MSG_END_EXC;
     case ERequestResult::Continue:
       break;
+    default:
+      std::cerr << "serve_for_child_until_end: invalid ending ERequestResult: "
+                << std::to_underlying(req_result);
+      return EMsgEnd::MSG_END_FATAL;
     }
   }
 }
@@ -399,11 +388,14 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
     int status = -1;
     EMsgEnd result = serve_for_child_until_end(
         parent_socket, pid, static_cast<int>(get_test_tout_secs()), &status);
+    if (result == EMsgEnd::MSG_END_FATAL) {
+      // attempt to provide all the errors
+      std::cerr.flush();
+      std::cout.flush();
+    }
     if (result != EMsgEnd::MSG_END_STATUS &&
-        result != EMsgEnd::MSG_END_SIGNAL &&
-        result != EMsgEnd::MSG_END_EXC &&
-        result != EMsgEnd::MSG_END_PASS
-      ) {
+        result != EMsgEnd::MSG_END_SIGNAL && result != EMsgEnd::MSG_END_EXC &&
+        result != EMsgEnd::MSG_END_PASS) {
       // kill the child on non-exiting result (timeout, error, ...)
       // KILL and STOP cannot be ignored
       kill(pid, SIGSTOP);
@@ -452,7 +444,8 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
   }
 }
 
-static void hook_test_epilogue_impl(uint32_t module_id, uint32_t fn_id, bool exception) {
+static void hook_test_epilogue_impl(uint32_t module_id, uint32_t fn_id,
+                                    bool exception) {
   if (!in_testing_mode() || !in_testing_fork() ||
       !is_fn_under_test(module_id, fn_id)) {
     return;
@@ -465,15 +458,72 @@ static void hook_test_epilogue_impl(uint32_t module_id, uint32_t fn_id, bool exc
   exit(ENDPASS_CODE);
 }
 
+// here are all the hooks used by the llvm-pass
+// calls to these funcitons are inserted by the instrumentation
+// and are called during the various phases
+
+void hook_start(uint32_t module_id, uint32_t fn_id) {
+  // called during call tracing
+  push_data(&module_id, sizeof(module_id));
+  push_data(&fn_id, sizeof(fn_id));
+}
+
 void hook_test_epilogue(uint32_t module_id, uint32_t fn_id) {
+  // called at the end of the tested function (in testing phase)
+  // before every non-execption-related LLVM instruction
+  // the _impl does not return (exits) if a test is underway
   hook_test_epilogue_impl(module_id, fn_id, false);
 }
 
 void hook_test_epilogue_exc(uint32_t module_id, uint32_t fn_id) {
+  // same as above, except this functions just
+  // indicates to the llcap-server that we handled an exception
+  // the support for exceptions is incomplete, only subset
+  // of all potenitally-returning instructions are covered (in the llvm-pass)
   hook_test_epilogue_impl(module_id, fn_id, true);
 }
 
-
+// The following function template is the (de)serializing code for "primitive"
+// types name - fn name argt - type of the captured argument (by value) argvar -
+// a unique name for the scope of the function GENFNDECLTEST merely creates the
+// declaration this creates the function name(argt argvar, argt& target, uint32t
+// module, uint32t fn)
+#define GENFN_TEST_PRIMITIVE(name, argt, argvar)                               \
+  GENFNDECLTEST(name, argt, argvar) {                                          \
+    if (in_testing_mode()) {                                                   \
+      if (!is_fn_under_test((module), (fn))) {                                 \
+        goto just_copy_arg;                                                    \
+      } else {                                                                 \
+        /* Makes sure this is the right call (call order-wise) */              \
+        if (!should_hijack_arg()) {                                            \
+          goto just_copy_arg;                                                  \
+        }                                                                      \
+        register_argument();                                                   \
+        /* This is where argument replacement happens, we copy data from the   \
+        argument packet to the target ptr */                                   \
+        if (!consume_bytes_from_packet(sizeof((argvar)), (target))) {          \
+          std::cerr << "Failed to get " << sizeof((argvar)) << " bytes"        \
+                    << std::endl;                                              \
+          perror("");                                                          \
+          exit(HOOKLIB_EC_PKT_RD);                                             \
+        }                                                                      \
+      }                                                                        \
+      /* in the testing phase, we do not push_data, we either jumped to        \
+      just_copy_arg or we performed argument replacement */                    \
+      return;                                                                  \
+    }                                                                          \
+    /* this part performs argument capture and                                 \
+    copies the argument */                                                     \
+    push_data(&(argvar), sizeof((argvar)));                                    \
+                                                                               \
+  just_copy_arg:                                                               \
+    *(target) = (argvar);                                                      \
+    return;                                                                    \
+  }
+// as mentioned in llvm-pass, the variations for same-sized primitives
+// are redundant at this point, we keep them, however, since they do not add
+// that much clutter and may prove useful in the future (to handle specific
+// types differently)
 GENFN_TEST_PRIMITIVE(hook_float, float, n)
 GENFN_TEST_PRIMITIVE(hook_double, double, n)
 
@@ -486,6 +536,11 @@ GENFN_TEST_PRIMITIVE(hook_uint32, UINT, i)
 GENFN_TEST_PRIMITIVE(hook_int64, LLONG, d)
 GENFN_TEST_PRIMITIVE(hook_uint64, ULLONG, d)
 
+// implements the above, just for a "custom" type, the std::string
+//
+// custom type hooks always capture via a pointer to the argument (str)
+// otherwise, the logic is the same - we only capture and deserialize
+// quite a bit more data (size, capacity, content)
 void llcap_hooklib_extra_cxx_string(std::string *str, std::string **target,
                                     uint32_t module, uint32_t function) {
   if (in_testing_mode()) {
@@ -493,40 +548,51 @@ void llcap_hooklib_extra_cxx_string(std::string *str, std::string **target,
       goto move_string_to_target;
     }
     register_argument();
+    // up tho this point, the logic is the same as with primitive types
     *target = new std::string();
     uint32_t cstr_size = 0;
     uint32_t capacity = 0;
 
+    // this is "our" capture format
+    // we "consume" from the packet in the exact same order as we
+    // "push" in the argument capture (below) without the TOTAL SIZE of the
+    // argument packet
     if (!consume_bytes_from_packet(4, &cstr_size) ||
         !consume_bytes_from_packet(4, &capacity)) {
-      perror("str fail 1\n");
+      perror("strhook terr: size, capacity\n");
       exit(HOOKLIB_EC_PKT_RD);
     }
     if (cstr_size > capacity) {
-      perror("str fail2\n");
+      perror("strhook terr: invalid size\n");
       exit(HOOKLIB_EC_IMPL);
     }
     (*target)->reserve(capacity);
     (*target)->resize(cstr_size);
     if (!consume_bytes_from_packet(cstr_size, (*target)->data())) {
-      perror("str fail 3");
+      perror("strhook terr: string content");
       exit(HOOKLIB_EC_PKT_RD);
     }
     return;
   } else {
+    // argument capture
     uint32_t cstring_size = static_cast<uint32_t>(str->size());
     uint32_t capacity = static_cast<uint32_t>(str->capacity());
     uint64_t size = cstring_size + sizeof(capacity) + sizeof(cstring_size);
     if (str->size() > UINT32_MAX) {
-      perror("Error: std::string too large");
+      perror("strhook cerr: size error");
       return;
     }
 
+    // we are required to push the TOTAL SIZE of the argument payload first
+    // (this corresponds to the semantics of the LLSZ_CUSTOM marker)
     push_data(&size, sizeof(size));
+    // the rest of the pushes are up to us
     push_data(&cstring_size, sizeof(cstring_size));
     push_data(&capacity, sizeof(capacity));
     push_data(str->c_str(), cstring_size);
   }
 move_string_to_target:
+  // implementation detail: it str is an in/out argument, the caller of the
+  // instrumented function will not
   *target = str;
 }
