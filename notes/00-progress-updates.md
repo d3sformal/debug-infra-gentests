@@ -423,6 +423,7 @@ The target application maps the created memory regions and "opens" the semaphore
 Files implementing this approach:
 
 * [`shm.c` of the IPC hook library](../sandbox/02-ipc/ipc-hooklib/shm.c)
+    * later renamed to [`llcap_state.c`](../sandbox/02-ipc/ipc-hooklib//llcap_state.c)
 * [`shmem_capture` module of `llcap-server`](../sandbox/02-ipc/llcap-server/src/shmem_capture.rs)
 
 ##### Rough outline of the protocol

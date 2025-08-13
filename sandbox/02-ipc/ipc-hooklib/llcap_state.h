@@ -1,6 +1,6 @@
 
-#ifndef HOOKLIB_IPC_SHM
-#define HOOKLIB_IPC_SHM
+#ifndef HOOKLIB_LLCAP_STATE
+#define HOOKLIB_LLCAP_STATE
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -45,4 +45,4 @@ void init_packet_socket(int fd, uint64_t request_idx);
 #ifdef __cplusplus
 }
 #endif
-#endif // HOOKLIB_IPC_SHM
+#endif // HOOKLIB_LLCAP_STATE

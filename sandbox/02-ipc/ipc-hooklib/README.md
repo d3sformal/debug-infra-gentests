@@ -18,7 +18,7 @@ Building should be as simple as running
 * [`shm_commons.h`](./shm_commons.h) - header used by both this library and the [`llcap-server`](../llcap-server/README.md#comms-parameters-shared-memory-region) to share constants related to their communication protocols
 * [`shm_oneshot_rx.c/h`](./shm_oneshot_rx.h) implements a one-shot reader of a shared-memory "channel"
 * [`shm_write_channel.c/h](./shm_write_channel.h) implements a writable "channel" (used to [capture](../llcap-server/README.md#capturing-data-from-the-target) data from the target program)
-* [`shm.c/h`](./shm.h) implements the "backend" side of the library, managing and querying of capture/testing parameters
+*  [`llcap_state.c/h`](../sandbox/02-ipc/ipc-hooklib//llcap_state.h) implements the "backend" side of the library, managing and querying of capture/testing parameters
 * [`hook.cpp`](./hook.cpp), [`hook.h`](./hook.h)
   * main logic of the instrumentation - defines argument hooks as well as core functions driving the testing process
   * For exploration of the project, you can search for the functions declared in the header file in the [`llvm-pass`](../../01-llvm-ir/llvm-pass/) to get a rough idea of the insertion of the call to these functions

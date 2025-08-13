@@ -1,4 +1,4 @@
-#include "shm.h"
+#include "llcap_state.h"
 #include "shm_commons.h"
 #include "shm_oneshot_rx.h"
 #include "shm_write_channel.h"
@@ -12,38 +12,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-
-/*
-Shared memory buffering & synchronization
-
-In this architecture, we expect to have N buffers that are being filled and
-processed in circular fashion, starting from 0. We expect a SINGLE producer and
-a SINGLE consumer to coordinate their buffers.
-
-Producer starts filling buffer 0. When it deems the buffer full, it uses 2
-semaphores to:
-1. signal on a "full" semaphore there is a FULL buffer to be handled
-2. wait on a "free" semaphore for a FREE buffer
-3. after wake-up, starts filling another buffer
-
-Consumer starts by waiting for the "full" semaphore. As soon as it is woken up,
-it:
-1. processes the buffer
-2. signals "free" semaphore to indicate that number of free buffers has
-increased
-3. waits on the "full" semaphore again
-
-Format of a buffer:
-
-Bytes 0-3: 4B length of payload starting from byte 4 (after this field)
-Bytes 4+ : payload from the foreign process
-*/
-
-/*
-Special considerations w.r.t. program **crashing**.
-  - semaphore & memory should be unregistered by the OS
-Termination protocol: see the termination_sequence_raw function
-*/
 
 static ShmMeta s_buff_info;
 // should be initialized and updated such that
