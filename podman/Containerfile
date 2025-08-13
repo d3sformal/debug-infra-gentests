@@ -6,8 +6,6 @@ RUN dnf install -y git make cmake ninja xargs clang clang++ @development-tools
 # research project repo location
 WORKDIR /opt/llcap
 
-# to allow invalidation of cache
-ARG BUILDCLONE=cached
 RUN git clone "https://gitlab.mff.cuni.cz/vasutro/research-project.git"
 WORKDIR /opt/llcap/research-project
 RUN git submodule update --init --depth=1 ./sandbox/llvm-project
@@ -24,10 +22,11 @@ RUN ninja -j $(nproc)
 
 RUN ninja install
 
-# to allow cachec invalidation for non-llvm changes (use on your own risk)
-ARG NONLLVMUPDATE=cached
 WORKDIR /opt/llcap/research-project
+# to allow cache invalidation for non-llvm changes (use on your own risk)
+ARG LLCAP_PROJECT_COMMIT="use-pulled"
 RUN git pull
+RUN if [ "$LLCAP_PROJECT_COMMIT" != "use-pulled" ]; then git checkout "$LLCAP_PROJECT_COMMIT"; fi
 
 # AST plugin
 WORKDIR /opt/llcap/research-project/sandbox/01-llvm-ir/custom-metadata-pass
@@ -72,6 +71,15 @@ WORKDIR /opt/llcap/research-project
 # clang, etc for C & C++ standard library
 RUN dnf install -y make cmake clang clang++ && dnf clean all -y
 COPY --from=BUILD /opt/llcap/* /opt/llcap/research-project
+WORKDIR /opt/llcap/research-project/sandbox/02-ipc
+RUN mkdir -p ./llcap-server/target/debug/
+RUN cp ./llcap-server/bin/llcap-server ./llcap-server/target/debug
+
+WORKDIR /opt/llcap/research-project/sandbox/02-ipc/e2e-tests/test
+RUN ./run-all-tests.sh
+RUN ./clean-all.sh
 
 WORKDIR /opt/llcap/research-project/sandbox/02-ipc/example-arg-replacement
+RUN ./check-podman-demo.sh
+
 CMD bash
