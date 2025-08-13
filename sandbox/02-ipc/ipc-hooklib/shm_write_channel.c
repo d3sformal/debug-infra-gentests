@@ -277,6 +277,7 @@ static int unchecked_write(WriteChannel *self, const void *source,
   return 0;
 }
 
+// returns the number of bytes where data can be written
 static uint32_t get_buff_data_space(WriteChannel *self) {
   static_assert(sizeof(self->bumper_offset) < (size_t)UINT32_MAX,
                 "Needed for the line below");
@@ -287,32 +288,16 @@ static uint32_t get_buff_data_free_space(WriteChannel *self) {
   return get_buff_data_space(self) - self->bumper_offset;
 }
 
-static int can_push_data_of_size(WriteChannel *self, size_t len,
-                                 bool *allocated) {
+static int can_push_data_of_size(WriteChannel *self, size_t len) {
   // check overflow
   if (SIZE_MAX - len < get_buff_data_space(self)) {
     printf("Overflow on data size %lu\n", len);
     return -1;
-  } else if (len > get_buff_data_space(self)) {
-    printf("Request for data size %lu cannot be satisfied as buffer length is "
-           "%u (%lu reserved)\n",
-           len, self->info.buff_len, sizeof(self->bumper_offset));
+  } else if (get_buff_data_space(self) == 0) {
+    printf("The reserved buffer space is equal to the buffer size specified by "
+           "llcap-server, thus no data can be transferred\n");
     return -1;
   }
-
-  if (len > get_buff_data_free_space(self)) {
-    if (!move_to_next_buff(self)) {
-      printf("Failed to obtain a free buffer!\n");
-      return -1;
-    }
-    if (allocated != NULL) {
-      *allocated = true;
-    }
-    // safe recursive call as len is checked with maximum buffer size above
-    // (get_buff_data_space)
-    return can_push_data_of_size(self, len, NULL);
-  }
-
   return 0;
 }
 
@@ -322,15 +307,47 @@ int channel_start(WriteChannel *self) {
 }
 
 int channel_write(WriteChannel *self, const void *source, uint32_t len) {
-  if (self->info.buff_len <= len ||
-      can_push_data_of_size(self, len, NULL) != 0) {
-    printf("Failed to push data to channel %s due to len: %u, channel buffer "
-           "len: %u\n",
-           self->names.name_buff_mem, len, self->info.buff_len);
+  if (can_push_data_of_size(self, len) != 0) {
     return -1;
   }
 
-  return unchecked_write(self, source, len);
+  uint32_t written = 0;
+  while (len > 0) {
+    uint32_t free_space = get_buff_data_free_space(self);
+    // we must ensure that 4-byte values are readable in 1 read (from 1 buffer)
+    //  - limitation of how llcap-server reads function and module IDs
+    if (free_space < 4) {
+      if (!move_to_next_buff(self)) {
+        printf("Failed to obtain a free buffer!\n");
+        return -1;
+      }
+      // update free space
+      free_space = get_buff_data_free_space(self);
+    }
+    uint32_t to_write = free_space < len ? free_space : len;
+
+    int rv = unchecked_write(self, (const char *)source + written, to_write);
+    if (rv != 0) {
+      printf("Failed partial push %p, written %u, to_write %u", source, written,
+             to_write);
+      return -1;
+    }
+    len -= to_write;
+    written += to_write;
+
+    // in other words, the entire pyaload has not been pushed
+    // and thus the buffer must be full
+    if (len != 0) {
+      // obtain the next buffer
+      if (!move_to_next_buff(self)) {
+        printf("Failed to obtain a free buffer!\n");
+        return -1;
+      }
+    } // the else branch here is performed via the loop condition
+    // and repeat
+  }
+
+  return 0;
 }
 
 int deinit_channel(WriteChannel *self) {

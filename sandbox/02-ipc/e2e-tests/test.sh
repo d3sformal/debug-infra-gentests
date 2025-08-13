@@ -12,6 +12,8 @@ TestedFnName=$1; shift
 TimeoutSec=$1; shift
 OutputTestScriptDir=$1; shift
 IRTestScriptDir=$1; shift
+LlcapBufSz=$1; shift
+LlcapBufCnt=$1; shift
 CppArgs=$*;
 
 cd "$WorkingDir"
@@ -75,6 +77,7 @@ then
     "$File" "$TmpBuildDir"
     set +e
   done
+  set -e
   cd "$BuildDir"
 fi
 
@@ -99,7 +102,7 @@ make
 SelectionPath="$OutputsDir"/selected-fns.bin
 
 echo "!!! Tracing"
-echo "N:$TestedFnName" | "$LlcapSvrBin" --modmap "$ModMapsPath" trace-calls -o "$SelectionPath" "$InstrumentedBin"
+echo "N:$TestedFnName" | "$LlcapSvrBin" -s "$LlcapBufSz" -c "$LlcapBufCnt" --modmap "$ModMapsPath" trace-calls -o "$SelectionPath" "$InstrumentedBin"
 
 # rebuild for the second instrumentation stage
 echo "!!! Rebuilding"
@@ -122,14 +125,14 @@ TestOutputsDir="$OutputsDir"/test-outputs
 
 echo "!!! Capturing"
 
-rm -rf "$ArgTraceDir" && "$LlcapSvrBin" $LlcapVerbosity --modmap "$ModMapsPath"\
+rm -rf "$ArgTraceDir" && "$LlcapSvrBin" $LlcapVerbosity -s "$LlcapBufSz" -c "$LlcapBufCnt" --modmap "$ModMapsPath"\
  capture-args -s "$SelectionPath" -o "$ArgTraceDir" "$InstrumentedBin"
 
 echo "!!! Testing"
 
 mkdir -p "$TestOutputsDir"
 
-Output=$(rm -rf "${TestOutputsDir:?}"/* && "$LlcapSvrBin" $LlcapVerbosity --modmap "$ModMapsPath"\
+Output=$(rm -rf "${TestOutputsDir:?}"/* && "$LlcapSvrBin" $LlcapVerbosity -s "$LlcapBufSz" -c "$LlcapBufCnt" --modmap "$ModMapsPath"\
  test -s "$SelectionPath" -t "$TimeoutSec" -c "$ArgTraceDir"\
  -o "$TestOutputsDir" "$InstrumentedBin")
 

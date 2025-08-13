@@ -173,6 +173,11 @@ impl CommonStageParams {
     let modules = obtain_module_map(modules_path)?;
     let sem_str = null_terminated_to_string(META_SEM_DATA)?;
     let ack_str = null_terminated_to_string(META_SEM_ACK)?;
+    ensure!(buff_size % 4 == 0, "Buffer size must be a multiple of 4 due to alignment requirements");
+    const MIN_BUFF_SIZE: u32 = 8;
+    // this is a hooklib limit and must be kept in sync
+    // use e2e tests to check for validity of this value (run tests with buffer size equal to MIN_BUFF_SIZE)
+    ensure!(buff_size >= MIN_BUFF_SIZE, "Buffer size must be larger (at least {MIN_BUFF_SIZE})");
     Ok(CommonStageParams {
       modules: Some(modules),
       infra: InfraParams {

@@ -152,7 +152,7 @@ pub struct BorrowedOneshotWritePtr<'a, T> {
 
 impl<'a, T> BorrowedOneshotWritePtr<'a, T> {
   /// safety: ptr + offset must be a valid, unaliased pointer to T, caller also ensures T is
-  /// trivial (as in a memcpy to size of T is a valid representation of T)
+  /// trivial (as in a memcpy to size of T is a valid representation of T) and size of T is not less than 4 (see the write function for explanation)
   pub unsafe fn new(ptr: std::cell::RefMut<'a, *mut u8>, offset: usize) -> Self {
     // safety: caller
     let data_ptr = unsafe { ptr.add(offset) };
@@ -164,6 +164,8 @@ impl<'a, T> BorrowedOneshotWritePtr<'a, T> {
 
   pub fn write(self, value: T) {
     // safety: construction
+    // this will panic for unaligned buffers - we require the alignment of at least 4 bytes as that is the smallest atomic read performed by the llcap-server
+    // the minimum buffer size is checked when constructing the comms infra 
     unsafe { *self.data = value };
   }
 }

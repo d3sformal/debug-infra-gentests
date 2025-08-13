@@ -13,6 +13,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#define PUSH_FALURE 230
+
 static ShmMeta s_buff_info;
 // should be initialized and updated such that
 // - is counted down on each target fn call entry
@@ -76,7 +78,10 @@ int init(void) {
 }
 
 int push_data(const void *source, uint32_t len) {
-  return channel_write(&s_channel, source, len);
+  if (channel_write(&s_channel, source, len) != 0) {
+    exit(PUSH_FALURE);
+  }
+  return 0;
 }
 
 void deinit(void) {

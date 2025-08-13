@@ -181,7 +181,17 @@ impl PartialCaptureState {
           });
         }
         ReadProgress::Nop => {
-          raw_buff.shift(slice.len());
+          // theoretically, this is a logic error:
+          // the reader did not read anything from the buffer
+          // and the raw_buff is not empty - we check once more and if the slice is
+          // not empty, we must announce an error
+          ensure!(
+            slice.is_empty(),
+            "Logic error when capturing an argument: slice len: {}",
+            slice.len()
+          );
+          // nothing happened, somehow an empty buffer check is skipped above
+          lg.crit("empty buffer check is missing, this is a soft-error");
           return Ok(Self::CapturingArgs {
             id,
             arg_idx: i,
@@ -192,12 +202,12 @@ impl PartialCaptureState {
 
       ensure!(reader.done(), "Sanity check (reader done) failed");
       lg.trace(format!("Resetting reader {i}"));
-      reader.read_reset();
+      ensure!(reader.read_reset(), "Sanity check (reader reset) failed"); 
     }
     Ok(Self::Done { id, buff })
   }
 
-  /// This function mutates (shifts) the raw_buff within the bounds of buff_end
+  /// This function mutates (shifts) the raw_buff
   pub fn progress(
     self,
     raw_buff: &mut ReadOnlyBufferPtr,
