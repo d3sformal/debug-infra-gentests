@@ -31,11 +31,11 @@ We provide a complete demo in the form of a small C++ program inside the [exampl
 
 Demo container is available on [Docker Hub](https://https://hub.docker.com/r/vasutro/llcap-demo-env) (est. 650MB download):
 
-        podman run -it docker.io/vasutro/llcap-demo-env:1.1.0
+        podman run -it docker.io/vasutro/llcap-demo-env:1.2.0
 
 Last commit of this repository used to build the container and test the demo: 
 
-`36aa7cf22479599dc96c2b95d471b7ac117ed09c`
+`20944ad20f2859d76569a96f95088ab94b652537`
 
 For usage, refer to the [example-arg-replacement](./sandbox/02-ipc/example-arg-replacement) directory.
 
