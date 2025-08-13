@@ -34,11 +34,11 @@ pub fn test_server_socket() -> String {
     .expect("Failed to convert null-terminated socket name")
 }
 
-/// this functions takes care of spawning the central "dispatch" server
-/// to which all test instances connect
+/// implements the central "dispatch" server
+/// to which all test instances (test coordinators) connect
 ///
 /// this future signals readiness (listening for connections) via ready_tx
-/// and periodically checks end_rx (orders the future (and the server) to terminate)
+/// and periodically checks end_rx which orders this future (and the server) to terminate
 pub async fn test_server_job(
   packet_dir: PathBuf,
   modules: Arc<ExtModuleMap>,
@@ -58,16 +58,18 @@ pub async fn test_server_job(
   // basically, if the "global timeout" terminates the process, the
   // client_stream does not "close" properly and keeps timing out instead of
   // giving an error
-  // this flag will be set for all "single_test_job" that have not yet
+  // this flag will be set for all "test_coordinator_case_handler" that have not yet
   // stopped serving their client after the server is instructed to stop
   let test_job_stop_flag: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
   while end_rx.try_recv().is_err() {
+    // use timeout to be able to listen to end_rx
     match timeout(Duration::from_millis(100), listener.accept()).await {
       Ok(Ok((client_stream, client_addr))) => {
         lg.trace(format!("Connected test {client_addr:?}"));
-        let results = results.clone();
-        handles.push(tokio::spawn(single_test_job(
+        let results = results.clone(); // required to send this to the test_coordinator_case_handler future (cloning the mutex)
+
+        handles.push(tokio::spawn(test_coordinator_case_handler(
           client_stream,
           packet_dir.to_path_buf(),
           modules.clone(),
@@ -77,9 +79,10 @@ pub async fn test_server_job(
         )));
       }
       Ok(Err(e)) => Err(anyhow!(e))?,
-      Err(_) => continue,
+      Err(_) => continue, // timeout
     }
   }
+
   lg.info("Finishing");
   for handle in handles {
     test_job_stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -87,6 +90,8 @@ pub async fn test_server_job(
       lg.crit(format!("A job has finished with error: {e}"));
     }
   }
+
+  // socket cleanup when server job terminates: making sure this resource is freed before deleting the underlying descriptor
   mem::drop(listener);
   fs::remove_file(path)?;
   Ok(())
@@ -230,7 +235,7 @@ impl TryFrom<&[u8]> for TestMessage {
 }
 
 #[derive(Debug)]
-/// the state of the test client handling, updates of this state are communicated by the test coordinator
+/// the state of a test session (single test case with concrete packet index), updates of this state are communicated by the test coordinator
 enum ClientState {
   /// test session is starting, no message other than "start" is expected
   Init,
@@ -241,12 +246,9 @@ enum ClientState {
   Ended,
 }
 
-/// this future spawns a single test job that handles communication with and monitoring
-/// of a single test session (function id + call index)
-///
-/// during the test session, the target application is executed N times, once for each recorded
-/// argument tuple, this client job supplies a different tuple on each execution (based on the requests it receives)
-async fn single_test_job(
+/// this future represents the handling of the test coordinator's test case (a specific function id + call index)
+/// on test case end, `results` are updated
+async fn test_coordinator_case_handler(
   stream: UnixStream,
   packet_dir: PathBuf,
   modules: Arc<ExtModuleMap>,
@@ -256,7 +258,7 @@ async fn single_test_job(
 ) -> Result<()> {
   // initialize state, packet supply and the stream for reading and writing to the client on the other side
   let mut state = ClientState::Init;
-  let mut lg = Log::get(&format!("single_test_job@{state:?}"));
+  let mut lg = Log::get(&format!("test_coordinator_case_handler@{state:?}"));
   let mut packets = PacketReader::new(&packet_dir, &modules, mem_limit)?;
   let (read, mut write) = stream.into_split();
   let mut buff_stream = BufReader::new(read);
@@ -294,10 +296,9 @@ async fn single_test_job(
     lg.trace(format!("Read done: {data:?}"));
     let msg = TestMessage::try_from(data.as_slice()).map_err(|e| anyhow!(e))?;
 
-    let (new_state, response) =
-      handle_client_msg(state, msg, &mut packets, results.clone()).map_err(|e| anyhow!(e))?;
+    let (new_state, response) = handle_client_msg(state, msg, &mut packets, results.clone())?;
     state = new_state;
-    lg = Log::get(&format!("single_test_job@{state:?}")); // rename logger for a new state
+    lg = Log::get(&format!("test_coordinator_case_handler@{state:?}")); // rename logger for a new state
     if matches!(state, ClientState::Ended) {
       lg.trace("Client ended");
       return Ok(());
@@ -323,19 +324,19 @@ async fn single_test_job(
 ///
 /// ```
 /// all other transitions are considered an error
+///
+/// returns the next state and an optional response to the client (or an error)
 fn handle_client_msg(
   state: ClientState,
   msg: TestMessage,
   packets: &mut dyn PacketProvider,
   results: Arc<Mutex<TestResults>>,
-) -> Result<(ClientState, Option<Vec<u8>>), String> {
+) -> Result<(ClientState, Option<Vec<u8>>)> {
   match state {
     ClientState::Init => match msg {
       TestMessage::Start(id, i) => Ok((ClientState::Started(id, i), None)),
       TestMessage::End => Ok((ClientState::Ended, None)),
-      _ => Err(format!(
-        "Invalid transition from Init state with msg {msg:?}"
-      )),
+      _ => bail!("Invalid transition from Init state with msg {msg:?}"),
     },
     ClientState::Started(id, call_idx) => match msg {
       TestMessage::TestEnd(test_index, status) => {
@@ -354,13 +355,11 @@ fn handle_client_msg(
         Ok((state, response))
       }
       TestMessage::End => Ok((ClientState::Ended, None)),
-      _ => Err(format!(
-        "Invalid transition from Started state with msg {msg:?}"
-      )),
+      _ => bail!("Invalid transition from Started state with msg {msg:?}"),
     },
-    ClientState::Ended => Err(format!(
+    ClientState::Ended => bail!(
       "Client state is Ended, no more messages were expected msg: {msg:?}, from state: {state:?}"
-    )),
+    ),
   }
 }
 
@@ -388,6 +387,7 @@ async fn raw_send_to_client(stream: &mut OwnedWriteHalf, data: &[u8]) -> Result<
 }
 
 /// sends response in accordance with the comms protocol between the test client and this server
+/// (length + payload)
 async fn send_protocol_response(write_stream: &mut OwnedWriteHalf, response: &[u8]) -> Result<()> {
   // send response length + response
   raw_send_to_client(
@@ -426,6 +426,8 @@ pub struct TestJobFailure {
   pub message: String,
 }
 
+// performs testing of all argument packets, launching the
+// target applicaiton once of reach argument packet
 pub async fn test_job(
   metadata_svr: Arc<Mutex<MetadataPublisher>>,
   infra_params: InfraParams,
@@ -436,11 +438,13 @@ pub async fn test_job(
   let (m, f) = (fn_uid.module_id, fn_uid.function_id);
   for call_idx in 0..job_params.test_count {
     let cloned_params = job_params.clone();
+    // lambda transforming the test errors to proper return values
     let mk_error = |error: anyhow::Error| TestJobFailure {
       params: cloned_params,
       call_number: call_idx + 1,
       message: error.to_string(),
     };
+    // prepare job parameters
     let job_params = job_params.clone();
     {
       let mut guard = metadata_svr.lock().unwrap();
@@ -455,6 +459,7 @@ pub async fn test_job(
       )
       .map_err(mk_error.clone())?;
     }
+    // prepare the "command", mainly the std out/err
     let mut cmd = cmd_from_args(&job_params.command).map_err(mk_error.clone())?;
     if let Some(output_gen) = output_gen.as_ref() {
       let out_path = output_gen.get_out_path(m, f, call_idx + 1);
@@ -470,6 +475,8 @@ pub async fn test_job(
           .map_err(mk_error.clone())?,
       ));
     }
+
+    // launch the test
     let test = cmd
       .spawn()
       .map_err(|e| anyhow!(e).context("spawn from command"))
@@ -516,7 +523,7 @@ async fn wait_or_terminate(mut test: Child, params: &TestJobParams, call_idx: u3
       Ok(_) => Ok(()),
     }
   } else {
-    // we ignore "failures" here because if wait erred, there is not much we can do, if the
+    // we ignore "failures" here because if .wait() erred, there is not much we can do, if the
     // test child failed, it can be a perfectly desired result (no point reacting to it)
     // if the waiting failed, it will get logged
     let _ = test.wait().await.inspect_err(|e| {

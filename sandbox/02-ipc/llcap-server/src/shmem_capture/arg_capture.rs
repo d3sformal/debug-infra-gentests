@@ -64,12 +64,16 @@ impl SizeTypeReaders {
   }
 }
 
+//represents various argument capturing stages
+// the CapturingArgs stage
 #[derive(Debug, Eq, PartialEq)]
 enum PartialCaptureState {
   Empty,
   GotModuleId {
     module_id: IntegralModId,
   },
+  // parses each argument according to the
+  // index (via SizeTypeReaders)
   CapturingArgs {
     id: NumFunUid,
     arg_idx: usize,
@@ -77,6 +81,7 @@ enum PartialCaptureState {
   },
   Done {
     id: NumFunUid,
+    // contains the argument packet
     buff: Vec<u8>,
   },
 }
@@ -106,8 +111,9 @@ impl PartialCaptureState {
   ) -> Result<Self> {
     let lg = Log::get("progress::progress_read_fn_id");
     lg.trace("Reading fnid");
+    // read 4 bytes
     let fn_id: u32 = raw_buff.unaligned_shift_num_read()?;
-    // keep the type annotation to warn if implementing types change
+    // note: keep the type annotations to warn if implementing types change
     let fn_id: IntegralFnId = IntegralFnId::from(fn_id);
 
     let id = (module_id, fn_id).into();
@@ -144,7 +150,7 @@ impl PartialCaptureState {
         "Invalid arg index {arg_idx} for args {size_refs:?} in ID {id:?}"
       ));
     }
-
+    // for each argument description, parse the argument from the buffer
     for (i, desc) in size_refs.iter().enumerate().skip(arg_idx) {
       lg.trace(format!("Argument idx: {i}, desc: {desc:?}"));
       if raw_buff.empty() {
@@ -155,6 +161,7 @@ impl PartialCaptureState {
         });
       }
 
+      // obtain an argument reader that will read the packet
       let reader = readers.get_reader(*desc);
       ensure!(
         reader.is_some(),
@@ -165,15 +172,22 @@ impl PartialCaptureState {
 
       let slice = raw_buff.as_slice();
       match reader.read(slice)? {
+        // reader is done, argument is ready
         ReadProgress::Done {
           mut payload,
           consumed_bytes,
         } => {
+          // append the argument data to the packet
           buff.append(&mut payload);
           raw_buff.shift(consumed_bytes);
+          // continues the loop onto the next argument
         }
+        // the reader is done with the buffer
+        // and the arugment is not ready yet
         ReadProgress::NotYet => {
+          // skip all the bytes
           raw_buff.shift(slice.len());
+          // we're not continuing the loop, buffer is empty
           return Ok(Self::CapturingArgs {
             id,
             arg_idx: i,
@@ -202,7 +216,7 @@ impl PartialCaptureState {
 
       ensure!(reader.done(), "Sanity check (reader done) failed");
       lg.trace(format!("Resetting reader {i}"));
-      ensure!(reader.read_reset(), "Sanity check (reader reset) failed"); 
+      ensure!(reader.read_reset(), "Sanity check (reader reset) failed");
     }
     Ok(Self::Done { id, buff })
   }

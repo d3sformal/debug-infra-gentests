@@ -165,7 +165,7 @@ impl<'a, T> BorrowedOneshotWritePtr<'a, T> {
   pub fn write(self, value: T) {
     // safety: construction
     // this will panic for unaligned buffers - we require the alignment of at least 4 bytes as that is the smallest atomic read performed by the llcap-server
-    // the minimum buffer size is checked when constructing the comms infra 
+    // the minimum buffer size is checked when constructing the comms infra
     unsafe { *self.data = value };
   }
 }
@@ -622,6 +622,8 @@ trait CaptureLoop {
   fn process_state(&mut self, state: Self::State) -> Result<Self::State>;
 }
 
+// runs the capture until the terminating condition is reached
+// (received #buffers empty messages)
 fn run_capture<S: CaptureLoopState, C: CaptureLoop<State = S>>(
   mut capture: C,
   infra: &mut TracingInfra,
@@ -629,6 +631,7 @@ fn run_capture<S: CaptureLoopState, C: CaptureLoop<State = S>>(
 ) -> Result<C> {
   let lg = Log::get("run_capture");
   let mut state = S::default();
+  // bookkeeping variable to be able to call reset_end_message_count
   let mut last_end_msg_count = 0;
   loop {
     lg.trace(format!("Waiting for free buff: {last_end_msg_count}"));
