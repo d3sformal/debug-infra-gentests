@@ -1,4 +1,4 @@
-# `llcap-server` - experimental test driver
+# `llcap-server`
 
 ## Build
 
@@ -140,7 +140,7 @@ fn foo() -> Result<u16> {
  }
 
   ensure!(baz_property_holds(z), "Something went wrong with {}", z.describe());
-  // if execution gets here, invariant_holds(z) was true
+  // if execution gets here, baz_property_holds(z) was true
   return Ok(z);
 }
 ```
