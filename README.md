@@ -58,7 +58,7 @@ To **build** the tools:
 
 ```sh
 git submodule update --init --depth=1 ./sandbox/llvm-project
-# apply our LLVM patch
+# apply our clang patch
 cd ./sandbox/llvm-project
 git apply ../01-llvm-ir/clang-ir-mapping-llvm.diff
 cd ../../
@@ -209,3 +209,83 @@ LLMs have been used to consult on **exactly and only** these topics:
     * plus a discussion of possibilities regarding individual-file setting of such flags (instead of project-wide scope) - *not used*
 3. Parsing numbers in C++ without exceptions (e.g. without `std::stoi`, ...)
     * only used as a reference point, usage of `std::from_chars` in this codebase is derived from official documentation
+
+## Tests
+
+* to run `llcap-server` tests, `cd ./sandbox/02-ipc/sandbox && cargo t && cargo t --release`
+* to run end-to-end tests, `cd ./sandbox/02-ipc/e2e-tests/test && run-all-tests.sh`
+* to run `llvm` and `clang` tests (only `clang` tests should be relevant), `cd build && ninja check-clang` (or `check-llvm`)
+    * you might need to install `perl-Hash-Util` and `perl-FindBin`
+
+### Note on `clang` tests
+
+You will see 21 failures.
+
+* these are caused by our `clang` patch - it reorders the IR metadata because it adds 2 extra **module**-level entries
+* due to our patch, the metadata values may be shifted by exactly 2 (`!4` instead of `!2`)
+    * otherwise, the relative positions and references are the same
+
+We deem this to be the limitation of the testing framework. It either cannot or the test authors did not "dynamically" match the metadata.
+
+The current results of `check-clang` with checkmars:
+
+* `SHIFT` for correct output, but shifted metadata causing the failure (brief description provided)
+* `UNSUP` for unsupported architecture/target (also affected by the metadata position shift)
+
+Please note that even `UNSUP` failures were inspected. Just not as thoroughly as `SHIFT` failures
+
+```
+Total Discovered Tests: 46875
+ Skipped          :     6 (0.01%)
+ Unsupported      :  4034 (8.61%)
+ Passed           : 42785 (91.27%)
+ Expectedly Failed:    29 (0.06%)
+ Failed           :    21 (0.04%)
+
+SHIFT Clang :: CodeGen/asm-goto2.c
+ - 6 mismatches, shifted by 2
+SHIFT Clang :: CodeGen/catch-implicit-integer-sign-changes-incdec.c
+ - 8 mismatches shifted by 2 
+SHIFT Clang :: CodeGen/memcpy-inline-builtin.c
+ - 2 mismatches shifted by 2
+SHIFT Clang :: CodeGen/sanitize-metadata-ignorelist.c
+ - shifted by 2
+SHIFT Clang :: CodeGen/ubsan-function-sugared.cpp
+ - shifted by 2, arm-none-eabi, IR has to be generated
+SHIFT Clang :: CodeGen/ubsan-function.cpp
+ - shifted by 2, arm-none-eabi, IR has to be generated
+ - this one and the one above are ARM-specific; they mismatch on 3 ARM rules, which are the only ones with hardcoded metadata keys
+SHIFT Clang :: CodeGenCXX/attr-likelihood-switch-branch-weights.cpp
+ - shifted by 2, multiple mismatches
+ - IR has to be generated
+SHIFT Clang :: CodeGenCXX/debug-info-ms-novtable.cpp
+ - shifted by 2, expects hardcoded metadata `scope: !10`
+ - IR has to be generated from the command (provided by the log)
+SHIFT Clang :: utils/update_cc_test_checks/annotations.test
+ - shift by 2
+SHIFT Clang :: utils/update_cc_test_checks/check-globals.test
+ - expects exact match of `//.` at the end of the file
+SHIFT Clang :: utils/update_cc_test_checks/generated-funcs.test
+ - shift by 2
+
+UNSUP Clang :: CodeGen/AArch64/ls64.c
+UNSUP Clang :: CodeGen/LoongArch/inline-asm-operand-modifiers.c
+UNSUP Clang :: CodeGen/LoongArch/lasx/inline-asm-gcc-regs.c
+UNSUP Clang :: CodeGen/LoongArch/lasx/inline-asm-operand-modifier.c
+UNSUP Clang :: CodeGen/LoongArch/lsx/inline-asm-gcc-regs.c
+UNSUP Clang :: CodeGen/LoongArch/lsx/inline-asm-operand-modifier.c
+UNSUP Clang :: CodeGenObjC/arc.m
+UNSUP Clang :: CodeGenObjC/matrix-type-operators.m
+UNSUP Clang :: OpenMP/parallel_for_simd_codegen.cpp
+UNSUP Clang :: OpenMP/target_in_reduction_codegen.cpp
+```
+
+We resolved ~525 test failures by avoiding adding **function** metadata and doing so only when "necessary" (based on the presence of AST pass's metadata). While this makes the tests pass, it also reduces the test coverage because parts of the patch never run during testing. We offer the
+following points to try to convince the reader that our patch does not introduce miscompilation:
+
+1. we are not aware that our metadata usage may call LLVM intrinsics or interact with the executable beyond the scope of our goals and tools
+2. quick inspection of the test logs showed that nearly all mismatch failures were most likely due to the presence of the extra metadata key we attach to functions
+3. only "tested" applications are potentially affected - unless you use the AST pass, the compilation is equivalent (apart from the above explained failures caused by **module**-level changes)
+
+So far, we haven't yet figured out how to insert our **module** metadata as the very last entries,
+which would make the above 21 tests pass.

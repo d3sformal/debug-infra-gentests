@@ -37,7 +37,7 @@ index 3faf63e395a..cd65c6a5669 100644
    void setRangeEnd(SourceLocation E) { EndRangeLoc = E; }
  
 diff --git a/clang/lib/CodeGen/CodeGenFunction.cpp b/clang/lib/CodeGen/CodeGenFunction.cpp
-index 4d29ceace64..036297cb4d3 100644
+index 4d29ceace64..21875f3b0f5 100644
 --- a/clang/lib/CodeGen/CodeGenFunction.cpp
 +++ b/clang/lib/CodeGen/CodeGenFunction.cpp
 @@ -11,6 +11,8 @@
@@ -346,7 +346,7 @@ index 4d29ceace64..036297cb4d3 100644
  namespace llvm {
  extern cl::opt<bool> EnableSingleByteCoverage;
  } // namespace llvm
-@@ -1123,6 +1404,38 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
+@@ -1123,6 +1404,41 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
          getLLVMContext(), VScaleRange->first, VScaleRange->second));
    }
  
@@ -356,43 +356,50 @@ index 4d29ceace64..036297cb4d3 100644
 +      Fn->addMetadata(Key, *llvm::MDNode::get(Fn->getContext(),
 +      llvm::MDString::get(Fn->getContext(), Value)));
 +    }
-+    
-+    // constructing a type info map:
-+    ClangToLLVMArgMapping mapping(FD->getASTContext(), FnInfo);
-+    
-+    std::string AttrmapResult = std::to_string(mapping.totalIRArgs()) + llcap::PRIM_SEP + std::to_string(FnInfo.arg_size()) + llcap::PRIM_SEP;
-+    // this may expose invalid entries but bettter to have all the information
-+    size_t ArgMapIters = std::max((size_t)FnInfo.arg_size(), FD->param_size()); 
-+    for (size_t i = 0; i < ArgMapIters; ++i) {
-+      auto irArgs = mapping.getIRArgs(i);
++    // constructing a type info map only if other metadata is present (typically at least
++    // the key indicating that the function is not in a system header)
++    // This is done to prevent check-clang test failures (~525 test are affected)
++    if (!Metadata.empty()) {
++      ClangToLLVMArgMapping mapping(FD->getASTContext(), FnInfo);
 +      
-+      AttrmapResult += (std::to_string(irArgs.first) + llcap::IDX_SZ_SEP + std::to_string(irArgs.second));
-+      if (i < ArgMapIters - 1) {
-+        AttrmapResult += llcap::GROUP_SEP;
++      std::string AttrmapResult = std::to_string(mapping.totalIRArgs()) + llcap::PRIM_SEP + std::to_string(FnInfo.arg_size()) + llcap::PRIM_SEP;
++      // this may expose invalid entries but bettter to have all the information
++      size_t ArgMapIters = std::max((size_t)FnInfo.arg_size(), FD->param_size()); 
++      for (size_t i = 0; i < ArgMapIters; ++i) {
++        auto irArgs = mapping.getIRArgs(i);
++        
++        AttrmapResult += (std::to_string(irArgs.first) + llcap::IDX_SZ_SEP + std::to_string(irArgs.second));
++        if (i < ArgMapIters - 1) {
++          AttrmapResult += llcap::GROUP_SEP;
++        }
++
++        // e.g. "3 2 1-1#2-1"
++        // 3 LLVM IR args, 2 "real args", mapped to index 1 and 2 and of sizes 1 and 1
++        // or "2 2 0-1#1-1" 2 and 2 args
++        // the map includes this pointer!
++        // this ptr index is accounted for in the AST pass (+1 to all argument indicies if function is an instance member)
 +      }
 +
-+      // e.g. "3 2 1-1#2-1"
-+      // 3 LLVM IR args, 2 "real args", mapped to index 1 and 2 and of sizes 1 and 1
-+      // or "2 2 0-1#1-1" 2 and 2 args
-+      // the map includes this pointer!
-+      // this ptr index is accounted for in the AST pass (+1 to all argument indicies if function is an instance member)
++      Fn->addMetadata("LLCAP-CLANG-LLVM-MAP-DATA", *llvm::MDNode::get(Fn->getContext(),
++      llvm::MDString::get(Fn->getContext(), AttrmapResult)));
 +    }
-+
-+    Fn->addMetadata("LLCAP-CLANG-LLVM-MAP-DATA", *llvm::MDNode::get(Fn->getContext(),
-+    llvm::MDString::get(Fn->getContext(), AttrmapResult)));
 +  }
 +
    llvm::BasicBlock *EntryBB = createBasicBlock("entry", CurFn);
  
    // Create a marker to make it easy to insert allocas into the entryblock
 diff --git a/clang/lib/CodeGen/CodeGenModule.cpp b/clang/lib/CodeGen/CodeGenModule.cpp
-index e917f3c42da..7ffa85cde38 100644
+index e917f3c42da..dfb090e47f8 100644
 --- a/clang/lib/CodeGen/CodeGenModule.cpp
 +++ b/clang/lib/CodeGen/CodeGenModule.cpp
-@@ -999,6 +999,20 @@ void CodeGenModule::Release() {
-       NMD->addOperand(MD);
+@@ -1461,6 +1461,23 @@ void CodeGenModule::Release() {
+       }
+     }
    }
- 
++  // this seems to be the last point where we can "touch" the module.
++  // We are inserting additional module-level metadata which causes some
++  // tests to get confused (so far, we were unable to fully mitigate this 
++  // - ~30 make-clang tests thus fail)
 +  auto* Node = getModule().getOrInsertNamedMetadata(llcap::PARSE_GUIDE_MD_KEY);
 +  if (Node != nullptr) {
 +    Node->clearOperands();
@@ -406,10 +413,9 @@ index e917f3c42da..7ffa85cde38 100644
 +    Node->addOperand(llvm::MDNode::get(getModule().getContext(),
 +    llvm::MDString::get(getModule().getContext(), std::to_string(llcap::INVLD_IDX))));
 +  }
-+
-   if (CodeGenOpts.DwarfVersion) {
-     getModule().addModuleFlag(llvm::Module::Max, "Dwarf Version",
-                               CodeGenOpts.DwarfVersion);
+ }
+ 
+ void CodeGenModule::EmitOpenCLMetadata() {
 diff --git a/clang/lib/CodeGen/CodeGenModule.h b/clang/lib/CodeGen/CodeGenModule.h
 index 59f400570fb..a89f6349125 100644
 --- a/clang/lib/CodeGen/CodeGenModule.h

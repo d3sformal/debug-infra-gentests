@@ -274,3 +274,11 @@ By supplying a single configuration file to the `llvm-pass` and providing the co
 * providing more parameters in the configuration file, customizing the instrumentation
     * other parameters supplied to the pass currently
     * module-based filtering, etc.
+
+## Prove that adding module metadata does not "break" clang
+
+The inserted module metadata shift the order of other metadata. Some clang tests [fail because of this](../README.md#note-on-clang-tests). The tests match the IR literally and do not allow for
+more metadata to exist in between.
+
+Figuring out how to make our patch of `clang/lib/CodeGen/CodeGenModule.cpp` insert the metadata
+as the *last* entries would make the tests pass without the need for the lengthy hand-wavy explanation.
