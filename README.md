@@ -64,22 +64,18 @@ git apply ../01-llvm-ir/clang-ir-mapping-llvm.diff
 cd ../../
 ```
 
-The following sets up LLVM for the `ninja` build system:
-
-```sh
-cd sandbox/
-./setup-llvm-build.sh
-cd ../
-```
-
 ### Building
 
 ```sh
+# to build the AST plugin
+cd ./sandbox/01-llvm-ir/custom-metadata-pass
+./setup-tool.sh
+cd ../../
+./setup-llvm-build.sh
+cd ../build
+
 # this step takes A LONG TIME (and GBs of disk space)
-cd sandbox/build
-ninja
-# add -jN for parallelism or
-# ninja -j $(nproc)
+ninja -j $(nproc)
 ```
 
 To install:
@@ -89,22 +85,8 @@ To install:
 
 ```sh
 sudo ninja install
-# do not clean the build directory yet!
+sudo ninja tools/clang/examples/ast-meta-add/install/local
 ```
-
-We can now build the AST plugin:
-
-```sh
-cd ../../
-cd ./sandbox/01-llvm-ir/custom-metadata-pass
-./setup-tool.sh
-cd ../../build
-
-# build and install again (only builds the small AST plugin)
-ninja -j $(nproc)
-sudo ninja install
-```
-
 To uninstall:
 
 ```sh
