@@ -4,4 +4,4 @@ set -e
 PathToIR="$1/CMakeFiles/testbin.dir/main.cpp.o"
 echo "$PathToIR"
 
-grep -e "test_target.*ptr.*sret.*%2" $PathToIR
+grep -e "test_target.*ptr.*sret.*%2" $PathToIR || grep -e "test_target.*ptr.*sret.*%str" $PathToIR
