@@ -91,7 +91,7 @@ For more information, consult [the Rust book - statements & expressions](https:/
 #### Rust's Result type and the anyhow crate
 
 `Result<T, E>` is a type that may hold an `Ok(T)` or an `Err(E)` value.
-For a variable `foo` of type `Result<u16, String>`, the expression `foo?` expression evaluates
+For a variable `foo` of type `Result<u16, String>`, the expression `foo?` evaluates
 to either the stored `u16` if `foo == Ok(some_u16_value)` ("unwraps it") or the execution jumps out of the `foo`'s scope, either evaluating as or returning the `Err(the_string)` value if  `foo` is the `Err` variant.
 
 This allows for the following control flow that bypasses the `if(!ok){ return error; }` pattern:
@@ -131,7 +131,7 @@ When you see a return type of `Result<T>` (without the error type), you see the 
 fn foo() -> Result<u16> {
   let x = function_that_may_fail_with_err()?;
   let y = other(x);
-  let z = bar(z)?; // bar returns Result<u16, String>
+  let z = bar(z)?; // bar returns Result<u16>
 
   if sucks(z) {
     // instead of e.g. return Err(format!("{} sucks!", z));
