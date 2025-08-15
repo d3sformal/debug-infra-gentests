@@ -181,35 +181,6 @@ Runtime diagram:
 
 ![Testing high-level runtime diagram](./notes/images/diags/root-high-testing.png)
 
-TODO: older diagrams, rename to match concepts
-
-# AI/LLM usage disclosure
-
-LLMs have been used to consult on **exactly and only** these topics:
-
-## AI/LLM usage that was NOT used
-
-1. Brief overview of the capacities of LLVM to transfer information between individual LLVM passes
-    * dead end
-2. Quick preliminary analysis of a [demangling issue encountered](./notes/0x-llvm-demangling.md)
-    * majority was a "quick intro" to mangled symbol "syntax"
-    * analysis in the [linked document](./notes/0x-llvm-demangling.md) was performed by human
-3. Linking of multiple libraries into one
-    * generated `Cmake` examples not functional
-4. Discussion of ZMQ's buffer flushing - whether it is possible to force-flush them
-    * last resort option used after studying documentation & searching internet forums
-    * results *not used*
-
-## AI/LLM usage used directly in this project
-
-1. Generation of boilerplate code to set up a LLVM pass
-    * < 25 lines of code artifacts used, combined with official documentation
-    * usage of `llvmGetPassPluginInfo`, `registerPipelineStartEPCallback` in [the LLVM pass](./sandbox/01-llvm-ir/llvm-pass/src/pass.cpp)
-2. Translation of CMake directives (in `CMakeLists.txt`) specifying compile time options for LLVM plugins (`-mllvm`) into `cmake` options supplied on the command line
-    * plus a discussion of possibilities regarding individual-file setting of such flags (instead of project-wide scope) - *not used*
-3. Parsing numbers in C++ without exceptions (e.g. without `std::stoi`, ...)
-    * only used as a reference point, usage of `std::from_chars` in this codebase is derived from official documentation
-
 ## Tests
 
 * to run `llcap-server` tests, `cd ./sandbox/02-ipc/sandbox && cargo t && cargo t --release`
@@ -289,3 +260,34 @@ following points to try to convince the reader that our patch does not introduce
 
 So far, we haven't yet figured out how to insert our **module** metadata as the very last entries,
 which would make the above 21 tests pass.
+
+# AI/LLM usage disclosure
+
+LLMs have been used to consult on **exactly and only** these topics  (used models: ChatGPT 4, Gemini 2.5 Flash):
+
+## AI/LLM content that was NOT used
+
+1. Brief overview of the capacities of LLVM to transfer information between individual LLVM passes
+    * dead end
+2. Quick preliminary analysis of a [demangling issue encountered](./notes/0x-llvm-demangling.md)
+    * majority was a "quick intro" to mangled symbol "syntax"
+    * analysis in the [linked document](./notes/0x-llvm-demangling.md) was performed by human
+3. Linking of multiple libraries into one
+    * generated `Cmake` examples not functional
+4. Discussion of ZMQ's buffer flushing - whether it is possible to force-flush them
+    * last resort option used after studying documentation & searching internet forums
+    * results *not used*
+
+## AI/LLM content used in this project
+
+1. Generation of boilerplate code to set up a LLVM pass
+    * < 25 lines of code artifacts used, combined with official documentation
+    * usage of `llvmGetPassPluginInfo`, `registerPipelineStartEPCallback` in [the LLVM pass](./sandbox/01-llvm-ir/llvm-pass/src/pass.cpp)
+2. Translation of CMake directives (in `CMakeLists.txt`) specifying compile time options for LLVM plugins (`-mllvm`) into `cmake` options supplied on the command line
+    * plus a discussion of possibilities regarding individual-file setting of such flags (instead of project-wide scope) - *not used*
+3. Parsing numbers in C++ without exceptions (e.g. without `std::stoi`, ...)
+    * only used as a reference point, usage of `std::from_chars` in this codebase is derived from official documentation
+4. Final report generation and initial proofreading
+    * generated and heavily edited several `Components` paragraphs
+    * generated and slightly edited the first `Conclusion` paragraph
+    * proofreading of the entire document, cherry-picking phrasing and flow
