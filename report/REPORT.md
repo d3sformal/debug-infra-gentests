@@ -12,16 +12,14 @@ geometry:
 ## 1. Introduction
 
 Debugging complex software systems can be a time-consuming challenge, particularly when the root
-cause of an error must be identified. Research at Charles University, led by prof. Pavel Parizek[^parizek], has addressed this challenge within the Java/JVM ecosystem.
+cause of an error must be identified. Prof. Pavel Parizek[^parizek] has started an initiative
+focused on debugging large software systems with long-running computations, and proposed a
+methodology that combines dynamic runtime analysis/recording of programs, generation of unit tests, 
+and execution of unit tests. The methodology aims to help discover root causes of errors by
+user-targeted testing of application components via, e.g., inspecting the differences between
+passing and failing tests in terms of method call arguments and input program states.
 
-The initiative proposes a methodology that combines dynamic runtime analysis/recording
-of programs, generation of, and execution of unit tests. The methodology aims to 
-help discover root causes of errors by user-targeted testing of application components
-via e.g., inspecting the differences between passing and failing tests in terms of
-method call arguments and input program states.
-
-The goal of this project is to expand the language/runtime support and provide
-a significant part of the necessary infrastructure for C/C++ applications. This includes
+With other members of the project team, they started working on a prototype infrastructure for the Java/JVM ecosystem. The goal of this project is to expand the language/runtime support and provide the majority of the necessary infrastructure for C/C++ applications. This includes
 plugins, tools, and orchestration that allow recording of relevant program state, generation
 of tests, and their execution.
 
@@ -87,17 +85,25 @@ modification takes place, we also include a set of end-to-end tests[^e2etests] w
 
 Currently, we support built-in primitive types and the `std::string` (tested only with the `C++11`'s `std::string` ABI). Support for additional *pointer and reference* types, however, can be added by modifying the `llvm-pass` and `hooklib` components. The process of adding custom type support is non-trivial, yet possible and documented[^custtypemnan] in the project repository.
 
-## 4. Conclusion
+## 4. Project Execution and Management
+
+* short inital analysis
+* prorotyping and lock-in on the LLVM toolchain, IR instrumentation
+* periodic consultations and progress updates with team members
+* responsible for [reiterate what's done]
+* in final stages ... reviews 
+
+## 5. Conclusion
 
 This project adapted a dynamic debugging methodology from the Java/JVM ecosystem to C/C++ applications. By choosing LLVM IR instrumentation, the developed infrastructure, consisting of a custom LLVM pass, a runtime library (`hooklib`), and a central server (`llcap-server`), provides a functional system for generating directed tests. The included demonstration, end-to-end tests, and development documentation serve as a solid basis for future work.
 
-## 4.1. Evaluation
+## 5.1. Evaluation
 
 We chose the `KeePassXC`[^kpass] project to validate the tool's core functionality on a medium-scale, real-world application. With rather small build system modifications, it confirmed that the LLVM-based approach is viable for both call tracing and argument testing, successfully capturing and replaying program state. Performance analysis showed a minimal impact on build times. 
 
 To be precise, we demonstrated that the tool could be used to generate different-length passwords from a command-line interface by injecting different size-specifying arguments captured, proving the concept works as intended. We also evaluated the GUI version of the app with some, albeit lesser, success, presumably due to the GUI architecture. The evaluation document[^eval] precisely documents the changes to the `keepassxc` repository, as well as the outputs of the developed tools.
 
-## 4.2. Challenges
+## 5.2. Challenges
 
 ### `clang` metadata patch
 
