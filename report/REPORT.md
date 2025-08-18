@@ -69,7 +69,7 @@ During runtime, the instrumented application writes captured argument data to a 
 buffer. This buffer is managed and synchronized by `llcap-server`, which also provides the argument
 value during the testing phase. The target application is `fork`ed at the tested function start during the testing phase, arguments are replaced, and the result is observed.
 
-This process requires modification of build files and 2 compilations of the target application, the
+This process requires modification of build files and two compilations of the target application, the
 second one is repeated for a different targeted function set to be instrumented.
 
 ### 3.2 Demonstration
@@ -118,6 +118,8 @@ We also suggest exploring fuzzing techniques to automatically generate new test 
 
 [^parizek]: https://d3s.mff.cuni.cz/people/pavelparizek/
 
+[^main-concepts]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/tree/master/README.md#concepts
+
 [^pass]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/tree/master/sandbox/01-llvm-ir/llvm-pass
 
 [^hooklib]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/tree/master/sandbox/02-ipc/ipc-hooklib
@@ -126,7 +128,7 @@ We also suggest exploring fuzzing techniques to automatically generate new test 
 
 [^ast]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/tree/master/sandbox/01-llvm-ir/custom-metadata-pass/ast-meta-add
 
-[^notes]: https://gitlab.mff.cuni.cz/vasuhttps://gitlab.mff.cuni.cz/vasutro/research-project/-/blob/master/notes/00-progress-updates.mdtro/research-project/-/blob/master/notes/00-initial-analysis.md
+[^notes]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/blob/master/notes/00-initial-analysis.md
 
 [^notes2]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/blob/master/notes/01-llvm-ir-metadata-emission.md
 
