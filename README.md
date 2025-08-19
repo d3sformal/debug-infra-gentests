@@ -72,7 +72,7 @@ cd ./sandbox/01-llvm-ir/custom-metadata-pass
 ./setup-tool.sh
 cd ../../
 ./setup-llvm-build.sh
-cd ../build
+cd ./build
 
 # this step takes A LONG TIME (and GBs of disk space)
 ninja -j $(nproc)
