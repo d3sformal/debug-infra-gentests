@@ -21,17 +21,17 @@ cd ./test
 
 `run-all-tests.sh` refers to test directories that provide small C/C++ applications that are going to be tested. The line
 
- run-test "testbin-arg-replacement-simple" "timeout-all.sh" "test_target" "0"
+    run-test "testbin-arg-replacement-simple" "timeout-all.sh" "test_target" 0 "$Size" "$Count"
 
-This runs the `test/timeout-all.sh` check on the output of one of the instrumentation and testing of `testbin-arg-replacement-simple`.
+runs the `testbin-arg-replacement-simple` test, using the `timeout-all.sh` script to check the outputs of the run with timeout `0`s. The `$Size` and `$Count` parameters guide the `llcap-server`'s buffer parameters for IPC.
 
 The line
 
- run-test-in-directory "testbin-arg-replacement-simple" "test_target" "5"
+    run-test-in-directory-custom-buffers "testbin-arg-replacement-simple" "test_target" 5 "$Size" "$Count"
 
-Describes a test that is set up and performed based on the contents of the `testbin-arg-replacement-simple` directory. Most test cases follow this structure, providing the directory, name of the function to test, and timeout (in seconds).
+follows the same pattern as the previous one, with one exception: All the output checking scripts are now looked up inside the `testbin-arg-replacement-simple` directory.
 
-In each `testbin-*` directory, the scripts look for the `cases` folder, which contains check scripts (named `tc-*.sh`). These receive "clean" test output and check it. 
+In each `testbin-*` directory, the scripts look for the `cases` folder, which contains check scripts (named `tc-*.sh`). These receive "clean" test output and check it.
 
 The "clean" test output is created by reducing the `llcap-server` output - stripping white spaces and unnecessary lines, ... See the (bottom of the) [`test.sh` file for implementation](./test.sh) for details. For a reference check script, head [here](./testbin-arg-replacement-structret-simple/cases/tc-first-call.sh) and compare it with [`llcap-server` outputs](../example-arg-replacement/README.md#primitive-type-instrumentation). It is expected that the check script will fail to indicate a test failure. 
 
