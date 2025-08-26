@@ -289,5 +289,5 @@ LLMs have been used to consult on **exactly and only** these topics  (used model
     * only used as a reference point, usage of `std::from_chars` in this codebase is derived from official documentation
 4. Final report generation and initial proofreading
     * generated and heavily edited several `Components` paragraphs
-    * generated and slightly edited the first `Conclusion` paragraph
+    * generated and slightly edited the first `Conclusion` and `Project Execution and Management` paragraphs
     * proofreading of the entire document, cherry-picking phrasing and flow

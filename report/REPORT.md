@@ -12,7 +12,7 @@ geometry:
 ## 1. Introduction
 
 Debugging complex software systems can be a time-consuming challenge, particularly when the root
-cause of an error must be identified. Prof. Pavel Parizek[^parizek] has started an initiative
+cause of an error must be identified. Prof. Pavel Parízek[^parizek] has started an initiative
 focused on debugging large software systems with long-running computations, and proposed a
 methodology that combines dynamic runtime analysis/recording of programs, generation of unit tests, 
 and execution of unit tests. The methodology aims to help discover root causes of errors by
@@ -87,11 +87,9 @@ Currently, we support built-in primitive types and the `std::string` (tested onl
 
 ## 4. Project Execution and Management
 
-* short inital analysis
-* prorotyping and lock-in on the LLVM toolchain, IR instrumentation
-* periodic consultations and progress updates with team members
-* responsible for [reiterate what's done]
-* in final stages ... reviews 
+Throughout this project, the author maintained a regular consultation schedule with the supervisor, Prof. Pavel Parízek, provided frequent progress updates to the team, and monitored the progress of the Java/JVM system being developed by another team member. Following an initial analysis and evaluation of various approaches, drawing inspiration from related research papers, and the author's prior experience with instrumentation tools, we decided to focus on the LLVM toolchain and IR instrumentation. We placed a strong emphasis on creating detailed documentation for all implemented components, which outlines the technical challenges encountered. 
+
+The core components of this project are the `llcap-server`, the LLVM IR pass, the `hooklib` library, and the clang patch. Roman Vašut is responsible for developing all these components, as well as providing their documentation and the end-to-end test suite. In the final stages of the project, the author frequently iterated on various parts of the system, incorporating the invaluable feedback and reviews provided by Prof. Parízek, to whom the author extends their gratitude for his support and guidance.
 
 ## 5. Conclusion
 
