@@ -1,6 +1,4 @@
-# debug-infra-gentests
-
-Infrastructure for debugging large applications by generating directed tests.
+# Infrastructure for debugging large applications by generating directed tests
 
 Currently supported platforms: Java (JVM), C/C++ (LLVM).
 
