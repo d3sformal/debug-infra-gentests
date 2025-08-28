@@ -13,7 +13,7 @@ or
 
 * the demo container available on [Docker Hub](https://hub.docker.com/r/vasutro/llcap-demo-env)
 
-        podman run -it docker.io/vasutro/llcap-demo-env:1.2.0
+        podman run -it docker.io/vasutro/llcap-demo-env:2.0.0
 
 ## Workflow
 
