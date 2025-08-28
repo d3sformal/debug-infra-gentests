@@ -122,40 +122,40 @@ We also suggest exploring fuzzing techniques to automatically generate new test 
 
 [^parizek]: https://d3s.mff.cuni.cz/people/pavelparizek/
 
-[^main-concepts]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/tree/master/README.md#concepts
+[^main-concepts]: [/LLVM/README.md#concepts](https://github.com/d3sformal/debug-infra-gentests/blob/main/LLVM/README.md#concepts)
 
-[^pass]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/tree/master/sandbox/01-llvm-ir/llvm-pass
+[^pass]: [LLVM/sandbox/01-llvm-ir/llvm-pass](https://github.com/d3sformal/debug-infra-gentests/tree/main/LLVM/sandbox/01-llvm-ir/llvm-pass)
 
-[^hooklib]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/tree/master/sandbox/02-ipc/ipc-hooklib
+[^hooklib]: [LLVM/sandbox/02-ipc/ipc-hooklib](https://github.com/d3sformal/debug-infra-gentests/tree/main/LLVM/sandbox/02-ipc/ipc-hooklib)
 
-[^llcs]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/tree/master/sandbox/02-ipc/llcap-server
+[^llcs]: [LLVM/sandbox/02-ipc/llcap-server](https://github.com/d3sformal/debug-infra-gentests/tree/main/LLVM/sandbox/02-ipc/llcap-server)
 
-[^ast]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/tree/master/sandbox/01-llvm-ir/custom-metadata-pass/ast-meta-add
+[^ast]: [LLVM/sandbox/01-llvm-ir/custom-metadata-pass/ast-meta-add](https://github.com/d3sformal/debug-infra-gentests/tree/main/LLVM/sandbox/01-llvm-ir/custom-metadata-pass/ast-meta-add)
 
-[^notes]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/blob/master/notes/00-initial-analysis.md
+[^notes]: [LLVM/notes/00-initial-analysis.md](https://github.com/d3sformal/debug-infra-gentests/blob/main/LLVM/notes/00-initial-analysis.md)
 
-[^notes2]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/blob/master/notes/01-llvm-ir-metadata-emission.md
+[^notes2]: [LLVM/notes/01-llvm-ir-metadata-emission.md](https://github.com/d3sformal/debug-infra-gentests/blob/main/LLVM/notes/01-llvm-ir-metadata-emission.md)
 
-[^papnotes]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/blob/master/notes/00-paper-notes.md
+[^papnotes]: [LLVM/notes/00-paper-notes.md](https://github.com/d3sformal/debug-infra-gentests/blob/main/LLVM/notes/00-paper-notes.md)
 
-[^updates]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/blob/master/notes/00-progress-updates.md
+[^updates]: [LLVM/notes/00-progress-updates.md](https://github.com/d3sformal/debug-infra-gentests/blob/main/LLVM/notes/00-progress-updates.md)
 
-[^todo]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/blob/master/notes/000-TODOs.md
+[^todo]: [LLVM/notes/000-TODOs.md](https://github.com/d3sformal/debug-infra-gentests/blob/main/LLVM/notes/000-TODOs.md)
 
-[^future]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/blob/master/notes/000-TODOs.md#future-work
+[^future]: [LLVM/notes/000-TODOs.md#future-work](https://github.com/d3sformal/debug-infra-gentests/blob/main/LLVM/notes/000-TODOs.md#future-work)
 
-[^example]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/tree/master/sandbox/02-ipc/example-arg-replacement
+[^example]: [LLVM/sandbox/02-ipc/example-arg-replacement](https://github.com/d3sformal/debug-infra-gentests/tree/main/LLVM/sandbox/02-ipc/example-arg-replacement)
 
-[^podman]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/tree/master/podman
+[^podman]: [LLVM/podman](https://github.com/d3sformal/debug-infra-gentests/tree/main/LLVM/podman)
 
-[^e2etests]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/tree/master/sandbox/02-ipc/e2e-tests
+[^e2etests]: [LLVM/sandbox/02-ipc/e2e-tests](https://github.com/d3sformal/debug-infra-gentests/tree/main/LLVM/sandbox/02-ipc/e2e-tests)
 
-[^custtypemnan]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/blob/master/notes/development-manual.md
+[^custtypemnan]: [LLVM/notes/development-manual.md](https://github.com/d3sformal/debug-infra-gentests/blob/main/LLVM/notes/development-manual.md)
 
-[^patch]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/blob/master/sandbox/01-llvm-ir/clang-ir-mapping-llvm.diff
+[^patch]: [LLVM/sandbox/01-llvm-ir/clang-ir-mapping-llvm.diff](https://github.com/d3sformal/debug-infra-gentests/blob/main/LLVM/sandbox/01-llvm-ir/clang-ir-mapping-llvm.diff)
 
-[^fails]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/tree/master#note-on-clang-tests
+[^fails]: [LLVM/README.md#note-on-clang-tests](https://github.com/d3sformal/debug-infra-gentests/tree/main/LLVM/README.md#note-on-clang-tests)
 
-[^eval]: https://gitlab.mff.cuni.cz/vasutro/research-project/-/blob/master/report/EVALUATION.md
+[^eval]: [LLVM/report/EVALUATION.md](https://github.com/d3sformal/debug-infra-gentests/blob/main/LLVM/report/EVALUATION.md)
 
 [^kpass]: https://github.com/keepassxreboot/keepassxc

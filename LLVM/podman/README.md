@@ -2,7 +2,7 @@
 
 ## Demo without build artifacts
 
-Estimated size: 2.1GB
+Estimated size: 2.5GB
 
 To build: `podman build ./ -f ./Containerfile -t llcap-env`
 
@@ -14,7 +14,7 @@ To run: `podman run -it llcap-env`
 * build and push `vasutro/llcap-demo-env:Vx:Vy:Vz`
 * update [here](../README.md#containers) and [here](../sandbox/02-ipc/example-arg-replacement/README.md#prerequisites)
 
-## Development version
+## Development version (not adapted to this repository yet!)
 
 Estimated size: 18.3GB
 
