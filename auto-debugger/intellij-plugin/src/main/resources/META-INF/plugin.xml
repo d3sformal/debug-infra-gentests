@@ -1,0 +1,51 @@
+<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+  <!-- Unique identifier of the plugin. It should be FQN. It cannot be changed between the plugin versions. -->
+  <id>cz.cuni.mff.d3s.intellij-plugin</id>
+
+  <!-- Public plugin name should be written in Title Case.
+       Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-name -->
+  <name>Auto-Debugger</name>
+
+  <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
+  <vendor url="https://d3s.mff.cuni.cz">Charles University, Faculty of Mathematics and Physics, D3S</vendor>
+
+  <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
+       Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-description -->
+  <description><![CDATA[
+    Auto-Debugger is an intelligent debugging tool that automatically instruments Java applications,
+    collects runtime traces, and generates unit tests based on observed behavior.<br>
+    <br>
+    <strong>Features:</strong><br>
+    • Dynamic instrumentation using DiSL (Domain-Specific Language for Instrumentation)<br>
+    • Automatic collection of runtime data and variable values<br>
+    • Generation of unit tests based on execution traces<br>
+    • Integrated tool window for configuration and monitoring<br>
+    • Support for complex debugging scenarios and target method analysis<br>
+    <br>
+    This plugin integrates seamlessly with IntelliJ IDEA to provide a comprehensive
+    auto-debugging experience for Java developers.
+  ]]></description>
+
+  <!-- Product and plugin compatibility requirements.
+       Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+  <depends>com.intellij.modules.platform</depends>
+  <depends>com.intellij.modules.java</depends>
+  <depends>com.intellij.java</depends>
+
+  <!-- Extension points defined by the plugin.
+       Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
+  <extensions defaultExtensionNs="com.intellij">
+    <!-- Tool Window for Auto-Debugger interface -->
+    <toolWindow id="Auto-Debugger" secondary="true" icon="AllIcons.Toolwindows.ToolWindowDebugger" anchor="right"
+                factoryClass="cz.cuni.mff.d3s.autodebugger.intellijplugin.factories.DebuggerToolWindowFactory"/>
+    
+    <!-- Project-level services -->
+    <!-- InstrumentationService removed; orchestration runs via runner module directly -->
+    <projectService serviceInterface="cz.cuni.mff.d3s.autodebugger.intellijplugin.services.SettingsService"
+                    serviceImplementation="cz.cuni.mff.d3s.autodebugger.intellijplugin.services.SettingsService"/>
+    <projectService serviceInterface="cz.cuni.mff.d3s.autodebugger.intellijplugin.services.OutputService"
+                    serviceImplementation="cz.cuni.mff.d3s.autodebugger.intellijplugin.services.OutputService"/>
+  </extensions>
+
+</idea-plugin>

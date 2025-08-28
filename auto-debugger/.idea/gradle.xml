@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="GradleMigrationSettings" migrationVersion="1" />
+  <component name="GradleSettings">
+    <option name="linkedExternalProjectsSettings">
+      <GradleProjectSettings>
+        <option name="externalProjectPath" value="$PROJECT_DIR$" />
+        <option name="gradleHome" value="" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$" />
+            <option value="$PROJECT_DIR$/analyzer-common" />
+            <option value="$PROJECT_DIR$/analyzer-disl" />
+            <option value="$PROJECT_DIR$/analyzer-java" />
+            <option value="$PROJECT_DIR$/instrumentor-common" />
+            <option value="$PROJECT_DIR$/instrumentor-java" />
+            <option value="$PROJECT_DIR$/intellij-plugin" />
+            <option value="$PROJECT_DIR$/model-common" />
+            <option value="$PROJECT_DIR$/model-java" />
+            <option value="$PROJECT_DIR$/runner" />
+            <option value="$PROJECT_DIR$/test-generator-common" />
+            <option value="$PROJECT_DIR$/test-generator-java" />
+            <option value="$PROJECT_DIR$/test-runner-common" />
+            <option value="$PROJECT_DIR$/test-runner-java" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+    </option>
+  </component>
+</project>

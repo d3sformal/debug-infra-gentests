@@ -1,0 +1,7 @@
+- https://dl.acm.org/doi/abs/10.1145/2001420.2001423 - hybrid
+- https://dl.acm.org/doi/abs/10.1145/2001420.2001463 - hybrid OOP, Palus tool
+- https://onlinelibrary.wiley.com/doi/abs/10.1002/smr.2158 - branch coverage prediction for generated tests
+- https://ieeexplore.ieee.org/abstract/document/1610607 - generation based on use cases
+- https://www.ijcai.org/proceedings/2023/0542.pdf - DL based generation
+- https://dl.acm.org/doi/abs/10.1145/3597926.3604919 - randomized generation
+- https://arxiv.org/abs/2102.04664 - dataset 

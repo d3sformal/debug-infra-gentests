@@ -1,0 +1,294 @@
+import ch.usi.dag.dislreserver.remoteanalysis.RemoteAnalysis;
+import ch.usi.dag.dislreserver.shadow.ShadowObject;
+import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
+import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaValueIdentifier;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerationContext;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerationContextFactory;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.java.trace.NaiveTraceBasedGenerator;
+import java.nio.file.Path;
+import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
+import java.util.HashMap;
+import java.util.Map;
+
+public class Collector extends RemoteAnalysis {
+  static {
+    System.out.println("*** COLLECTOR CLASS LOADED ***");
+  }
+
+  private final String messageFormat = "[%s]: %s";
+  private final String processName = "Receiving process";
+  private final String identifierMappingFilePath = "${PATH}";
+  private final String resultsListPath = "${RESULTS}";
+  private final String traceMode = "${TRACE_MODE}";
+  private final String targetPackage = "${TARGET_PACKAGE}";
+  private final String targetClass = "${TARGET_CLASS}";
+  private final String targetMethod = "${TARGET_METHOD}";
+  private final String targetReturn = "${TARGET_RETURN}";
+
+  private Map<Integer, JavaValueIdentifier> identifierMapping;
+  private Trace trace;
+  private Map<Integer, Object> collectedValues = new HashMap<>(); // Fallback storage for last values
+  private java.util.List<Map<Integer, Object>> allInvocations = new java.util.ArrayList<>(); // All method invocations
+  private Map<Integer, Object> currentInvocation = new HashMap<>(); // Current method invocation being collected
+  private int currentEventIndex = 0;
+
+  public Collector() {
+    System.out.println("*** COLLECTOR CONSTRUCTOR CALLED ***");
+    try {
+      System.out.println("*** COLLECTOR: identifierMappingFilePath = " + identifierMappingFilePath + " ***");
+      System.out.println("*** COLLECTOR: resultsListPath = " + resultsListPath + " ***");
+
+      System.out.println("*** COLLECTOR: About to initialize simple data structures ***");
+
+      // Initialize simple data structures first (don't initialize Trace here)
+      this.collectedValues = new HashMap<>();
+      this.allInvocations = new java.util.ArrayList<>();
+      this.currentInvocation = new HashMap<>();
+      this.trace = null; // Will be created lazily in atExit
+      this.identifierMapping = null; // Will be loaded lazily in atExit
+
+      System.out.println("*** COLLECTOR: Simple initialization completed ***");
+
+      System.out.println("*** COLLECTOR: Constructor completed successfully ***");
+    } catch (Exception e) {
+      System.err.println("*** COLLECTOR: Constructor failed: " + e.getMessage() + " ***");
+      e.printStackTrace();
+      // Initialize with defaults to prevent further failures
+      this.identifierMapping = new HashMap<>();
+    }
+  }
+
+  private void printPid() {
+    System.out.println(String.format(messageFormat, processName, String.format("PID: %s", (long) ProcessHandle.current().pid())));
+  }
+
+  public void startEvent() {
+    if ("temporal".equalsIgnoreCase(traceMode)) {
+      currentEventIndex++;
+    }
+  }
+
+  private Map<Integer, JavaValueIdentifier> loadIdentifierMapping(String path) {
+    System.out.println("*** COLLECTOR: loadIdentifierMapping called with path = " + path + " ***");
+    try {
+      try (java.io.FileInputStream fileReader = new java.io.FileInputStream(java.nio.file.Path.of(path).toFile());
+           java.io.ObjectInputStream objectStream = new java.io.ObjectInputStream(fileReader)) {
+        @SuppressWarnings("unchecked")
+        Map<Integer, JavaValueIdentifier> loaded = (HashMap<Integer, JavaValueIdentifier>) objectStream.readObject();
+        System.out.println("*** COLLECTOR: Loaded identifier mapping with " + loaded.size() + " entries ***");
+        return loaded;
+      }
+    } catch (Exception e) {
+      System.err.println("*** COLLECTOR: Failed to load identifier mapping: " + e.getMessage() + " ***");
+      return new HashMap<>();
+    }
+  }
+
+
+
+
+  public void collectInt(final int slot, final int i) {
+    printPid();
+    System.out.println("*** COLLECTOR: collectInt called with slot=" + slot + ", value=" + i + " ***");
+    System.out.println(String.format(messageFormat, processName, String.format("Collecting int: %s", i)));
+
+    // Always store in fallback storage (last values)
+    collectedValues.put(slot, i);
+
+    // Store in current invocation
+    currentInvocation.put(slot, i);
+
+    // Check if we have collected all parameters for this invocation
+    // For naive mode, we expect to collect all parameters before completing the invocation
+    if (isInvocationComplete()) {
+      // Save the current invocation
+      Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
+      allInvocations.add(completedInvocation);
+      System.out.println("*** COLLECTOR: Completed invocation " + allInvocations.size() + " with " + completedInvocation.size() + " parameters ***");
+
+      // Reset for next invocation
+      currentInvocation.clear();
+    }
+
+    // Also store in Trace if available
+    if (trace != null) {
+      trace.addIntValue(slot, i);
+    }
+
+    currentEventIndex++;
+  }
+
+  private boolean isInvocationComplete() {
+    // For naive mode, we expect to collect all target parameters
+    // We know we have 2 parameters (slots 1 and 2) for the add method
+    return currentInvocation.size() >= 2;
+  }
+
+
+  public void collectByte(final int slot, final byte b) {
+    printPid();
+    System.out.println("*** COLLECTOR: collectByte called with slot=" + slot + ", value=" + b + " ***");
+    System.out.println(String.format(messageFormat, processName, String.format("Collecting byte: %s", b)));
+    collectedValues.put(slot, b);
+    currentEventIndex++;
+  }
+
+  public void collectChar(final int slot, final char c) {
+    printPid();
+    System.out.println("*** COLLECTOR: collectChar called with slot=" + slot + ", value=" + c + " ***");
+    System.out.println(String.format(messageFormat, processName, String.format("Collecting char: %s", c)));
+    collectedValues.put(slot, c);
+    currentEventIndex++;
+  }
+
+  public void collectShort(final int slot, final short s) {
+    printPid();
+    System.out.println("*** COLLECTOR: collectShort called with slot=" + slot + ", value=" + s + " ***");
+    System.out.println(String.format(messageFormat, processName, String.format("Collecting short: %s", s)));
+    collectedValues.put(slot, s);
+    currentEventIndex++;
+  }
+
+  public void collectLong(final int slot, final long l) {
+    printPid();
+    System.out.println("*** COLLECTOR: collectLong called with slot=" + slot + ", value=" + l + " ***");
+    System.out.println(String.format(messageFormat, processName, String.format("Collecting long: %s", l)));
+    collectedValues.put(slot, l);
+    currentEventIndex++;
+  }
+
+  public void collectFloat(final int slot, final float f) {
+    printPid();
+    System.out.println("*** COLLECTOR: collectFloat called with slot=" + slot + ", value=" + f + " ***");
+    System.out.println(String.format(messageFormat, processName, String.format("Collecting float: %s", f)));
+    collectedValues.put(slot, f);
+    currentEventIndex++;
+  }
+
+  public void collectBoolean(final int slot, final boolean z) {
+    printPid();
+    System.out.println("*** COLLECTOR: collectBoolean called with slot=" + slot + ", value=" + z + " ***");
+    System.out.println(String.format(messageFormat, processName, String.format("Collecting boolean: %s", z)));
+    collectedValues.put(slot, z);
+    currentEventIndex++;
+  }
+
+  public void collectString(final int slot, final Object s) {
+    printPid();
+    System.out.println("*** COLLECTOR: collectString called with slot=" + slot + ", value=" + s + " ***");
+    System.out.println(String.format(messageFormat, processName, String.format("Collecting string: %s", s)));
+    collectedValues.put(slot, s);
+    currentEventIndex++;
+  }
+
+  public void collectDouble(final int slot, final double d) {
+    printPid();
+    System.out.println("*** COLLECTOR: collectDouble called with slot=" + slot + ", value=" + d + " ***");
+    System.out.println(String.format(messageFormat, processName, String.format("Collecting double: %s", d)));
+    collectedValues.put(slot, d);
+    currentEventIndex++;
+  }
+
+  public void collectObject(final int slot, final ShadowObject obj) {
+    printPid();
+    System.out.println("*** COLLECTOR: collectObject called with slot=" + slot + ", value=" + obj + " ***");
+    System.out.println(String.format(messageFormat, processName, String.format("Collecting object: %s", obj)));
+    collectedValues.put(slot, obj);
+    currentEventIndex++;
+  }
+
+  @Override
+  public void atExit() {
+    System.out.println("*** COLLECTOR: atExit called ***");
+    System.out.println(String.format(messageFormat, processName, "Exiting analysis..."));
+    System.out.println(String.format(messageFormat, processName, "Collected " + allInvocations.size() + " invocations"));
+
+    // Print all invocations
+    for (int i = 0; i < allInvocations.size(); i++) {
+      Map<Integer, Object> invocation = allInvocations.get(i);
+      System.out.println(String.format(messageFormat, processName, "Invocation " + (i + 1) + ":"));
+      for (Map.Entry<Integer, Object> entry : invocation.entrySet()) {
+        System.out.println(String.format(messageFormat, processName, "  Slot " + entry.getKey() + ": " + entry.getValue()));
+      }
+    }
+
+    // Write all invocations to a file for processing by the main process
+    try {
+      System.out.println(String.format(messageFormat, processName, "Writing all invocations to file for main process"));
+
+      if (!allInvocations.isEmpty()) {
+        // Create output directory
+        Path outputDir = Path.of(resultsListPath).getParent();
+        Files.createDirectories(outputDir);
+
+        // Write all invocations to a serialized file
+        Path collectedValuesFile = outputDir.resolve("collected-values.ser");
+        try (java.io.FileOutputStream fileOut = new java.io.FileOutputStream(collectedValuesFile.toFile());
+             java.io.ObjectOutputStream objectOut = new java.io.ObjectOutputStream(fileOut)) {
+          objectOut.writeObject(allInvocations);
+          System.out.println(String.format(messageFormat, processName, "Wrote " + allInvocations.size() + " invocations to: " + collectedValuesFile.toAbsolutePath()));
+        }
+
+        // Write a marker file to indicate that DiSL analysis is complete
+        Path markerFile = outputDir.resolve("disl-analysis-complete.marker");
+        Files.writeString(markerFile, "DiSL analysis completed at " + java.time.Instant.now() + "\n");
+        Files.writeString(markerFile, "Collected values file: " + collectedValuesFile.toAbsolutePath() + "\n", StandardOpenOption.APPEND);
+        Files.writeString(markerFile, "Identifier mapping file: " + identifierMappingFilePath + "\n", StandardOpenOption.APPEND);
+        Files.writeString(markerFile, "Target package: " + targetPackage + "\n", StandardOpenOption.APPEND);
+        Files.writeString(markerFile, "Target class: " + targetClass + "\n", StandardOpenOption.APPEND);
+        Files.writeString(markerFile, "Target method: " + targetMethod + "\n", StandardOpenOption.APPEND);
+        Files.writeString(markerFile, "Target return: " + targetReturn + "\n", StandardOpenOption.APPEND);
+
+        System.out.println(String.format(messageFormat, processName, "Created marker file: " + markerFile.toAbsolutePath()));
+        System.out.println(String.format(messageFormat, processName, "DiSL analysis complete - main process will handle test generation"));
+      } else {
+        System.out.println(String.format(messageFormat, processName, "No values collected"));
+      }
+    } catch (Exception e) {
+      System.err.println(String.format(messageFormat, processName, "Error during test generation: " + e.getMessage()));
+      e.printStackTrace();
+    }
+  }
+
+  private TestGenerationContext buildContext() {
+    var outDir = Path.of(resultsListPath).getParent();
+    return TestGenerationContextFactory.createFromStrings(
+      targetPackage, targetClass, targetMethod, targetReturn, outDir);
+  }
+
+  private String generateSimpleTestContent() {
+    StringBuilder sb = new StringBuilder();
+    sb.append("package ").append(targetPackage).append(";\n\n");
+    sb.append("import org.junit.jupiter.api.Test;\n\n");
+    sb.append("public class ").append(targetClass).append("Test {\n\n");
+    sb.append("    @Test\n");
+    sb.append("    void test").append(targetMethod).append("() {\n");
+    sb.append("        // Generated test based on collected values\n");
+    sb.append("        var target = new ").append(targetClass).append("();\n");
+
+    // Add method call with collected values
+    if (!collectedValues.isEmpty()) {
+      sb.append("        target.").append(targetMethod).append("(");
+      boolean first = true;
+      for (Map.Entry<Integer, Object> entry : collectedValues.entrySet()) {
+        if (!first) sb.append(", ");
+        sb.append(entry.getValue());
+        first = false;
+      }
+      sb.append(");\n");
+    }
+
+    sb.append("    }\n");
+    sb.append("}\n");
+    return sb.toString();
+  }
+
+  @Override
+  public void objectFree(ch.usi.dag.dislreserver.shadow.ShadowObject obj) {
+    // Required implementation for RemoteAnalysis abstract method
+    // This method is called when objects are freed by the garbage collector
+    // For our use case, we don't need to do anything special here
+  }
+}
+
