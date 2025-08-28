@@ -1,0 +1,57 @@
+diff --git a/clang/include/clang/AST/Decl.h b/clang/include/clang/AST/Decl.h
+index 9e7e93d98c9..91fd7298e8b 100644
+--- a/clang/include/clang/AST/Decl.h
++++ b/clang/include/clang/AST/Decl.h
+@@ -2097,6 +2097,9 @@ private:
+   /// State that an ODRHash has been stored.
+   void setHasODRHash(bool B = true) { FunctionDeclBits.HasODRHash = B; }
+ 
++  /// String key-value pairs that will be inserted as LLVM metadata
++  mutable std::map<StringRef, StringRef> IrMetadata;
++
+ protected:
+   FunctionDecl(Kind DK, ASTContext &C, DeclContext *DC, SourceLocation StartLoc,
+                const DeclarationNameInfo &NameInfo, QualType T,
+@@ -2161,6 +2164,23 @@ public:
+ 
+   void getNameForDiagnostic(raw_ostream &OS, const PrintingPolicy &Policy,
+                             bool Qualified) const override;
++  
++  /// Sets a key-value pair to be stored in this function's LLVM IR metadata
++  ///
++  /// Returns true if key already existed (and was rewritten)
++  bool setIrMetadata(StringRef Key, StringRef Value) const {
++    auto KeyExisted = IrMetadata.find(Key) != IrMetadata.end();
++    IrMetadata[Key] = Value;
++    return KeyExisted;
++  }
++  
++  std::optional<StringRef> getIrMetadata(StringRef Key) const { 
++    if(auto f = IrMetadata.find(Key); f != IrMetadata.end()) 
++      return f->second; 
++    return std::nullopt; 
++  }
++
++  const std::map<StringRef, StringRef> fetchIrMetadata() const { return IrMetadata; }
+ 
+   void setRangeEnd(SourceLocation E) { EndRangeLoc = E; }
+ 
+diff --git a/clang/lib/CodeGen/CodeGenFunction.cpp b/clang/lib/CodeGen/CodeGenFunction.cpp
+index b55003b9b0b..289f253d972 100644
+--- a/clang/lib/CodeGen/CodeGenFunction.cpp
++++ b/clang/lib/CodeGen/CodeGenFunction.cpp
+@@ -1123,6 +1123,14 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
+         getLLVMContext(), VScaleRange->first, VScaleRange->second));
+   }
+ 
++  if (FD && (getLangOpts().CPlusPlus || getLangOpts().C11 || getLangOpts().C17 || getLangOpts().C23 || getLangOpts().C2y || getLangOpts().C99)) {
++    auto meta = FD->fetchIrMetadata();
++    for (auto&&[Key, Value] : meta ) {
++      Fn->addMetadata(Key, *llvm::MDNode::get(Fn->getContext(),
++      llvm::MDString::get(Fn->getContext(), Value)));
++    }
++  }
++
+   llvm::BasicBlock *EntryBB = createBasicBlock("entry", CurFn);
+ 
+   // Create a marker to make it easy to insert allocas into the entryblock

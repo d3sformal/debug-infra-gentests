@@ -1,0 +1,410 @@
+diff --git a/clang/include/clang/AST/Decl.h b/clang/include/clang/AST/Decl.h
+index 3faf63e395a..cd65c6a5669 100644
+--- a/clang/include/clang/AST/Decl.h
++++ b/clang/include/clang/AST/Decl.h
+@@ -2098,6 +2098,9 @@ private:
+   /// State that an ODRHash has been stored.
+   void setHasODRHash(bool B = true) { FunctionDeclBits.HasODRHash = B; }
+ 
++  /// String key-value pairs that will be inserted as LLVM metadata
++  mutable std::map<StringRef, StringRef> IrMetadata;
++
+ protected:
+   FunctionDecl(Kind DK, ASTContext &C, DeclContext *DC, SourceLocation StartLoc,
+                const DeclarationNameInfo &NameInfo, QualType T,
+@@ -2162,6 +2165,23 @@ public:
+ 
+   void getNameForDiagnostic(raw_ostream &OS, const PrintingPolicy &Policy,
+                             bool Qualified) const override;
++  
++  /// Sets a key-value pair to be stored in this function's LLVM IR metadata
++  ///
++  /// Returns true if key already existed (and was rewritten)
++  bool setIrMetadata(StringRef Key, StringRef Value) const {
++    auto KeyExisted = IrMetadata.find(Key) != IrMetadata.end();
++    IrMetadata[Key] = Value;
++    return KeyExisted;
++  }
++  
++  std::optional<StringRef> getIrMetadata(StringRef Key) const { 
++    if(auto f = IrMetadata.find(Key); f != IrMetadata.end()) 
++      return f->second; 
++    return std::nullopt; 
++  }
++
++  const std::map<StringRef, StringRef> fetchIrMetadata() const { return IrMetadata; }
+ 
+   void setRangeEnd(SourceLocation E) { EndRangeLoc = E; }
+ 
+diff --git a/clang/lib/CodeGen/CodeGenFunction.cpp b/clang/lib/CodeGen/CodeGenFunction.cpp
+index 4d29ceace64..275c7431045 100644
+--- a/clang/lib/CodeGen/CodeGenFunction.cpp
++++ b/clang/lib/CodeGen/CodeGenFunction.cpp
+@@ -11,6 +11,8 @@
+ //===----------------------------------------------------------------------===//
+ 
+ #include "CodeGenFunction.h"
++#include "ABIInfo.h"
++#include "Address.h"
+ #include "CGBlocks.h"
+ #include "CGCUDARuntime.h"
+ #include "CGCXXABI.h"
+@@ -36,6 +38,7 @@
+ #include "clang/CodeGen/CGFunctionInfo.h"
+ #include "clang/Frontend/FrontendDiagnostic.h"
+ #include "llvm/ADT/ArrayRef.h"
++#include "llvm/ADT/StringRef.h"
+ #include "llvm/Frontend/OpenMP/OMPIRBuilder.h"
+ #include "llvm/IR/DataLayout.h"
+ #include "llvm/IR/Dominators.h"
+@@ -45,14 +48,294 @@
+ #include "llvm/IR/Intrinsics.h"
+ #include "llvm/IR/MDBuilder.h"
+ #include "llvm/Support/CRC.h"
++#include "llvm/Support/Casting.h"
+ #include "llvm/Support/xxhash.h"
+ #include "llvm/Transforms/Scalar/LowerExpectIntrinsic.h"
+ #include "llvm/Transforms/Utils/PromoteMemToReg.h"
+ #include <optional>
++#include <string>
+ 
+ using namespace clang;
+ using namespace CodeGen;
+ 
++namespace {
++  // Copied from: llvm-project/clang/lib/CodeGen/CGCall.cpp
++
++  // ABIArgInfo::Expand implementation.
++  
++  // Specifies the way QualType passed as ABIArgInfo::Expand is expanded.
++  struct TypeExpansion {
++    enum TypeExpansionKind {
++      // Elements of constant arrays are expanded recursively.
++      TEK_ConstantArray,
++      // Record fields are expanded recursively (but if record is a union, only
++      // the field with the largest size is expanded).
++      TEK_Record,
++      // For complex types, real and imaginary parts are expanded recursively.
++      TEK_Complex,
++      // All other types are not expandable.
++      TEK_None
++    };
++  
++    const TypeExpansionKind Kind;
++  
++    TypeExpansion(TypeExpansionKind K) : Kind(K) {}
++    virtual ~TypeExpansion() {}
++  };
++  
++  struct ConstantArrayExpansion : TypeExpansion {
++    QualType EltTy;
++    uint64_t NumElts;
++  
++    ConstantArrayExpansion(QualType EltTy, uint64_t NumElts)
++        : TypeExpansion(TEK_ConstantArray), EltTy(EltTy), NumElts(NumElts) {}
++    static bool classof(const TypeExpansion *TE) {
++      return TE->Kind == TEK_ConstantArray;
++    }
++  };
++  
++  struct RecordExpansion : TypeExpansion {
++    SmallVector<const CXXBaseSpecifier *, 1> Bases;
++  
++    SmallVector<const FieldDecl *, 1> Fields;
++  
++    RecordExpansion(SmallVector<const CXXBaseSpecifier *, 1> &&Bases,
++                    SmallVector<const FieldDecl *, 1> &&Fields)
++        : TypeExpansion(TEK_Record), Bases(std::move(Bases)),
++          Fields(std::move(Fields)) {}
++    static bool classof(const TypeExpansion *TE) {
++      return TE->Kind == TEK_Record;
++    }
++  };
++  
++  struct ComplexExpansion : TypeExpansion {
++    QualType EltTy;
++  
++    ComplexExpansion(QualType EltTy) : TypeExpansion(TEK_Complex), EltTy(EltTy) {}
++    static bool classof(const TypeExpansion *TE) {
++      return TE->Kind == TEK_Complex;
++    }
++  };
++  
++  struct NoExpansion : TypeExpansion {
++    NoExpansion() : TypeExpansion(TEK_None) {}
++    static bool classof(const TypeExpansion *TE) { return TE->Kind == TEK_None; }
++  };
++  
++  static std::unique_ptr<TypeExpansion>
++  getTypeExpansion(QualType Ty, const ASTContext &Context) {
++    if (const ConstantArrayType *AT = Context.getAsConstantArrayType(Ty)) {
++      return std::make_unique<ConstantArrayExpansion>(AT->getElementType(),
++                                                      AT->getZExtSize());
++    }
++    if (const RecordType *RT = Ty->getAs<RecordType>()) {
++      SmallVector<const CXXBaseSpecifier *, 1> Bases;
++      SmallVector<const FieldDecl *, 1> Fields;
++      const RecordDecl *RD = RT->getDecl();
++      assert(!RD->hasFlexibleArrayMember() &&
++             "Cannot expand structure with flexible array.");
++      if (RD->isUnion()) {
++        // Unions can be here only in degenerative cases - all the fields are same
++        // after flattening. Thus we have to use the "largest" field.
++        const FieldDecl *LargestFD = nullptr;
++        CharUnits UnionSize = CharUnits::Zero();
++  
++        for (const auto *FD : RD->fields()) {
++          if (FD->isZeroLengthBitField())
++            continue;
++          assert(!FD->isBitField() &&
++                 "Cannot expand structure with bit-field members.");
++          CharUnits FieldSize = Context.getTypeSizeInChars(FD->getType());
++          if (UnionSize < FieldSize) {
++            UnionSize = FieldSize;
++            LargestFD = FD;
++          }
++        }
++        if (LargestFD)
++          Fields.push_back(LargestFD);
++      } else {
++        if (const auto *CXXRD = dyn_cast<CXXRecordDecl>(RD)) {
++          assert(!CXXRD->isDynamicClass() &&
++                 "cannot expand vtable pointers in dynamic classes");
++          llvm::append_range(Bases, llvm::make_pointer_range(CXXRD->bases()));
++        }
++  
++        for (const auto *FD : RD->fields()) {
++          if (FD->isZeroLengthBitField())
++            continue;
++          assert(!FD->isBitField() &&
++                 "Cannot expand structure with bit-field members.");
++          Fields.push_back(FD);
++        }
++      }
++      return std::make_unique<RecordExpansion>(std::move(Bases),
++                                               std::move(Fields));
++    }
++    if (const ComplexType *CT = Ty->getAs<ComplexType>()) {
++      return std::make_unique<ComplexExpansion>(CT->getElementType());
++    }
++    return std::make_unique<NoExpansion>();
++  }
++  
++  static int getExpansionSize(QualType Ty, const ASTContext &Context) {
++    auto Exp = getTypeExpansion(Ty, Context);
++    if (auto *CAExp = dyn_cast<ConstantArrayExpansion>(Exp.get())) {
++      return CAExp->NumElts * getExpansionSize(CAExp->EltTy, Context);
++    }
++    if (auto *RExp = dyn_cast<RecordExpansion>(Exp.get())) {
++      int Res = 0;
++      for (auto *BS : RExp->Bases)
++        Res += getExpansionSize(BS->getType(), Context);
++      for (auto *FD : RExp->Fields)
++        Res += getExpansionSize(FD->getType(), Context);
++      return Res;
++    }
++    if (isa<ComplexExpansion>(Exp.get()))
++      return 2;
++    assert(isa<NoExpansion>(Exp.get()));
++    return 1;
++  }
++  
++  /// Encapsulates information about the way function arguments from
++  /// CGFunctionInfo should be passed to actual LLVM IR function.
++  class ClangToLLVMArgMapping {
++    unsigned InallocaArgNo;
++    unsigned SRetArgNo;
++    unsigned TotalIRArgs;
++    
++    /// Arguments of LLVM IR function corresponding to single Clang argument.
++    struct IRArgs {
++      unsigned PaddingArgIndex;
++      // Argument is expanded to IR arguments at positions
++      // [FirstArgIndex, FirstArgIndex + NumberOfArgs).
++      unsigned FirstArgIndex;
++      unsigned NumberOfArgs;
++      
++      IRArgs()
++      : PaddingArgIndex(InvalidIndex), FirstArgIndex(InvalidIndex),
++      NumberOfArgs(0) {}
++    };
++    
++    SmallVector<IRArgs, 8> ArgInfo;
++    
++  public:
++    static const unsigned InvalidIndex = ~0U;
++    ClangToLLVMArgMapping(const ASTContext &Context, const CGFunctionInfo &FI,
++                          bool OnlyRequiredArgs = false)
++        : InallocaArgNo(InvalidIndex), SRetArgNo(InvalidIndex), TotalIRArgs(0),
++          ArgInfo(OnlyRequiredArgs ? FI.getNumRequiredArgs() : FI.arg_size()) {
++      construct(Context, FI, OnlyRequiredArgs);
++    }
++  
++    bool hasInallocaArg() const { return InallocaArgNo != InvalidIndex; }
++    unsigned getInallocaArgNo() const {
++      assert(hasInallocaArg());
++      return InallocaArgNo;
++    }
++  
++    bool hasSRetArg() const { return SRetArgNo != InvalidIndex; }
++    unsigned getSRetArgNo() const {
++      assert(hasSRetArg());
++      return SRetArgNo;
++    }
++  
++    unsigned totalIRArgs() const { return TotalIRArgs; }
++  
++    bool hasPaddingArg(unsigned ArgNo) const {
++      assert(ArgNo < ArgInfo.size());
++      return ArgInfo[ArgNo].PaddingArgIndex != InvalidIndex;
++    }
++    unsigned getPaddingArgNo(unsigned ArgNo) const {
++      assert(hasPaddingArg(ArgNo));
++      return ArgInfo[ArgNo].PaddingArgIndex;
++    }
++  
++    /// Returns index of first IR argument corresponding to ArgNo, and their
++    /// quantity.
++    std::pair<unsigned, unsigned> getIRArgs(unsigned ArgNo) const {
++      assert(ArgNo < ArgInfo.size());
++      return std::make_pair(ArgInfo[ArgNo].FirstArgIndex,
++                            ArgInfo[ArgNo].NumberOfArgs);
++    }
++  
++  private:
++    void construct(const ASTContext &Context, const CGFunctionInfo &FI,
++                   bool OnlyRequiredArgs);
++  };
++  
++  void ClangToLLVMArgMapping::construct(const ASTContext &Context,
++                                        const CGFunctionInfo &FI,
++                                        bool OnlyRequiredArgs) {
++    unsigned IRArgNo = 0;
++    bool SwapThisWithSRet = false;
++    const ABIArgInfo &RetAI = FI.getReturnInfo();
++  
++    if (RetAI.getKind() == ABIArgInfo::Indirect) {
++      SwapThisWithSRet = RetAI.isSRetAfterThis();
++      SRetArgNo = SwapThisWithSRet ? 1 : IRArgNo++;
++    }
++  
++    unsigned ArgNo = 0;
++    unsigned NumArgs = OnlyRequiredArgs ? FI.getNumRequiredArgs() : FI.arg_size();
++    for (CGFunctionInfo::const_arg_iterator I = FI.arg_begin(); ArgNo < NumArgs;
++         ++I, ++ArgNo) {
++      assert(I != FI.arg_end());
++      QualType ArgType = I->type;
++      const ABIArgInfo &AI = I->info;
++      // Collect data about IR arguments corresponding to Clang argument ArgNo.
++      auto &IRArgs = ArgInfo[ArgNo];
++  
++      if (AI.getPaddingType())
++        IRArgs.PaddingArgIndex = IRArgNo++;
++  
++      switch (AI.getKind()) {
++      case ABIArgInfo::Extend:
++      case ABIArgInfo::Direct: {
++        // FIXME: handle sseregparm someday...
++        llvm::StructType *STy = dyn_cast<llvm::StructType>(AI.getCoerceToType());
++        if (AI.isDirect() && AI.getCanBeFlattened() && STy) {
++          IRArgs.NumberOfArgs = STy->getNumElements();
++        } else {
++          IRArgs.NumberOfArgs = 1;
++        }
++        break;
++      }
++      case ABIArgInfo::Indirect:
++      case ABIArgInfo::IndirectAliased:
++        IRArgs.NumberOfArgs = 1;
++        break;
++      case ABIArgInfo::Ignore:
++      case ABIArgInfo::InAlloca:
++        // ignore and inalloca doesn't have matching LLVM parameters.
++        IRArgs.NumberOfArgs = 0;
++        break;
++      case ABIArgInfo::CoerceAndExpand:
++        IRArgs.NumberOfArgs = AI.getCoerceAndExpandTypeSequence().size();
++        break;
++      case ABIArgInfo::Expand:
++        IRArgs.NumberOfArgs = getExpansionSize(ArgType, Context);
++        break;
++      }
++  
++      if (IRArgs.NumberOfArgs > 0) {
++        IRArgs.FirstArgIndex = IRArgNo;
++        IRArgNo += IRArgs.NumberOfArgs;
++      }
++  
++      // Skip over the sret parameter when it comes second.  We already handled it
++      // above.
++      if (IRArgNo == 1 && SwapThisWithSRet)
++        IRArgNo++;
++    }
++    assert(ArgNo == ArgInfo.size());
++  
++    if (FI.usesInAlloca())
++      InallocaArgNo = IRArgNo++;
++  
++    TotalIRArgs = IRArgNo;
++  }
++} // namespace
++
+ namespace llvm {
+ extern cl::opt<bool> EnableSingleByteCoverage;
+ } // namespace llvm
+@@ -1123,6 +1406,55 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
+         getLLVMContext(), VScaleRange->first, VScaleRange->second));
+   }
+ 
++  if (FD && (getLangOpts().CPlusPlus || getLangOpts().C11 || getLangOpts().C17 || getLangOpts().C23 || getLangOpts().C2y || getLangOpts().C99)) {
++    auto Metadata = FD->fetchIrMetadata();
++    for (auto&&[Key, Value] : Metadata ) {
++      Fn->addMetadata(Key, *llvm::MDNode::get(Fn->getContext(),
++      llvm::MDString::get(Fn->getContext(), Value)));
++    }
++    
++    // constructing a type info map:
++    ClangToLLVMArgMapping mapping(FD->getASTContext(), FnInfo);
++    constexpr char PRIM_SEP = ' ';
++    constexpr char GROUP_SEP = '#';
++    constexpr char IDX_SZ_SEP = '-';
++    
++    std::string AttrmapResult = std::to_string(mapping.totalIRArgs()) + PRIM_SEP + std::to_string(FnInfo.arg_size()) + PRIM_SEP;
++    // this may expose invalid entries but bettter to have all the information
++    size_t ArgMapIters = std::max((size_t)FnInfo.arg_size(), FD->param_size()); 
++    for (size_t i = 0; i < ArgMapIters; ++i) {
++      auto irArgs = mapping.getIRArgs(i);
++      
++      AttrmapResult += (std::to_string(irArgs.first) + IDX_SZ_SEP + std::to_string(irArgs.second));
++      if (i < ArgMapIters - 1) {
++        AttrmapResult += GROUP_SEP;
++      }
++
++      // e.g. "3 2 1-1#2-1"
++      // 3 LLVM IR args, 2 "real args", mapped to index 1 and 2 and of sizes 1 and 1
++      // or "2 2 0-1#1-1" 2 and 2 args
++      // the map includes this pointer!
++      // this ptr index is accounted for in the AST pass (+1 to all argument indicies if function is an instance member)
++    }
++
++    Fn->addMetadata("LLCAP-CLANG-LLVM-MAP-DATA", *llvm::MDNode::get(Fn->getContext(),
++    llvm::MDString::get(Fn->getContext(), AttrmapResult)));
++    
++    // PRSGD: "PaRSe GuiDe"
++    auto* Node = Fn->getParent()->getOrInsertNamedMetadata("LLCAP-CLANG-LLVM-MAP-PRSGD");
++    if (Node->getOperand(0) == nullptr) {
++      Node->addOperand(llvm::MDNode::get(Fn->getParent()->getContext(),
++      llvm::MDString::get(Fn->getParent()->getContext(), std::string() + PRIM_SEP + GROUP_SEP + IDX_SZ_SEP)));
++    }
++    
++    Node = Fn->getParent()->getOrInsertNamedMetadata("LLCAP-CLANG-LLVM-MAP-INVLD_IDX");
++    if (Node->getOperand(0) == nullptr) {
++      Node->addOperand(llvm::MDNode::get(Fn->getParent()->getContext(),
++      llvm::MDString::get(Fn->getParent()->getContext(), std::to_string(ClangToLLVMArgMapping::InvalidIndex))));
++    }
++
++  }
++
+   llvm::BasicBlock *EntryBB = createBasicBlock("entry", CurFn);
+ 
+   // Create a marker to make it easy to insert allocas into the entryblock

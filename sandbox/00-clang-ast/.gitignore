@@ -1,0 +1,9 @@
+build/
+.cache/
+test.cpp
+a.out
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.a
+Makefile

@@ -1,0 +1,9 @@
+module-maps/*
+*.out
+cmake_install*
+CMakeC*
+/CMakeFiles
+*.so
+*.a
+Makefile
+arg-replacement

@@ -1,0 +1,98 @@
+diff --git a/clang/include/clang/AST/Decl.h b/clang/include/clang/AST/Decl.h
+index 3faf63e395a..cd65c6a5669 100644
+--- a/clang/include/clang/AST/Decl.h
++++ b/clang/include/clang/AST/Decl.h
+@@ -2098,6 +2098,9 @@ private:
+   /// State that an ODRHash has been stored.
+   void setHasODRHash(bool B = true) { FunctionDeclBits.HasODRHash = B; }
+ 
++  /// String key-value pairs that will be inserted as LLVM metadata
++  mutable std::map<StringRef, StringRef> IrMetadata;
++
+ protected:
+   FunctionDecl(Kind DK, ASTContext &C, DeclContext *DC, SourceLocation StartLoc,
+                const DeclarationNameInfo &NameInfo, QualType T,
+@@ -2162,6 +2165,23 @@ public:
+ 
+   void getNameForDiagnostic(raw_ostream &OS, const PrintingPolicy &Policy,
+                             bool Qualified) const override;
++  
++  /// Sets a key-value pair to be stored in this function's LLVM IR metadata
++  ///
++  /// Returns true if key already existed (and was rewritten)
++  bool setIrMetadata(StringRef Key, StringRef Value) const {
++    auto KeyExisted = IrMetadata.find(Key) != IrMetadata.end();
++    IrMetadata[Key] = Value;
++    return KeyExisted;
++  }
++  
++  std::optional<StringRef> getIrMetadata(StringRef Key) const { 
++    if(auto f = IrMetadata.find(Key); f != IrMetadata.end()) 
++      return f->second; 
++    return std::nullopt; 
++  }
++
++  const std::map<StringRef, StringRef> fetchIrMetadata() const { return IrMetadata; }
+ 
+   void setRangeEnd(SourceLocation E) { EndRangeLoc = E; }
+ 
+diff --git a/clang/lib/CodeGen/CodeGenFunction.cpp b/clang/lib/CodeGen/CodeGenFunction.cpp
+index 4d29ceace64..9aa969b6ae4 100644
+--- a/clang/lib/CodeGen/CodeGenFunction.cpp
++++ b/clang/lib/CodeGen/CodeGenFunction.cpp
+@@ -11,6 +11,7 @@
+ //===----------------------------------------------------------------------===//
+ 
+ #include "CodeGenFunction.h"
++#include "Address.h"
+ #include "CGBlocks.h"
+ #include "CGCUDARuntime.h"
+ #include "CGCXXABI.h"
+@@ -36,6 +37,7 @@
+ #include "clang/CodeGen/CGFunctionInfo.h"
+ #include "clang/Frontend/FrontendDiagnostic.h"
+ #include "llvm/ADT/ArrayRef.h"
++#include "llvm/ADT/StringRef.h"
+ #include "llvm/Frontend/OpenMP/OMPIRBuilder.h"
+ #include "llvm/IR/DataLayout.h"
+ #include "llvm/IR/Dominators.h"
+@@ -45,6 +47,7 @@
+ #include "llvm/IR/Intrinsics.h"
+ #include "llvm/IR/MDBuilder.h"
+ #include "llvm/Support/CRC.h"
++#include "llvm/Support/Casting.h"
+ #include "llvm/Support/xxhash.h"
+ #include "llvm/Transforms/Scalar/LowerExpectIntrinsic.h"
+ #include "llvm/Transforms/Utils/PromoteMemToReg.h"
+@@ -1123,6 +1126,31 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
+         getLLVMContext(), VScaleRange->first, VScaleRange->second));
+   }
+ 
++  if (FD && (getLangOpts().CPlusPlus || getLangOpts().C11 || getLangOpts().C17 || getLangOpts().C23 || getLangOpts().C2y || getLangOpts().C99)) {
++    auto Metadata = FD->fetchIrMetadata();
++    for (auto&&[Key, Value] : Metadata ) {
++      Fn->addMetadata(Key, *llvm::MDNode::get(Fn->getContext(),
++      llvm::MDString::get(Fn->getContext(), Value)));
++    }
++
++    llvm::AttrBuilder Builder(Fn->getContext());
++    StringRef AttrName = "VSTR-param-attr-unsigned";
++    Builder.addAttribute(AttrName, "true");
++    auto UnsignedAttr = Builder.getAttribute(AttrName);
++
++    for (size_t ArgIdx  = 0; ArgIdx < Args.size(); ++ArgIdx) {
++      auto* Arg = Args[ArgIdx];
++      
++      if (llvm::isa<ParmVarDecl>(Arg)) {
++        auto ArgIdx = cast<ParmVarDecl>(Arg)->getFunctionScopeIndex();
++        if (cast<ParmVarDecl>(Arg)->getOriginalType()->isUnsignedIntegerType()) {
++          // +1 to account for the this pointer (which is at the end of Args)
++          Fn->addParamAttr(FD->isCXXClassMember() ? ArgIdx + 1 : ArgIdx, UnsignedAttr);
++        }
++      }
++    }
++  }
++
+   llvm::BasicBlock *EntryBB = createBasicBlock("entry", CurFn);
+ 
+   // Create a marker to make it easy to insert allocas into the entryblock
