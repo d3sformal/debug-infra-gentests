@@ -23,6 +23,8 @@ With other members of the project team, they started working on a prototype infr
 plugins, tools, and orchestration that allow recording of relevant program state, generation
 of tests, and their execution.
 
+All existing prototype infrastructure implementations are available in the project's repository at [https://github.com/d3sformal/debug-infra-gentests/](https://github.com/d3sformal/debug-infra-gentests/). The specific outputs of this project, which are reported on in this document, are located in the `LLVM` subdirectory.
+
 ## 2. Analysis & Research
 
 We evaluated the viability of various tools and approaches to solving the problem and studied
