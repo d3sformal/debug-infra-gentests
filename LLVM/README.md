@@ -49,8 +49,8 @@ adjust your build tools to use the patched compiler, pass
 
 To **build** the tools:
 
-> [!note] Prerequisites: 
-> `git`, `cmake`, C/C++ toolchain, `ninja`, `xargs`
+> [!note] 
+> Prerequisites: `git`, `cmake`, C/C++ toolchain, `ninja`, `xargs`
 >
 > `cargo` and `rustc` (both version >=1.88, more on that in the [relevant part of the repo](./sandbox/02-ipc/llcap-server/))
 

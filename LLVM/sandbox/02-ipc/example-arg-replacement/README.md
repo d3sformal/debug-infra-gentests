@@ -72,13 +72,13 @@ You should see similar output, prompting you to perform selection:
 
 You should select the indicies from the first column to indicate which functions you'd like to perform testing on. For primitive type replacement, input `1` (the `multiply_i_f` function), for *custom* type replacement, input `0` (the demonic-looking function). Next, press enter. The (important) result of this stage will be saved in the specified location (e.g. `./selected-fns.bin`).
 
-> [!tip] Help
-> for help use classic `--help` flag for top-level help (`cargo r  -- --help`) or a stage help `cargo r  -- trace-calls --help`
+> [!tip]
+> for help, use classic `--help` flag for top-level help (`cargo r  -- --help`) or a stage help `cargo r  -- trace-calls --help`
 
-> [!tip] Logging verbosity
->  to turn on more verbose logging, use the aggregated `-v` flag like so (more `v`s, more logging): `cargo r  -- -vvv ...`
+> [!tip]
+> to turn on more verbose logging, use the aggregated `-v` flag like so (more `v`s, more logging): `cargo r  -- -vvv ...`
 
-> [!tip] (cargo) Optimized build
+> [!tip] 
 > to run in "release" mode, use the `--release` cargo flag like so: `cargo r --release -- ...`
 
 
