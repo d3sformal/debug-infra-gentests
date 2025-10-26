@@ -10,19 +10,21 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 public final class StubResultsHelper {
   private StubResultsHelper() {}
 
-  public static Path writeMinimalStubTestAndResults(Path outDir) throws Exception {
-    // Results list path: prefer an existing generated-tests-<runId>.lst created by the instrumentor; otherwise fallback
-    Path resultsFile = outDir.resolve("generated-tests.lst");
-    try {
-      var candidates = Files.list(outDir)
-          .filter(p -> p.getFileName().toString().startsWith("generated-tests-") && p.getFileName().toString().endsWith(".lst"))
-          .sorted((a,b) -> b.getFileName().toString().compareTo(a.getFileName().toString()))
-          .toList();
-      if (!candidates.isEmpty()) { resultsFile = candidates.get(0); }
-    } catch (Exception ignore) {}
-    Files.createDirectories(resultsFile.getParent());
+  /**
+   * Writes a minimal stub test file and records its path in the provided results list file.
+   * This is used by tests to simulate the output of the test generation process.
+   *
+   * @param resultsListPath The exact path where the results list file should be created.
+   *                        This should match the path from InstrumentationResult.getResultsListPath()
+   * @return Path to the created stub test file
+   * @throws Exception if file creation fails
+   */
+  public static Path writeMinimalStubTestAndResults(Path resultsListPath) throws Exception {
+    // Create parent directory for results file
+    Files.createDirectories(resultsListPath.getParent());
 
-    Path stubDir = outDir.resolve("stub-tests");
+    // Create stub test directory
+    Path stubDir = resultsListPath.getParent().resolve("stub-tests");
     Files.createDirectories(stubDir);
     Path stub = stubDir.resolve("StubTest.java");
 
@@ -44,7 +46,7 @@ public final class StubResultsHelper {
       """;
 
     Files.writeString(stub, java);
-    Files.write(resultsFile, List.of(stub.toAbsolutePath().toString()));
+    Files.write(resultsListPath, List.of(stub.toAbsolutePath().toString()));
     return stub;
   }
 }

@@ -34,6 +34,7 @@ class DiSLAnalyzerProcessInteractionTest {
 
     private JavaRunConfiguration testConfig;
     private Path instrumentationJarPath;
+    private Path resultsListPath;
 
     /**
      * Testable DiSLAnalyzer that allows overriding the command construction
@@ -117,10 +118,13 @@ class DiSLAnalyzerProcessInteractionTest {
 
         // Create necessary directories and files
         Files.createDirectories(tempDir.resolve("src"));
-        Files.createDirectories(tempDir.resolve("output"));
-        // Prime results file with stub entry to satisfy non-empty contract
+        Path outputDir = tempDir.resolve("output");
+        Files.createDirectories(outputDir);
+
+        // Create results list path and prime with stub entry
+        resultsListPath = outputDir.resolve("generated-tests.lst");
         try {
-            StubResultsHelper.writeMinimalStubTestAndResults(tempDir.resolve("output"));
+            StubResultsHelper.writeMinimalStubTestAndResults(resultsListPath);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -151,7 +155,10 @@ class DiSLAnalyzerProcessInteractionTest {
         TestableAnalyzer analyzer = new TestableAnalyzer(testConfig, "mock-disl-success.py");
 
         // When
-        var generated = analyzer.runAnalysis(InstrumentationResult.builder().primaryArtifact(instrumentationJarPath).build());
+        var generated = analyzer.runAnalysis(InstrumentationResult.builder()
+                .primaryArtifact(instrumentationJarPath)
+                .resultsListPath(resultsListPath)
+                .build());
 
         // Then
         assertNotNull(generated, "Analysis should return generated test paths");
@@ -164,7 +171,10 @@ class DiSLAnalyzerProcessInteractionTest {
         TestableAnalyzer analyzer = new TestableAnalyzer(testConfig, "mock-disl-failure.py");
 
         // When
-        var generated = analyzer.runAnalysis(InstrumentationResult.builder().primaryArtifact(instrumentationJarPath).build());
+        var generated = analyzer.runAnalysis(InstrumentationResult.builder()
+                .primaryArtifact(instrumentationJarPath)
+                .resultsListPath(resultsListPath)
+                .build());
 
         // Then
         assertNotNull(generated, "Analysis should return generated test paths even on failure");
@@ -184,7 +194,10 @@ class DiSLAnalyzerProcessInteractionTest {
 
         // When & Then
         RuntimeException exception = assertThrows(RuntimeException.class, () -> {
-            analyzer.runAnalysis(InstrumentationResult.builder().primaryArtifact(instrumentationJarPath).build());
+            analyzer.runAnalysis(InstrumentationResult.builder()
+                    .primaryArtifact(instrumentationJarPath)
+                    .resultsListPath(resultsListPath)
+                    .build());
         });
 
         assertTrue(exception.getMessage().contains("timed out"),
@@ -198,7 +211,10 @@ class DiSLAnalyzerProcessInteractionTest {
 
         // When & Then
         RuntimeException exception = assertThrows(RuntimeException.class, () -> {
-            analyzer.runAnalysis(InstrumentationResult.builder().primaryArtifact(instrumentationJarPath).build());
+            analyzer.runAnalysis(InstrumentationResult.builder()
+                    .primaryArtifact(instrumentationJarPath)
+                    .resultsListPath(resultsListPath)
+                    .build());
         });
 
         assertTrue(exception.getMessage().contains("Analysis execution failed") ||
@@ -231,7 +247,10 @@ class DiSLAnalyzerProcessInteractionTest {
         TestableAnalyzer analyzer = new TestableAnalyzer(testConfig, "mock-disl-success.py");
 
         // When
-        var generated = analyzer.runAnalysis(InstrumentationResult.builder().primaryArtifact(instrumentationJarPath).build());
+        var generated = analyzer.runAnalysis(InstrumentationResult.builder()
+                .primaryArtifact(instrumentationJarPath)
+                .resultsListPath(resultsListPath)
+                .build());
 
         // Then
         assertNotNull(generated, "Should capture process output and return generated tests list");
@@ -250,7 +269,10 @@ class DiSLAnalyzerProcessInteractionTest {
 
         // When
         long startTime = System.currentTimeMillis();
-        var generated = analyzer.runAnalysis(InstrumentationResult.builder().primaryArtifact(instrumentationJarPath).build());
+        var generated = analyzer.runAnalysis(InstrumentationResult.builder()
+                .primaryArtifact(instrumentationJarPath)
+                .resultsListPath(resultsListPath)
+                .build());
         long endTime = System.currentTimeMillis();
 
         // Then

@@ -52,7 +52,11 @@ class DiSLAnalyzerTest {
         );
 
         instrumentationJarPath = Path.of("/tmp/instrumentation.jar");
-        instrumentation = InstrumentationResult.builder().primaryArtifact(instrumentationJarPath).build();
+        Path resultsListPath = tempDir.resolve("output/generated-tests.lst");
+        instrumentation = InstrumentationResult.builder()
+                .primaryArtifact(instrumentationJarPath)
+                .resultsListPath(resultsListPath)
+                .build();
 
         // Standard configuration with runtime arguments
         standardConfig = JavaRunConfiguration.builder()
@@ -173,10 +177,14 @@ class DiSLAnalyzerTest {
         // Given
         DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);
         Path nonExistentJar = Path.of("/non/existent/instrumentation.jar");
+        Path resultsListPath = tempDir.resolve("output/generated-tests.lst");
 
         // When & Then
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            analyzer.runAnalysis(InstrumentationResult.builder().primaryArtifact(nonExistentJar).build());
+            analyzer.runAnalysis(InstrumentationResult.builder()
+                    .primaryArtifact(nonExistentJar)
+                    .resultsListPath(resultsListPath)
+                    .build());
         });
 
         assertTrue(exception.getMessage().contains("does not exist"));
@@ -280,8 +288,12 @@ class DiSLAnalyzerTest {
 
         // When & Then - This test demonstrates the structure for testing process execution
         // The test may succeed or fail depending on the system setup, but it should not crash
+        Path resultsListPath = tempDir.resolve("output/generated-tests.lst");
         try {
-            var generated = analyzer.runAnalysis(InstrumentationResult.builder().primaryArtifact(mockInstrumentationJar).build());
+            var generated = analyzer.runAnalysis(InstrumentationResult.builder()
+                    .primaryArtifact(mockInstrumentationJar)
+                    .resultsListPath(resultsListPath)
+                    .build());
 
             // If it succeeds, we should get a list of generated test paths
             assertNotNull(generated, "Analysis should return a non-null TestSuite");

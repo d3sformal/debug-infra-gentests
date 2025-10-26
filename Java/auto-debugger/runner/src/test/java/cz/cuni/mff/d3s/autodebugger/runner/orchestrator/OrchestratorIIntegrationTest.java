@@ -2,6 +2,7 @@ package cz.cuni.mff.d3s.autodebugger.runner.orchestrator;
 
 import cz.cuni.mff.d3s.autodebugger.instrumentor.common.modelling.InstrumentationModel;
 import cz.cuni.mff.d3s.autodebugger.model.common.TargetLanguage;
+import cz.cuni.mff.d3s.autodebugger.model.common.artifacts.InstrumentationResult;
 import cz.cuni.mff.d3s.autodebugger.runner.args.Arguments;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -70,9 +71,12 @@ class OrchestratorIIntegrationTest {
         testArguments.runtimeArguments = List.of();
     }
 
-    private void prepareStubResults() throws Exception {
-        java.nio.file.Path outputDir = java.nio.file.Path.of(testArguments.outputDirectory);
-        cz.cuni.mff.d3s.autodebugger.testutils.StubResultsHelper.writeMinimalStubTestAndResults(outputDir);
+    private void prepareStubResults(InstrumentationResult instrumentation) throws Exception {
+        java.nio.file.Path resultsListPath = instrumentation.getResultsListPath();
+        if (resultsListPath == null) {
+            throw new IllegalStateException("InstrumentationResult must have resultsListPath set");
+        }
+        cz.cuni.mff.d3s.autodebugger.testutils.StubResultsHelper.writeMinimalStubTestAndResults(resultsListPath);
     }
 
 
@@ -108,7 +112,7 @@ class OrchestratorIIntegrationTest {
         Orchestrator orchestrator = OrchestratorFactory.create(testArguments);
         var model = orchestrator.buildInstrumentationModel();
         var instrumentation = orchestrator.createInstrumentation(model);
-        prepareStubResults();
+        prepareStubResults(instrumentation);
 
         // when
         var testSuite = orchestrator.runAnalysis(instrumentation);
