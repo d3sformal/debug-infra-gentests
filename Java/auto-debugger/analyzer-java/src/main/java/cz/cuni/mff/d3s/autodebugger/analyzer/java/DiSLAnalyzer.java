@@ -80,28 +80,59 @@ public class DiSLAnalyzer implements Analyzer {
                 .build();
     }
 
-    private List<Path> collectGeneratedTestFiles(InstrumentationResult instrumentation) {
-        List<Path> generatedTests = new ArrayList<>();
-        try {
-            Path resultsFile = instrumentation.getResultsListPath();
-            if (resultsFile == null) {
-                log.warn("No results list path available; no tests will be returned");
-                return generatedTests;
-            }
-            if (!Files.exists(resultsFile)) {
-                log.warn("No generated test list file found at {}", resultsFile);
-                return generatedTests;
-            }
-            log.info("Reading generated test list from {}", resultsFile);
-            var lines = Files.readAllLines(resultsFile);
-            lines.forEach(l -> {
-                log.info("Generated test: {}", l);
-                generatedTests.add(Path.of(l));
-            });
-        } catch (Exception ex) {
-            log.warn("Failed to read generated test list", ex);
+    @Override
+    public void validateInstrumentation(InstrumentationResult instrumentation) {
+        if (instrumentation == null || instrumentation.getPrimaryArtifact() == null) {
+            throw new IllegalArgumentException("Instrumentation primary artifact cannot be null");
         }
-        return generatedTests;
+        var instrumentationPath = instrumentation.getPrimaryArtifact();
+        if (!Files.exists(instrumentationPath)) {
+            throw new IllegalArgumentException("Instrumentation file does not exist: " + instrumentationPath);
+        }
+        if (!instrumentationPath.toString().endsWith(".jar")) {
+            throw new IllegalArgumentException("Expected JAR file for DiSL instrumentation, got: " + instrumentationPath);
+        }
+        log.debug("Instrumentation validation passed for: {}", instrumentationPath);
+    }
+
+    public List<String> buildExecutionCommand(Path instrumentationJarPath) {
+        List<String> command = new ArrayList<>();
+
+        // Run the disl.py script
+        command.add("python3");
+        command.add(DiSLPathHelper.getDislRunnerPath(runConfiguration).toString());
+
+        // Add the DiSL home path
+        command.add("-d");
+        command.add(DiSLPathHelper.getDislHomePath(runConfiguration).toString());
+
+        // Run with the client (target app), server (DiSL instrumentation server), and evaluation (ShadowVM)
+        command.add("-cse");
+
+        // Add the evaluation classpath
+        // Note that this is not present in the basic distribution of DiSL - and might potentially be unnecessary
+        // Subject to further testing...
+        command.add("-e_cp");
+        // Include the instrumentation JAR so DiSL RE server can find the Collector class
+        // Convert relative paths to absolute paths since DiSL runs from output directory
+        String evaluationClasspath = getEvaluationClasspath(instrumentationJarPath);
+        command.add(evaluationClasspath);
+
+        command.add("--");
+
+        // Add the generated DiSL instrumentation JAR (use absolute path)
+        command.add(instrumentationJarPath.toAbsolutePath().toString());
+
+        // Add the target application JAR
+        command.add("-jar");
+        command.add(runConfiguration.getApplicationPath().toString());
+
+        // Add runtime arguments for the target application
+        if (!runConfiguration.getRuntimeArguments().isEmpty()) {
+            command.addAll(runConfiguration.getRuntimeArguments());
+        }
+
+        return command;
     }
 
     private int runCommandAsProcess(List<String> command) throws IOException, InterruptedException {
@@ -145,81 +176,6 @@ public class DiSLAnalyzer implements Analyzer {
         return exitCode;
     }
 
-    @Override
-    public void validateInstrumentation(InstrumentationResult instrumentation) {
-        if (instrumentation == null || instrumentation.getPrimaryArtifact() == null) {
-            throw new IllegalArgumentException("Instrumentation primary artifact cannot be null");
-        }
-        var instrumentationPath = instrumentation.getPrimaryArtifact();
-        if (!Files.exists(instrumentationPath)) {
-            throw new IllegalArgumentException("Instrumentation file does not exist: " + instrumentationPath);
-        }
-        if (!instrumentationPath.toString().endsWith(".jar")) {
-            throw new IllegalArgumentException("Expected JAR file for DiSL instrumentation, got: " + instrumentationPath);
-        }
-        log.debug("Instrumentation validation passed for: {}", instrumentationPath);
-    }
-
-   public List<String> buildExecutionCommand(Path instrumentationJarPath) {
-        List<String> command = new ArrayList<>();
-
-        // Run the disl.py script
-        command.add("python3");
-        command.add(DiSLPathHelper.getDislRunnerPath(runConfiguration).toString());
-
-        // Add the DiSL home path
-        command.add("-d");
-        command.add(DiSLPathHelper.getDislHomePath(runConfiguration).toString());
-
-        // Run with the client (target app), server (DiSL instrumentation server), and evaluation (ShadowVM)
-        command.add("-cse");
-
-        // Add the evaluation classpath
-        // Note that this is not present in the basic distribution of DiSL - and might potentially be unnecessary
-        // Subject to further testing...
-        command.add("-e_cp");
-        // Include the instrumentation JAR so DiSL RE server can find the Collector class
-        // Convert relative paths to absolute paths since DiSL runs from output directory
-       String evaluationClasspath = getEvaluationClasspath(instrumentationJarPath);
-       command.add(evaluationClasspath);
-
-        command.add("--");
-
-        // Add the generated DiSL instrumentation JAR (use absolute path)
-        command.add(instrumentationJarPath.toAbsolutePath().toString());
-
-        // Add the target application JAR
-        command.add("-jar");
-        command.add(runConfiguration.getApplicationPath().toString());
-
-        // Add runtime arguments for the target application
-        if (!runConfiguration.getRuntimeArguments().isEmpty()) {
-            command.addAll(runConfiguration.getRuntimeArguments());
-        }
-
-        return command;
-    }
-
-    private static String getEvaluationClasspath(Path instrumentationJarPath) {
-        Path instrumentationJarAbsolutePath = instrumentationJarPath.toAbsolutePath();
-        return instrumentationJarAbsolutePath + ":" +
-                                   instrumentationJarAbsolutePath.getParent().getParent().getParent().resolve("test-generator-java/build/libs").toAbsolutePath() + "/*:" +
-                                   instrumentationJarAbsolutePath.getParent().getParent().getParent().resolve("test-generator-common/build/libs").toAbsolutePath() + "/*:" +
-                                   instrumentationJarAbsolutePath.getParent().getParent().getParent().resolve("model-common/build/libs").toAbsolutePath() + "/*:" +
-                                   instrumentationJarAbsolutePath.getParent().getParent().getParent().resolve("model-java/build/libs").toAbsolutePath() + "/*";
-    }
-
-    private void readStream(InputStream inputStream, StringBuilder output) {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                output.append(line).append(System.lineSeparator());
-            }
-        } catch (IOException e) {
-            log.error("Error reading process stream", e);
-        }
-    }
-
     private void handleDiSLAnalysisResults(InstrumentationResult instrumentation) {
         try {
             // Check for DiSL analysis marker file
@@ -252,7 +208,7 @@ public class DiSLAnalyzer implements Analyzer {
                     processCollectedValuesAndGenerateTests(collectedValuesFile, identifierMappingFile, instrumentation, markerContent);
                 } else {
                     log.warn("Missing required files - collectedValues: {}, identifierMapping: {}",
-                           Files.exists(collectedValuesFile), identifierMappingFile != null && Files.exists(identifierMappingFile));
+                            Files.exists(collectedValuesFile), identifierMappingFile != null && Files.exists(identifierMappingFile));
                 }
             } else {
                 log.warn("No DiSL analysis marker file found at: {}", markerFile);
@@ -261,6 +217,50 @@ public class DiSLAnalyzer implements Analyzer {
             }
         } catch (Exception e) {
             log.error("Error handling DiSL analysis results", e);
+        }
+    }
+
+    private List<Path> collectGeneratedTestFiles(InstrumentationResult instrumentation) {
+        List<Path> generatedTests = new ArrayList<>();
+        try {
+            Path resultsFile = instrumentation.getResultsListPath();
+            if (resultsFile == null) {
+                log.warn("No results list path available; no tests will be returned");
+                return generatedTests;
+            }
+            if (!Files.exists(resultsFile)) {
+                log.warn("No generated test list file found at {}", resultsFile);
+                return generatedTests;
+            }
+            log.info("Reading generated test list from {}", resultsFile);
+            var lines = Files.readAllLines(resultsFile);
+            lines.forEach(l -> {
+                log.info("Generated test: {}", l);
+                generatedTests.add(Path.of(l));
+            });
+        } catch (Exception ex) {
+            log.warn("Failed to read generated test list", ex);
+        }
+        return generatedTests;
+    }
+
+    private static String getEvaluationClasspath(Path instrumentationJarPath) {
+        Path instrumentationJarAbsolutePath = instrumentationJarPath.toAbsolutePath();
+        return instrumentationJarAbsolutePath + ":" +
+                                   instrumentationJarAbsolutePath.getParent().getParent().getParent().resolve("test-generator-java/build/libs").toAbsolutePath() + "/*:" +
+                                   instrumentationJarAbsolutePath.getParent().getParent().getParent().resolve("test-generator-common/build/libs").toAbsolutePath() + "/*:" +
+                                   instrumentationJarAbsolutePath.getParent().getParent().getParent().resolve("model-common/build/libs").toAbsolutePath() + "/*:" +
+                                   instrumentationJarAbsolutePath.getParent().getParent().getParent().resolve("model-java/build/libs").toAbsolutePath() + "/*";
+    }
+
+    private void readStream(InputStream inputStream, StringBuilder output) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line).append(System.lineSeparator());
+            }
+        } catch (IOException e) {
+            log.error("Error reading process stream", e);
         }
     }
 
@@ -379,20 +379,4 @@ public class DiSLAnalyzer implements Analyzer {
             log.error("Error processing collected values and generating tests", e);
         }
     }
-
-    private String extractFromMarker(String markerContent, String prefix) {
-        try {
-            String[] lines = markerContent.split("\n");
-            for (String line : lines) {
-                if (line.startsWith(prefix)) {
-                    return line.substring(prefix.length()).trim();
-                }
-            }
-        } catch (Exception e) {
-            log.warn("Error extracting '{}' from marker content", prefix, e);
-        }
-        return null;
-    }
-
-
 }
