@@ -311,36 +311,36 @@ public class DiSLAnalyzer implements Analyzer {
             for (Map<Integer, Object> invocation : allInvocations) {
                 for (Map.Entry<Integer, Object> entry : invocation.entrySet()) {
                 Object value = entry.getValue();
-                if (value instanceof Integer) {
-                    trace.addIntValue(entry.getKey(), (Integer) value);
+                if (value instanceof Integer intValue) {
+                    trace.addIntValue(entry.getKey(), intValue);
                     addedValues++;
                     log.info("Added int value to trace - Slot {}: {}", entry.getKey(), value);
-                } else if (value instanceof Byte) {
-                    trace.addByteValue(entry.getKey(), (Byte) value);
+                } else if (value instanceof Byte byteValue) {
+                    trace.addByteValue(entry.getKey(), byteValue);
                     addedValues++;
                     log.info("Added byte value to trace - Slot {}: {}", entry.getKey(), value);
-                } else if (value instanceof Character) {
-                    trace.addCharValue(entry.getKey(), (Character) value);
+                } else if (value instanceof Character charValue) {
+                    trace.addCharValue(entry.getKey(), charValue);
                     addedValues++;
                     log.info("Added char value to trace - Slot {}: {}", entry.getKey(), value);
-                } else if (value instanceof Short) {
-                    trace.addShortValue(entry.getKey(), (Short) value);
+                } else if (value instanceof Short shortValue) {
+                    trace.addShortValue(entry.getKey(), shortValue);
                     addedValues++;
                     log.info("Added short value to trace - Slot {}: {}", entry.getKey(), value);
-                } else if (value instanceof Long) {
-                    trace.addLongValue(entry.getKey(), (Long) value);
+                } else if (value instanceof Long longValue) {
+                    trace.addLongValue(entry.getKey(), longValue);
                     addedValues++;
                     log.info("Added long value to trace - Slot {}: {}", entry.getKey(), value);
-                } else if (value instanceof Float) {
-                    trace.addFloatValue(entry.getKey(), (Float) value);
+                } else if (value instanceof Float floatValue) {
+                    trace.addFloatValue(entry.getKey(), floatValue);
                     addedValues++;
                     log.info("Added float value to trace - Slot {}: {}", entry.getKey(), value);
-                } else if (value instanceof Double) {
-                    trace.addDoubleValue(entry.getKey(), (Double) value);
+                } else if (value instanceof Double doubleValue) {
+                    trace.addDoubleValue(entry.getKey(), doubleValue);
                     addedValues++;
                     log.info("Added double value to trace - Slot {}: {}", entry.getKey(), value);
-                } else if (value instanceof Boolean) {
-                    trace.addBooleanValue(entry.getKey(), (Boolean) value);
+                } else if (value instanceof Boolean boolValue) {
+                    trace.addBooleanValue(entry.getKey(), boolValue);
                     addedValues++;
                     log.info("Added boolean value to trace - Slot {}: {}", entry.getKey(), value);
                 } else {

@@ -10,6 +10,8 @@ class InstrumentationResultTest {
 
     @Test
     void givenMinimal_whenBuild_thenHasPrimaryArtifact() {
+        // Note: resultsListPath can be null, but this will cause the analyzer
+        // to return an empty test list. In production, DiSLInstrumentor always sets this field.
         var res = InstrumentationResult.builder()
                 .primaryArtifact(Path.of("/tmp/instr.jar"))
                 .build();

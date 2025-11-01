@@ -18,6 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Objects;
 import java.util.List;
 
 /**
@@ -127,9 +128,7 @@ public class JavaRunConfiguration implements RunConfiguration {
      * Issues a warning if the file does not have a .jar extension.
      */
     private void validateApplicationPath() {
-        if (applicationPath == null) {
-            throw new IllegalStateException("Application path cannot be null");
-        }
+        Objects.requireNonNull(applicationPath, "Application path cannot be null");
 
         if (!Files.exists(applicationPath)) {
             throw new IllegalStateException("Application file does not exist: " + applicationPath);
@@ -154,9 +153,7 @@ public class JavaRunConfiguration implements RunConfiguration {
      * Validates the source code path is an existing, readable directory.
      */
     private void validateSourceCodePath() {
-        if (sourceCodePath == null) {
-            throw new IllegalStateException("Source code path cannot be null");
-        }
+        Objects.requireNonNull(sourceCodePath, "Source code path cannot be null");
 
         if (!Files.exists(sourceCodePath)) {
             throw new IllegalStateException("Source code directory does not exist: " + sourceCodePath);
@@ -176,9 +173,7 @@ public class JavaRunConfiguration implements RunConfiguration {
      * Checks for the existence of key subfiles/directories like bin/disl.py and output/lib.
      */
     private void validateDislHomePath() {
-        if (dislHomePath == null) {
-            throw new IllegalStateException("DiSL home path cannot be null");
-        }
+        Objects.requireNonNull(dislHomePath, "DiSL home path cannot be null");
 
         if (!Files.exists(dislHomePath)) {
             throw new IllegalStateException("DiSL home directory does not exist: " + dislHomePath);
@@ -219,9 +214,7 @@ public class JavaRunConfiguration implements RunConfiguration {
         for (int i = 0; i < classpathEntries.size(); i++) {
             Path classpathEntry = classpathEntries.get(i);
 
-            if (classpathEntry == null) {
-                throw new IllegalStateException("Classpath entry at index " + i + " cannot be null");
-            }
+            Objects.requireNonNull(classpathEntry, "Classpath entry at index " + i + " cannot be null");
 
             if (!Files.exists(classpathEntry)) {
                 throw new IllegalStateException("Classpath entry does not exist: " + classpathEntry);
@@ -247,9 +240,7 @@ public class JavaRunConfiguration implements RunConfiguration {
      * Validates the output directory is writable or can be created.
      */
     private void validateOutputDirectory() {
-        if (outputDirectory == null) {
-            throw new IllegalStateException("Output directory cannot be null");
-        }
+        Objects.requireNonNull(outputDirectory, "Output directory cannot be null");
 
         if (Files.exists(outputDirectory)) {
             if (!Files.isDirectory(outputDirectory)) {
@@ -284,9 +275,7 @@ public class JavaRunConfiguration implements RunConfiguration {
      * Validates the target method is specified and can be parsed to FULL_METHOD state.
      */
     private void validateTargetMethod() {
-        if (targetMethod == null) {
-            throw new IllegalStateException("Target method cannot be null");
-        }
+        Objects.requireNonNull(targetMethod, "Target method cannot be null");
 
         // Validate that the method signature can be parsed to FULL_METHOD state
         String methodSignature = buildMethodSignature(targetMethod);
@@ -313,10 +302,10 @@ public class JavaRunConfiguration implements RunConfiguration {
         List<String> methodParameterTypes = targetMethod.getParameterTypes();
 
         for (JavaValueIdentifier exportableValue : exportableValues) {
-            if (exportableValue instanceof JavaArgumentIdentifier) {
-                validateArgumentIdentifier((JavaArgumentIdentifier) exportableValue, methodParameterTypes);
-            } else if (exportableValue instanceof JavaFieldIdentifier) {
-                validateFieldIdentifier((JavaFieldIdentifier) exportableValue);
+            if (exportableValue instanceof JavaArgumentIdentifier argId) {
+                validateArgumentIdentifier(argId, methodParameterTypes);
+            } else if (exportableValue instanceof JavaFieldIdentifier fieldId) {
+                validateFieldIdentifier(fieldId);
             }
         }
     }
@@ -360,11 +349,8 @@ public class JavaRunConfiguration implements RunConfiguration {
             throw new IllegalStateException("Field name cannot be null or empty in field identifier");
         }
 
-        if (fieldIdentifier.getOwnerClassIdentifier() == null) {
-            throw new IllegalStateException(
-                "Field identifier must have an owner class identifier for field: " + fieldIdentifier.getFieldName()
-            );
-        }
+        Objects.requireNonNull(fieldIdentifier.getOwnerClassIdentifier(),
+                "Field identifier must have an owner class identifier for field: " + fieldIdentifier.getFieldName());
 
         // Note: Full field existence validation would require loading the class from the classpath
         // and checking the field hierarchy. This is a complex operation that would require:

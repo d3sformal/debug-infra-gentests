@@ -39,20 +39,20 @@ public class RunConfigurationFactory {
 
         try {
             // Parse paths
-            Path applicationPath = Path.of(arguments.applicationJarPath);
-            Path sourceCodePath = Path.of(arguments.sourceCodePath);
-            Path outputDir = arguments.outputDirectory != null ? Path.of(arguments.outputDirectory) : Path.of("auto-debugger-output");
-            Path dislHomePath = Path.of(arguments.dislHomePath);
-            List<Path> classpathEntries = arguments.classpath.stream().map(Path::of).toList();
+            var applicationPath = Path.of(arguments.applicationJarPath);
+            var sourceCodePath = Path.of(arguments.sourceCodePath);
+            var outputDir = arguments.outputDirectory != null ? Path.of(arguments.outputDirectory) : Path.of("auto-debugger-output");
+            var dislHomePath = Path.of(arguments.dislHomePath);
+            var classpathEntries = arguments.classpath.stream().map(Path::of).toList();
 
-            JavaMethodSignatureParser parser = new JavaMethodSignatureParser();
+            var parser = new JavaMethodSignatureParser();
 
             // Parse the method reference
-            JavaMethodIdentifier methodIdentifier = parser.parseMethodReference(arguments.targetMethodReference);
+            var methodIdentifier = parser.parseMethodReference(arguments.targetMethodReference);
 
             // Convert target parameters and fields to ExportableValues
-            List<JavaValueIdentifier> parameterValues = parser.parseTargetParameters(arguments.targetParameters, methodIdentifier);
-            List<JavaValueIdentifier> fieldValues = parser.parseTargetFields(arguments.targetFields, methodIdentifier);
+            var parameterValues = parser.parseTargetParameters(arguments.targetParameters, methodIdentifier);
+            var fieldValues = parser.parseTargetFields(arguments.targetFields, methodIdentifier);
 
             // Combine all exportable values
             List<JavaValueIdentifier> exportableValues = new ArrayList<>();
@@ -60,12 +60,12 @@ public class RunConfigurationFactory {
             exportableValues.addAll(fieldValues);
 
             // Determine trace mode
-            TraceMode traceMode = (arguments.traceMode != null && arguments.traceMode.equalsIgnoreCase("temporal"))
+            var traceMode = (arguments.traceMode != null && arguments.traceMode.equalsIgnoreCase("temporal"))
                     ? TraceMode.TEMPORAL
                     : TraceMode.NAIVE;
 
             // Create the Java run configuration
-            JavaRunConfiguration configuration = JavaRunConfiguration.builder()
+            var configuration = JavaRunConfiguration.builder()
                     .applicationPath(applicationPath)
                     .sourceCodePath(sourceCodePath)
                     .targetMethod(methodIdentifier)

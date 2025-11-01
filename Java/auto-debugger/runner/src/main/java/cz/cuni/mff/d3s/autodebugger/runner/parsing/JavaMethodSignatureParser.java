@@ -152,16 +152,16 @@ public class JavaMethodSignatureParser {
      * Parses a single field string into a FieldIdentifier.
      */
     private JavaFieldIdentifier parseField(String fieldString, JavaClassIdentifier ownerClass) {
-        Matcher matcher = FIELD_PATTERN.matcher(fieldString);
-        
+        var matcher = FIELD_PATTERN.matcher(fieldString);
+
         if (!matcher.matches()) {
             throw new IllegalArgumentException(
                 "Invalid field format. Expected 'type:name'. Got: " + fieldString);
         }
-        
-        String type = normalizeType(matcher.group(1));
-        String name = matcher.group(2);
-        
+
+        var type = normalizeType(matcher.group(1));
+        var name = matcher.group(2);
+
         return new JavaFieldIdentifier(
             FieldIdentifierParameters.builder()
                 .variableType(type)

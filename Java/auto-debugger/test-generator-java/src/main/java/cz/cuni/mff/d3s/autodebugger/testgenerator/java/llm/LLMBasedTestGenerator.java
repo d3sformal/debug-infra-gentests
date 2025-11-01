@@ -289,9 +289,9 @@ public class LLMBasedTestGenerator implements TestGenerator {
      * Builds prompt context specifically for TemporalTrace data.
      */
     private LLMPromptContext buildTemporalPromptContext(TemporalTrace trace, String sourceCode, TestGenerationContext context) {
-        String methodSig = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : "UnknownClass.unknownMethod()";
-        String classFqcn = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
-        String pkg = context.getTargetMethod() != null ? context.getTargetMethod().getPackageName() : "";
+        var methodSig = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : "UnknownClass.unknownMethod()";
+        var classFqcn = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
+        var pkg = context.getTargetMethod() != null ? context.getTargetMethod().getPackageName() : "";
         return LLMPromptContext.builder()
                 .sourceCode(sourceCode)
                 .targetMethodSignature(methodSig)
@@ -318,9 +318,9 @@ public class LLMBasedTestGenerator implements TestGenerator {
      */
     private LLMPromptContext buildPromptContext(Trace trace, String sourceCode, TestGenerationContext context) {
         log.debug("Using basic trace formatting for LLM prompt");
-        String methodSig = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : "UnknownClass.unknownMethod()";
-        String classFqcn = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
-        String pkg = context.getTargetMethod() != null ? context.getTargetMethod().getPackageName() : "";
+        var methodSig = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : "UnknownClass.unknownMethod()";
+        var classFqcn = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
+        var pkg = context.getTargetMethod() != null ? context.getTargetMethod().getPackageName() : "";
         return LLMPromptContext.builder()
                 .sourceCode(sourceCode)
                 .targetMethodSignature(methodSig)

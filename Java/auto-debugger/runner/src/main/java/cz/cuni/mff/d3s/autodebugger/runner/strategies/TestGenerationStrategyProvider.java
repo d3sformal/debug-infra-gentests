@@ -1,6 +1,5 @@
 package cz.cuni.mff.d3s.autodebugger.runner.strategies;
 
-import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -16,7 +15,7 @@ public class TestGenerationStrategyProvider {
      * @return List of available test generation strategies
      */
     public static List<TestGenerationStrategy> getAvailableStrategies() {
-        return Arrays.asList(
+        return List.of(
             new TestGenerationStrategy(
                 "trace-based-basic",
                 "Trace-Based Basic",
