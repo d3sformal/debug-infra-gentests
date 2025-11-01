@@ -10,7 +10,6 @@ public class TestGenerationStrategyProvider {
 
     /**
      * Returns all available test generation strategies.
-     * This method provides mock strategies for demonstration purposes.
      *
      * @return List of available test generation strategies
      */
@@ -26,29 +25,8 @@ public class TestGenerationStrategyProvider {
             new TestGenerationStrategy(
                 "trace-based-advanced",
                 "Trace-Based Advanced",
-                "Advanced trace-based test generation with intelligent value selection and edge case detection. " +
-                "Uses machine learning techniques to identify interesting test scenarios.",
-                false
-            ),
-            new TestGenerationStrategy(
-                "property-based",
-                "Property-Based Testing",
-                "Generates property-based tests that verify invariants and contracts rather than specific values. " +
-                "Focuses on testing behavioral properties across different input ranges.",
-                false
-            ),
-            new TestGenerationStrategy(
-                "mutation-based",
-                "Mutation-Based Testing",
-                "Creates tests by systematically mutating observed inputs and verifying that outputs change appropriately. " +
-                "Helps identify boundary conditions and error handling scenarios.",
-                false
-            ),
-            new TestGenerationStrategy(
-                "symbolic-execution",
-                "Symbolic Execution",
-                "Uses symbolic execution to explore different execution paths and generate comprehensive test suites. " +
-                "Provides high code coverage by systematically exploring program branches.",
+                "Advanced trace-based test generation with temporal trace semantics and state reconstruction. " +
+                "Captures the evolution of state over time for more sophisticated test scenarios.",
                 false
             ),
             new TestGenerationStrategy(
@@ -70,7 +48,7 @@ public class TestGenerationStrategyProvider {
         return getAvailableStrategies().stream()
             .filter(TestGenerationStrategy::isDefault)
             .findFirst()
-            .orElse(getAvailableStrategies().get(0));
+            .orElse(getAvailableStrategies().getFirst());
     }
 
     /**

@@ -364,9 +364,10 @@ public class DiSLClass {
 
 ## Test Generation Strategies
 
-The framework supports (or plans to support soon) multiple test generation approaches:
+The framework currently supports three test generation approaches:
 
-1. **Naive Trace-Based**: Direct replay of observed method calls with captured parameters
-2. **Enhanced Temporal**: Sophisticated generation using temporal trace semantics with state reconstruction
-3. **LLM-Powered**: AI-assisted test generation using large language models for semantic understanding
-4. **Hybrid Approaches**: Combination of trace-based and AI techniques for comprehensive coverage
+1. **Trace-Based Basic (Naive)**: Direct replay of observed method calls with captured parameters
+2. **Trace-Based Advanced (Temporal)**: Sophisticated generation using temporal trace semantics with state reconstruction
+3. **AI-Assisted (LLM-Powered)**: AI-assisted test generation using large language models for semantic understanding
+
+Future strategies under consideration include property-based testing, mutation-based testing, symbolic execution, and hybrid approaches combining multiple techniques.

@@ -30,7 +30,7 @@ class InstrumentationResultTest {
                 .resultsListPath(Path.of("/tmp/generated-tests.lst"))
                 .build();
         assertEquals(1, res.getAdditionalArtifacts().size());
-        assertEquals(Path.of("/tmp/a.txt"), res.getAdditionalArtifacts().get(0));
+        assertEquals(Path.of("/tmp/a.txt"), res.getAdditionalArtifacts().getFirst());
         assertEquals(Path.of("/tmp/ids.ser"), res.getIdentifiersMappingPath());
         assertEquals(Path.of("/tmp/generated-tests.lst"), res.getResultsListPath());
     }

@@ -162,7 +162,7 @@ class LLMBasedTestGeneratorTest {
         verify(mockAnthropicClient, atLeastOnce()).generateCode(anyString());
 
         // Verify the generated file exists and contains expected content
-        Path generatedFile = result.get(0);
+        Path generatedFile = result.getFirst();
         assertTrue(Files.exists(generatedFile), "Generated test file should exist");
 
         String fileContent = Files.readString(generatedFile);
