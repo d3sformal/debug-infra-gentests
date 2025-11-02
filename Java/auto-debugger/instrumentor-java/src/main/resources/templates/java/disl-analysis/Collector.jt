@@ -4,12 +4,14 @@ import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaValueIdentifier;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerationContext;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerationContextFactory;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerator;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.java.trace.NaiveTraceBasedGenerator;
 import java.nio.file.Path;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
 
 public class Collector extends RemoteAnalysis {
   static {
@@ -25,6 +27,7 @@ public class Collector extends RemoteAnalysis {
   private final String targetClass = "${TARGET_CLASS}";
   private final String targetMethod = "${TARGET_METHOD}";
   private final String targetReturn = "${TARGET_RETURN}";
+  private final String strategyId = "${STRATEGY}";
 
   private Map<Integer, JavaValueIdentifier> identifierMapping;
   private Trace trace;
@@ -130,7 +133,21 @@ public class Collector extends RemoteAnalysis {
     printPid();
     System.out.println("*** COLLECTOR: collectByte called with slot=" + slot + ", value=" + b + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting byte: %s", b)));
+
     collectedValues.put(slot, b);
+    currentInvocation.put(slot, b);
+
+    if (isInvocationComplete()) {
+      Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
+      allInvocations.add(completedInvocation);
+      System.out.println("*** COLLECTOR: Completed invocation " + allInvocations.size() + " with " + completedInvocation.size() + " parameters ***");
+      currentInvocation.clear();
+    }
+
+    if (trace != null) {
+      trace.addByteValue(slot, b);
+    }
+
     currentEventIndex++;
   }
 
@@ -138,7 +155,21 @@ public class Collector extends RemoteAnalysis {
     printPid();
     System.out.println("*** COLLECTOR: collectChar called with slot=" + slot + ", value=" + c + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting char: %s", c)));
+
     collectedValues.put(slot, c);
+    currentInvocation.put(slot, c);
+
+    if (isInvocationComplete()) {
+      Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
+      allInvocations.add(completedInvocation);
+      System.out.println("*** COLLECTOR: Completed invocation " + allInvocations.size() + " with " + completedInvocation.size() + " parameters ***");
+      currentInvocation.clear();
+    }
+
+    if (trace != null) {
+      trace.addCharValue(slot, c);
+    }
+
     currentEventIndex++;
   }
 
@@ -146,7 +177,21 @@ public class Collector extends RemoteAnalysis {
     printPid();
     System.out.println("*** COLLECTOR: collectShort called with slot=" + slot + ", value=" + s + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting short: %s", s)));
+
     collectedValues.put(slot, s);
+    currentInvocation.put(slot, s);
+
+    if (isInvocationComplete()) {
+      Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
+      allInvocations.add(completedInvocation);
+      System.out.println("*** COLLECTOR: Completed invocation " + allInvocations.size() + " with " + completedInvocation.size() + " parameters ***");
+      currentInvocation.clear();
+    }
+
+    if (trace != null) {
+      trace.addShortValue(slot, s);
+    }
+
     currentEventIndex++;
   }
 
@@ -154,7 +199,21 @@ public class Collector extends RemoteAnalysis {
     printPid();
     System.out.println("*** COLLECTOR: collectLong called with slot=" + slot + ", value=" + l + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting long: %s", l)));
+
     collectedValues.put(slot, l);
+    currentInvocation.put(slot, l);
+
+    if (isInvocationComplete()) {
+      Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
+      allInvocations.add(completedInvocation);
+      System.out.println("*** COLLECTOR: Completed invocation " + allInvocations.size() + " with " + completedInvocation.size() + " parameters ***");
+      currentInvocation.clear();
+    }
+
+    if (trace != null) {
+      trace.addLongValue(slot, l);
+    }
+
     currentEventIndex++;
   }
 
@@ -162,7 +221,21 @@ public class Collector extends RemoteAnalysis {
     printPid();
     System.out.println("*** COLLECTOR: collectFloat called with slot=" + slot + ", value=" + f + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting float: %s", f)));
+
     collectedValues.put(slot, f);
+    currentInvocation.put(slot, f);
+
+    if (isInvocationComplete()) {
+      Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
+      allInvocations.add(completedInvocation);
+      System.out.println("*** COLLECTOR: Completed invocation " + allInvocations.size() + " with " + completedInvocation.size() + " parameters ***");
+      currentInvocation.clear();
+    }
+
+    if (trace != null) {
+      trace.addFloatValue(slot, f);
+    }
+
     currentEventIndex++;
   }
 
@@ -170,7 +243,21 @@ public class Collector extends RemoteAnalysis {
     printPid();
     System.out.println("*** COLLECTOR: collectBoolean called with slot=" + slot + ", value=" + z + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting boolean: %s", z)));
+
     collectedValues.put(slot, z);
+    currentInvocation.put(slot, z);
+
+    if (isInvocationComplete()) {
+      Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
+      allInvocations.add(completedInvocation);
+      System.out.println("*** COLLECTOR: Completed invocation " + allInvocations.size() + " with " + completedInvocation.size() + " parameters ***");
+      currentInvocation.clear();
+    }
+
+    if (trace != null) {
+      trace.addBooleanValue(slot, z);
+    }
+
     currentEventIndex++;
   }
 
@@ -178,7 +265,17 @@ public class Collector extends RemoteAnalysis {
     printPid();
     System.out.println("*** COLLECTOR: collectString called with slot=" + slot + ", value=" + s + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting string: %s", s)));
+
     collectedValues.put(slot, s);
+    currentInvocation.put(slot, s);
+
+    if (isInvocationComplete()) {
+      Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
+      allInvocations.add(completedInvocation);
+      System.out.println("*** COLLECTOR: Completed invocation " + allInvocations.size() + " with " + completedInvocation.size() + " parameters ***");
+      currentInvocation.clear();
+    }
+
     currentEventIndex++;
   }
 
@@ -186,7 +283,21 @@ public class Collector extends RemoteAnalysis {
     printPid();
     System.out.println("*** COLLECTOR: collectDouble called with slot=" + slot + ", value=" + d + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting double: %s", d)));
+
     collectedValues.put(slot, d);
+    currentInvocation.put(slot, d);
+
+    if (isInvocationComplete()) {
+      Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
+      allInvocations.add(completedInvocation);
+      System.out.println("*** COLLECTOR: Completed invocation " + allInvocations.size() + " with " + completedInvocation.size() + " parameters ***");
+      currentInvocation.clear();
+    }
+
+    if (trace != null) {
+      trace.addDoubleValue(slot, d);
+    }
+
     currentEventIndex++;
   }
 
@@ -194,7 +305,17 @@ public class Collector extends RemoteAnalysis {
     printPid();
     System.out.println("*** COLLECTOR: collectObject called with slot=" + slot + ", value=" + obj + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting object: %s", obj)));
+
     collectedValues.put(slot, obj);
+    currentInvocation.put(slot, obj);
+
+    if (isInvocationComplete()) {
+      Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
+      allInvocations.add(completedInvocation);
+      System.out.println("*** COLLECTOR: Completed invocation " + allInvocations.size() + " with " + completedInvocation.size() + " parameters ***");
+      currentInvocation.clear();
+    }
+
     currentEventIndex++;
   }
 
@@ -204,47 +325,59 @@ public class Collector extends RemoteAnalysis {
     System.out.println(String.format(messageFormat, processName, "Exiting analysis..."));
     System.out.println(String.format(messageFormat, processName, "Collected " + allInvocations.size() + " invocations"));
 
-    // Print all invocations
-    for (int i = 0; i < allInvocations.size(); i++) {
-      Map<Integer, Object> invocation = allInvocations.get(i);
-      System.out.println(String.format(messageFormat, processName, "Invocation " + (i + 1) + ":"));
-      for (Map.Entry<Integer, Object> entry : invocation.entrySet()) {
-        System.out.println(String.format(messageFormat, processName, "  Slot " + entry.getKey() + ": " + entry.getValue()));
-      }
-    }
-
-    // Write all invocations to a file for processing by the main process
     try {
-      System.out.println(String.format(messageFormat, processName, "Writing all invocations to file for main process"));
-
-      if (!allInvocations.isEmpty()) {
-        // Create output directory
-        Path outputDir = Path.of(resultsListPath).getParent();
-        Files.createDirectories(outputDir);
-
-        // Write all invocations to a serialized file
-        Path collectedValuesFile = outputDir.resolve("collected-values.ser");
-        try (java.io.FileOutputStream fileOut = new java.io.FileOutputStream(collectedValuesFile.toFile());
-             java.io.ObjectOutputStream objectOut = new java.io.ObjectOutputStream(fileOut)) {
-          objectOut.writeObject(allInvocations);
-          System.out.println(String.format(messageFormat, processName, "Wrote " + allInvocations.size() + " invocations to: " + collectedValuesFile.toAbsolutePath()));
-        }
-
-        // Write a marker file to indicate that DiSL analysis is complete
-        Path markerFile = outputDir.resolve("disl-analysis-complete.marker");
-        Files.writeString(markerFile, "DiSL analysis completed at " + java.time.Instant.now() + "\n");
-        Files.writeString(markerFile, "Collected values file: " + collectedValuesFile.toAbsolutePath() + "\n", StandardOpenOption.APPEND);
-        Files.writeString(markerFile, "Identifier mapping file: " + identifierMappingFilePath + "\n", StandardOpenOption.APPEND);
-        Files.writeString(markerFile, "Target package: " + targetPackage + "\n", StandardOpenOption.APPEND);
-        Files.writeString(markerFile, "Target class: " + targetClass + "\n", StandardOpenOption.APPEND);
-        Files.writeString(markerFile, "Target method: " + targetMethod + "\n", StandardOpenOption.APPEND);
-        Files.writeString(markerFile, "Target return: " + targetReturn + "\n", StandardOpenOption.APPEND);
-
-        System.out.println(String.format(messageFormat, processName, "Created marker file: " + markerFile.toAbsolutePath()));
-        System.out.println(String.format(messageFormat, processName, "DiSL analysis complete - main process will handle test generation"));
-      } else {
+      if (allInvocations.isEmpty()) {
         System.out.println(String.format(messageFormat, processName, "No values collected"));
+        return;
       }
+
+      // Print all invocations for debugging
+      for (int i = 0; i < allInvocations.size(); i++) {
+        Map<Integer, Object> invocation = allInvocations.get(i);
+        System.out.println(String.format(messageFormat, processName, "Invocation " + (i + 1) + ":"));
+        for (Map.Entry<Integer, Object> entry : invocation.entrySet()) {
+          System.out.println(String.format(messageFormat, processName, "  Slot " + entry.getKey() + ": " + entry.getValue()));
+        }
+      }
+
+      // 1. Load identifier mapping
+      System.out.println(String.format(messageFormat, processName, "Loading identifier mapping from: " + identifierMappingFilePath));
+      identifierMapping = loadIdentifierMapping(identifierMappingFilePath);
+      if (identifierMapping == null || identifierMapping.isEmpty()) {
+        System.err.println(String.format(messageFormat, processName, "Failed to load identifier mapping - cannot generate tests"));
+        return;
+      }
+
+      // 2. Build Trace from collected invocations
+      System.out.println(String.format(messageFormat, processName, "Building trace from " + allInvocations.size() + " invocations"));
+      Trace trace = buildTraceFromInvocations(allInvocations);
+
+      // 3. Create test generation context
+      System.out.println(String.format(messageFormat, processName, "Creating test generation context"));
+      TestGenerationContext context = buildContext();
+
+      // 4. Create appropriate test generator
+      System.out.println(String.format(messageFormat, processName, "Creating test generator for strategy: " + strategyId));
+      TestGenerator generator = createTestGenerator(strategyId, identifierMapping);
+
+      // 5. Generate tests
+      System.out.println(String.format(messageFormat, processName, "Generating tests..."));
+      List<Path> generatedTestFiles = generator.generateTests(trace, context);
+      System.out.println(String.format(messageFormat, processName, "Generated " + generatedTestFiles.size() + " test files"));
+
+      // 6. Write test file paths to results list
+      Path resultsFile = Path.of(resultsListPath);
+      Files.createDirectories(resultsFile.getParent());
+
+      for (Path testFile : generatedTestFiles) {
+        Files.writeString(resultsFile,
+            testFile.toAbsolutePath().toString() + System.lineSeparator(),
+            StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        System.out.println(String.format(messageFormat, processName, "Wrote test file path: " + testFile.toAbsolutePath()));
+      }
+
+      System.out.println(String.format(messageFormat, processName, "Test generation complete"));
+
     } catch (Exception e) {
       System.err.println(String.format(messageFormat, processName, "Error during test generation: " + e.getMessage()));
       e.printStackTrace();
@@ -257,31 +390,62 @@ public class Collector extends RemoteAnalysis {
       targetPackage, targetClass, targetMethod, targetReturn, outDir);
   }
 
-  private String generateSimpleTestContent() {
-    StringBuilder sb = new StringBuilder();
-    sb.append("package ").append(targetPackage).append(";\n\n");
-    sb.append("import org.junit.jupiter.api.Test;\n\n");
-    sb.append("public class ").append(targetClass).append("Test {\n\n");
-    sb.append("    @Test\n");
-    sb.append("    void test").append(targetMethod).append("() {\n");
-    sb.append("        // Generated test based on collected values\n");
-    sb.append("        var target = new ").append(targetClass).append("();\n");
+  /**
+   * Builds a Trace object from the collected invocations.
+   * Iterates through all invocations and adds values to the trace based on their type.
+   */
+  private Trace buildTraceFromInvocations(List<Map<Integer, Object>> invocations) {
+    Trace trace = new Trace();
 
-    // Add method call with collected values
-    if (!collectedValues.isEmpty()) {
-      sb.append("        target.").append(targetMethod).append("(");
-      boolean first = true;
-      for (Map.Entry<Integer, Object> entry : collectedValues.entrySet()) {
-        if (!first) sb.append(", ");
-        sb.append(entry.getValue());
-        first = false;
+    for (Map<Integer, Object> invocation : invocations) {
+      for (Map.Entry<Integer, Object> entry : invocation.entrySet()) {
+        Object value = entry.getValue();
+        int slot = entry.getKey();
+
+        if (value instanceof Integer intValue) {
+          trace.addIntValue(slot, intValue);
+        } else if (value instanceof Byte byteValue) {
+          trace.addByteValue(slot, byteValue);
+        } else if (value instanceof Character charValue) {
+          trace.addCharValue(slot, charValue);
+        } else if (value instanceof Short shortValue) {
+          trace.addShortValue(slot, shortValue);
+        } else if (value instanceof Long longValue) {
+          trace.addLongValue(slot, longValue);
+        } else if (value instanceof Float floatValue) {
+          trace.addFloatValue(slot, floatValue);
+        } else if (value instanceof Double doubleValue) {
+          trace.addDoubleValue(slot, doubleValue);
+        } else if (value instanceof Boolean boolValue) {
+          trace.addBooleanValue(slot, boolValue);
+        }
       }
-      sb.append(");\n");
     }
 
-    sb.append("    }\n");
-    sb.append("}\n");
-    return sb.toString();
+    return trace;
+  }
+
+  /**
+   * Creates the appropriate test generator based on the strategy ID.
+   * Currently supports:
+   * - "trace-based-naive": NaiveTraceBasedGenerator
+   * Falls back to NaiveTraceBasedGenerator for unknown strategies.
+   */
+  private TestGenerator createTestGenerator(String strategy, Map<Integer, JavaValueIdentifier> mapping) {
+    switch (strategy) {
+      case "trace-based-naive":
+        System.out.println(String.format(messageFormat, processName, "Creating NaiveTraceBasedGenerator"));
+        return new NaiveTraceBasedGenerator(mapping);
+      case "trace-based-temporal":
+        // Future: return new TemporalTraceBasedGenerator(mapping);
+        System.err.println(String.format(messageFormat, processName,
+            "Temporal trace strategy not yet supported in Collector, falling back to naive"));
+        return new NaiveTraceBasedGenerator(mapping);
+      default:
+        System.err.println(String.format(messageFormat, processName,
+            "Unknown strategy: " + strategy + ", falling back to naive"));
+        return new NaiveTraceBasedGenerator(mapping);
+    }
   }
 
   @Override

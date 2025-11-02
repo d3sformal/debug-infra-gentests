@@ -17,7 +17,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -44,7 +43,15 @@ public class DiSLAnalyzer implements Analyzer {
     /**
      * Executes the instrumented Java application and collects runtime traces.
      * Runs the application as a separate process with DiSL instrumentation,
-     * captures output streams, and deserializes the collected trace data.
+     * captures output streams, and collects generated test files.
+     *
+     * The Collector (running in the DiSL process) is responsible for:
+     * - Collecting runtime values
+     * - Building the Trace
+     * - Generating tests
+     * - Writing test file paths to the results list
+     *
+     * This method only orchestrates the execution and collects the results.
      */
     @Override
     public TestSuite runAnalysis(InstrumentationResult instrumentation) {
@@ -68,10 +75,7 @@ public class DiSLAnalyzer implements Analyzer {
             throw new RuntimeException("Analysis execution failed", e);
         }
 
-        // Check for DiSL analysis marker file and handle test generation
-        handleDiSLAnalysisResults(instrumentation);
-
-        // Read generated test paths from results file created by Collector
+        // Collector has already generated tests - just collect the results
         List<Path> generatedTests = collectGeneratedTestFiles(instrumentation);
 
         return TestSuite.builder()
@@ -176,50 +180,6 @@ public class DiSLAnalyzer implements Analyzer {
         return exitCode;
     }
 
-    private void handleDiSLAnalysisResults(InstrumentationResult instrumentation) {
-        try {
-            // Check for DiSL analysis marker file
-            Path outputDir = runConfiguration.getOutputDirectory();
-            Path markerFile = outputDir.resolve("disl-analysis-complete.marker");
-
-            log.info("Checking for DiSL analysis marker file at: {}", markerFile);
-            log.info("Output directory contents:");
-            try {
-                Files.list(outputDir).forEach(path -> log.info("  - {}", path.getFileName()));
-            } catch (Exception e) {
-                log.warn("Could not list output directory contents: {}", e.getMessage());
-            }
-
-            if (Files.exists(markerFile)) {
-                log.info("Found DiSL analysis marker file, processing collected values");
-
-                // Read marker file to get metadata
-                String markerContent = Files.readString(markerFile);
-                log.info("Marker file content: {}", markerContent);
-
-                // Extract paths and metadata from marker file
-                Path collectedValuesFile = outputDir.resolve("collected-values.ser");
-
-                // Get identifier mapping path from instrumentation
-                Path identifierMappingFile = instrumentation.getIdentifiersMappingPath();
-
-                if (Files.exists(collectedValuesFile) && identifierMappingFile != null && Files.exists(identifierMappingFile)) {
-                    log.info("Processing collected values and generating tests");
-                    processCollectedValuesAndGenerateTests(collectedValuesFile, identifierMappingFile, instrumentation, markerContent);
-                } else {
-                    log.warn("Missing required files - collectedValues: {}, identifierMapping: {}",
-                            Files.exists(collectedValuesFile), identifierMappingFile != null && Files.exists(identifierMappingFile));
-                }
-            } else {
-                log.warn("No DiSL analysis marker file found at: {}", markerFile);
-                log.warn("This means the DiSL Collector did not execute properly or did not write the marker file");
-                log.warn("Check if the DiSL RE server is working and the Collector class is being loaded");
-            }
-        } catch (Exception e) {
-            log.error("Error handling DiSL analysis results", e);
-        }
-    }
-
     private List<Path> collectGeneratedTestFiles(InstrumentationResult instrumentation) {
         List<Path> generatedTests = new ArrayList<>();
         try {
@@ -261,122 +221,6 @@ public class DiSLAnalyzer implements Analyzer {
             }
         } catch (IOException e) {
             log.error("Error reading process stream", e);
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private void processCollectedValuesAndGenerateTests(Path collectedValuesFile, Path identifierMappingFile,
-                                                       InstrumentationResult instrumentation, String markerContent) {
-        try {
-            log.info("Loading collected invocations from: {}", collectedValuesFile);
-
-            // Load collected invocations
-            List<Map<Integer, Object>> allInvocations;
-            try (java.io.FileInputStream fileIn = new java.io.FileInputStream(collectedValuesFile.toFile());
-                 java.io.ObjectInputStream objectIn = new java.io.ObjectInputStream(fileIn)) {
-                allInvocations = (List<Map<Integer, Object>>) objectIn.readObject();
-            }
-            log.info("Loaded {} invocations", allInvocations.size());
-
-            // Debug: Print all invocations
-            for (int i = 0; i < allInvocations.size(); i++) {
-                Map<Integer, Object> invocation = allInvocations.get(i);
-                log.info("Invocation {}: {} parameters", i + 1, invocation.size());
-                for (Map.Entry<Integer, Object> entry : invocation.entrySet()) {
-                    log.info("  Slot {}: {} (type: {})",
-                            entry.getKey(), entry.getValue(), entry.getValue().getClass().getSimpleName());
-                }
-            }
-
-            // Load identifier mapping
-            log.info("Loading identifier mapping from: {}", identifierMappingFile);
-            Map<Integer, cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaValueIdentifier> identifierMapping;
-            try (java.io.FileInputStream fileIn = new java.io.FileInputStream(identifierMappingFile.toFile());
-                 java.io.ObjectInputStream objectIn = new java.io.ObjectInputStream(fileIn)) {
-                identifierMapping = (Map<Integer, cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaValueIdentifier>) objectIn.readObject();
-            }
-            log.info("Loaded identifier mapping with {} entries", identifierMapping.size());
-
-            // Debug: Print all identifier mappings
-            for (Map.Entry<Integer, cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaValueIdentifier> entry : identifierMapping.entrySet()) {
-                log.info("Identifier mapping - Slot {}: {}", entry.getKey(), entry.getValue());
-            }
-
-            // Generate tests using proper test generator infrastructure
-            log.info("Generating tests using NaiveTraceBasedGenerator for {} invocations", allInvocations.size());
-
-            // Create Trace from all invocations (for compatibility)
-            var trace = new cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace();
-            int addedValues = 0;
-            for (Map<Integer, Object> invocation : allInvocations) {
-                for (Map.Entry<Integer, Object> entry : invocation.entrySet()) {
-                Object value = entry.getValue();
-                if (value instanceof Integer intValue) {
-                    trace.addIntValue(entry.getKey(), intValue);
-                    addedValues++;
-                    log.info("Added int value to trace - Slot {}: {}", entry.getKey(), value);
-                } else if (value instanceof Byte byteValue) {
-                    trace.addByteValue(entry.getKey(), byteValue);
-                    addedValues++;
-                    log.info("Added byte value to trace - Slot {}: {}", entry.getKey(), value);
-                } else if (value instanceof Character charValue) {
-                    trace.addCharValue(entry.getKey(), charValue);
-                    addedValues++;
-                    log.info("Added char value to trace - Slot {}: {}", entry.getKey(), value);
-                } else if (value instanceof Short shortValue) {
-                    trace.addShortValue(entry.getKey(), shortValue);
-                    addedValues++;
-                    log.info("Added short value to trace - Slot {}: {}", entry.getKey(), value);
-                } else if (value instanceof Long longValue) {
-                    trace.addLongValue(entry.getKey(), longValue);
-                    addedValues++;
-                    log.info("Added long value to trace - Slot {}: {}", entry.getKey(), value);
-                } else if (value instanceof Float floatValue) {
-                    trace.addFloatValue(entry.getKey(), floatValue);
-                    addedValues++;
-                    log.info("Added float value to trace - Slot {}: {}", entry.getKey(), value);
-                } else if (value instanceof Double doubleValue) {
-                    trace.addDoubleValue(entry.getKey(), doubleValue);
-                    addedValues++;
-                    log.info("Added double value to trace - Slot {}: {}", entry.getKey(), value);
-                } else if (value instanceof Boolean boolValue) {
-                    trace.addBooleanValue(entry.getKey(), boolValue);
-                    addedValues++;
-                    log.info("Added boolean value to trace - Slot {}: {}", entry.getKey(), value);
-                } else {
-                    log.warn("Unsupported value type for trace - Slot {}: {} (type: {})",
-                            entry.getKey(), value, value.getClass().getSimpleName());
-                }
-            }
-            }
-            log.info("Created Trace with {} total values from {} invocations", addedValues, allInvocations.size());
-
-            // Use proper test generator infrastructure
-            try {
-                // Create test generator with identifier mapping
-                var testGenerator = new cz.cuni.mff.d3s.autodebugger.testgenerator.java.trace.NaiveTraceBasedGenerator(identifierMapping);
-
-                // Generate tests using the JavaRunConfiguration
-                List<Path> generatedTestFiles = testGenerator.generateTests(trace, runConfiguration);
-
-                log.info("Generated {} test files using NaiveTraceBasedGenerator", generatedTestFiles.size());
-
-                // Write generated test file paths to results list
-                Path resultsFile = instrumentation.getResultsListPath();
-                for (Path testFile : generatedTestFiles) {
-                    Files.writeString(resultsFile, testFile.toAbsolutePath().toString() + System.lineSeparator(),
-                                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
-                    log.info("Added test file to results: {}", testFile);
-                }
-
-            } catch (Exception e) {
-                log.error("Failed to generate tests using NaiveTraceBasedGenerator", e);
-                // Fallback to simple test generation if needed
-                log.warn("Test generation failed, but DiSL analysis completed successfully");
-            }
-
-        } catch (Exception e) {
-            log.error("Error processing collected values and generating tests", e);
         }
     }
 }
