@@ -186,6 +186,6 @@ public class SettingsDialog extends DialogWrapper {
             case FILE_PATH, DIRECTORY_PATH -> ((TextFieldWithBrowseButton) component).getText();
             case BOOLEAN -> String.valueOf(((JBCheckBox) component).isSelected());
             default -> "";
-        }
+        };
     }
 }
