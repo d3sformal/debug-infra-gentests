@@ -1,6 +1,7 @@
 package cz.cuni.mff.d3s.autodebugger.instrumentor.java;
 
 import cz.cuni.mff.d3s.autodebugger.instrumentor.java.modelling.Constants;
+import cz.cuni.mff.d3s.autodebugger.testutils.DiSLPathResolver;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,14 +29,18 @@ class DiSLInstrumentorTest {
 
   private Path testOutputDirectory;
   private Path testIdentifierDirectory;
+  private Path mockDislHome;
 
   @BeforeEach
   void setUp() throws IOException {
     testOutputDirectory = tempDir.resolve("output");
     testIdentifierDirectory = tempDir.resolve("identifiers");
+    mockDislHome = tempDir.resolve("mock-disl");
     Files.createDirectories(testOutputDirectory);
     Files.createDirectories(testIdentifierDirectory);
 
+    // Create mock DiSL structure for tests that don't need real DiSL
+    createMockDislStructure();
 
     // Copy the CollectorRE.java file to the test output directory
     Path collectorRESource = Path.of("../analyzer-disl/src/main/java/cz/cuni/mff/d3s/autodebugger/analyzer/disl/CollectorRE.java");
@@ -60,6 +65,16 @@ class DiSLInstrumentorTest {
         """;
       Files.writeString(collectorRETarget, collectorREContent);
     }
+  }
+
+  private void createMockDislStructure() throws IOException {
+    Files.createDirectories(mockDislHome.resolve("bin"));
+    Files.createDirectories(mockDislHome.resolve("output/lib"));
+    Files.writeString(mockDislHome.resolve("bin/disl.py"), "# mock");
+  }
+
+  private Path getDislHomeOrMock() {
+    return DiSLPathResolver.getDislHomePath().orElse(mockDislHome);
   }
 
   /**
@@ -168,7 +183,7 @@ class DiSLInstrumentorTest {
             .runConfiguration(JavaRunConfiguration.builder()
                     .applicationPath(Constants.targetJarPath)
                     .classpathEntry(Constants.targetJarPath)
-                    .dislHomePath(Path.of("../../../disl"))
+                    .dislHomePath(getDislHomeOrMock())
                     .sourceCodePath(Path.of("src/test/resources/targets/extraction"))
                     .targetMethod(new JavaMethodIdentifier(Constants.targetMethodIdentifierParameters))
                     .exportableValues(List.of(argIdentifier, fieldIdentifier))
@@ -251,7 +266,7 @@ class DiSLInstrumentorTest {
     JavaRunConfiguration runConfiguration = JavaRunConfiguration.builder()
             .applicationPath(Constants.targetJarPath)
             .classpathEntry(Constants.targetJarPath)
-            .dislHomePath(Path.of("../../../disl"))
+            .dislHomePath(getDislHomeOrMock())
             .sourceCodePath(Path.of("src/test/resources/targets/extraction"))
             .targetMethod(new JavaMethodIdentifier(
                     MethodIdentifierParameters.builder()
@@ -318,8 +333,12 @@ class DiSLInstrumentorTest {
 
     String dislClassContent = Files.readString(dislClassSource);
 
-    // Verify scope contains the correct method reference
-    assertTrue(dislClassContent.contains("scope = \"" + Constants.testClassIdentifier.getName() + ".myMethod\""),
+    // Verify scope contains the correct method reference (with fully qualified class name and parameter types)
+    String packageName = Constants.testClassIdentifier.getPackageIdentifier().getPackageName();
+    String expectedScope = packageName.isEmpty() ?
+        Constants.testClassIdentifier.getName() + ".myMethod(java.lang.String)" :
+        packageName + "." + Constants.testClassIdentifier.getName() + ".myMethod(java.lang.String)";
+    assertTrue(dislClassContent.contains("scope = \"" + expectedScope + "\""),
         "Should contain correct scope reference");
 
     // Verify argument retrieval logic
@@ -350,7 +369,7 @@ class DiSLInstrumentorTest {
     JavaRunConfiguration runConfiguration = JavaRunConfiguration.builder()
             .applicationPath(Constants.targetJarPath)
             .classpathEntry(Constants.targetJarPath)
-            .dislHomePath(Path.of("../../../disl"))
+            .dislHomePath(getDislHomeOrMock())
             .sourceCodePath(Path.of("src/test/resources/targets/extraction"))
             .targetMethod(new JavaMethodIdentifier(Constants.targetMethodIdentifierParameters))
             .exportableValues(List.of(
@@ -389,19 +408,21 @@ class DiSLInstrumentorTest {
 
     String collectorContent = Files.readString(collectorPath);
 
-    // Check required imports for test generation
+    // Check required imports for trace collection
     assertTrue(collectorContent.contains("import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace"),
         "Collector should import common Trace class");
-    assertTrue(collectorContent.contains("import cz.cuni.mff.d3s.autodebugger.testgenerator.java.trace.NaiveTraceBasedGenerator"),
-        "Collector should import NaiveTraceBasedGenerator");
+    assertTrue(collectorContent.contains("import ch.usi.dag.dislreserver.remoteanalysis.RemoteAnalysis"),
+        "Collector should import RemoteAnalysis");
 
-    // Check that generator invocation is baked into the Collector with explicit results path
-    assertTrue(collectorContent.contains("new NaiveTraceBasedGenerator("),
-        "Collector should instantiate NaiveTraceBasedGenerator");
-    assertTrue(collectorContent.contains("generator.generateTests(trace"),
-        "Collector should call generateTests on the generator");
-    assertTrue(collectorContent.contains("resultsListPath"),
-        "Collector should have resultsListPath embedded");
+    // Check that Collector has the required structure for trace collection
+    assertTrue(collectorContent.contains("public class Collector extends RemoteAnalysis"),
+        "Collector should extend RemoteAnalysis");
+    assertTrue(collectorContent.contains("private final String identifierMappingFilePath"),
+        "Collector should have identifierMappingFilePath field");
+    assertTrue(collectorContent.contains("private final String traceFilePath"),
+        "Collector should have traceFilePath field");
+    assertTrue(collectorContent.contains("public void atExit()"),
+        "Collector should have atExit method for trace serialization");
 
     // Verify CollectorRE.java has been materialized next to Collector.java
     Path collectorREPath = testOutputDirectory.resolve("CollectorRE.java");
@@ -418,7 +439,7 @@ class DiSLInstrumentorTest {
     JavaRunConfiguration runConfiguration = JavaRunConfiguration.builder()
             .applicationPath(Path.of("src/test/resources/targets/extraction/Test.jar"))
             .classpathEntry(Constants.targetJarPath)
-            .dislHomePath(Path.of("../../../disl"))
+            .dislHomePath(getDislHomeOrMock())
             .sourceCodePath(Path.of("src/test/resources/targets/extraction"))
             .targetMethod(new JavaMethodIdentifier(
                     MethodIdentifierParameters.builder()
@@ -482,7 +503,7 @@ class DiSLInstrumentorTest {
     JavaRunConfiguration runConfiguration = JavaRunConfiguration.builder()
             .applicationPath(Constants.targetJarPath)
             .classpathEntry(Constants.targetJarPath)
-            .dislHomePath(Path.of("../../../disl"))
+            .dislHomePath(getDislHomeOrMock())
             .sourceCodePath(Path.of("src/test/resources/targets/extraction"))
             .targetMethod(new JavaMethodIdentifier(
                     MethodIdentifierParameters.builder()
@@ -566,7 +587,7 @@ class DiSLInstrumentorTest {
     JavaRunConfiguration runConfiguration = JavaRunConfiguration.builder()
             .applicationPath(Path.of("src/test/resources/targets/extraction/Test.jar"))
             .classpathEntry(Constants.targetJarPath)
-            .dislHomePath(Path.of("../../../disl"))
+            .dislHomePath(getDislHomeOrMock())
             .sourceCodePath(Path.of("src/test/resources/targets/extraction"))
             .targetMethod(methodIdentifier)
             .exportableValues(

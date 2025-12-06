@@ -24,6 +24,7 @@ dependencies {
     testImplementation(project(mapOf("path" to ":analyzer-java")))
     testImplementation(project(mapOf("path" to ":test-generator-common")))
     testImplementation(project(mapOf("path" to ":test-generator-java")))
+    testImplementation(project(":test-utils"))
 }
 
 tasks.test {
