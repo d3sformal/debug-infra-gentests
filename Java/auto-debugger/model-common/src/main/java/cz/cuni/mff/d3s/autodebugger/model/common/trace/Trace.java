@@ -1,8 +1,10 @@
 package cz.cuni.mff.d3s.autodebugger.model.common.trace;
 
+import java.io.Serializable;
 import java.util.*;
 
-public class Trace {
+public class Trace implements Serializable {
+  private static final long serialVersionUID = 1L;
   private final Map<Integer, Set<Byte>> byteValues = new HashMap<>();
   private final Map<Integer, Set<Character>> charValues = new HashMap<>();
   private final Map<Integer, Set<Short>> shortValues = new HashMap<>();
