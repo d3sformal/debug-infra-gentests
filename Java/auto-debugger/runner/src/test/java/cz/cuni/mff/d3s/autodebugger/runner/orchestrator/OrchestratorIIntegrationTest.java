@@ -5,6 +5,7 @@ import cz.cuni.mff.d3s.autodebugger.model.common.TargetLanguage;
 import cz.cuni.mff.d3s.autodebugger.model.common.artifacts.InstrumentationResult;
 import cz.cuni.mff.d3s.autodebugger.runner.args.Arguments;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -107,6 +108,7 @@ class OrchestratorIIntegrationTest {
         // var testResults = testRunner.runTests(tests);
     }
     @Test
+    @Disabled("Requires DiSL runtime environment - the new architecture runs DiSL process and deserializes trace")
     void givenStubMode_whenRunningAnalysis_thenProducesFiles() throws Exception {
         // given
         Orchestrator orchestrator = OrchestratorFactory.create(testArguments);
