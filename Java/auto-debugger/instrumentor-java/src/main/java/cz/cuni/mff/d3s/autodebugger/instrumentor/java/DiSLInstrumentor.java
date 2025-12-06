@@ -63,6 +63,7 @@ public class DiSLInstrumentor implements Instrumentor {
                 .map(Path::of)
                 .orElse(runConfiguration.getOutputDirectory());
         var traceFilePath = generateTraceFilePath(resultsBaseDir);
+        var resultsListPath = generateResultsListPath(resultsBaseDir);
         // No need to set a system property; analyzer will read from runConfiguration output directory
 
         templateHandler.transformFile(
@@ -77,6 +78,7 @@ public class DiSLInstrumentor implements Instrumentor {
                 .primaryArtifact(instrumentationJarPath)
                 .identifiersMappingPath(identifierMapping)
                 .traceFilePath(traceFilePath)
+                .resultsListPath(resultsListPath)
                 .build();
     }
 
@@ -142,6 +144,21 @@ public class DiSLInstrumentor implements Instrumentor {
             return outputDirectory.resolve(fileName);
         } catch (IOException e) {
             log.error("Failed to create trace file path", e);
+            throw new RuntimeException(e);
+        }
+    }
+
+    private Path generateResultsListPath(Path outputDirectory) {
+        try {
+            if (!Files.exists(outputDirectory)) {
+                Files.createDirectories(outputDirectory);
+            }
+            String runId = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS")
+                    .format(java.time.LocalDateTime.now()) + "-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+            String fileName = String.format("generated-tests-%s.lst", runId);
+            return outputDirectory.resolve(fileName);
+        } catch (IOException e) {
+            log.error("Failed to create results list path", e);
             throw new RuntimeException(e);
         }
     }
