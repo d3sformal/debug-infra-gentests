@@ -55,8 +55,8 @@ class DiSLModelTests {
 
         // Verify the generated code contains expected elements
         assertTrue(generatedCode.contains("public class DiSLClass"), "Should contain class declaration");
-        assertTrue(generatedCode.contains("@Before(marker = BodyMarker.class, scope = \"Processor.process\")"), "Should contain @Before annotation with correct scope");
-        assertTrue(generatedCode.contains("@After(marker = BodyMarker.class, scope = \"Processor.process\")"), "Should contain @After annotation with correct scope");
+        assertTrue(generatedCode.contains("@Before(marker = BodyMarker.class, scope = \"com.example.Processor.process(int)\")"), "Should contain @Before annotation with correct scope");
+        assertTrue(generatedCode.contains("@After(marker = BodyMarker.class, scope = \"com.example.Processor.process(int)\")"), "Should contain @After annotation with correct scope");
         assertTrue(generatedCode.contains("public static void"), "Should contain static method");
         assertTrue(generatedCode.contains("DynamicContext di"), "Should contain DynamicContext parameter");
 
@@ -292,7 +292,7 @@ class DiSLModelTests {
         assertTrue(generatedCode.contains("DynamicContext di"));
 
         // Verify scope is correct
-        assertTrue(generatedCode.contains("scope = \"Formatter.formatData\""));
+        assertTrue(generatedCode.contains("scope = \"com.example.Formatter.formatData\""));
     }
 
     /**
@@ -335,8 +335,8 @@ class DiSLModelTests {
         assertNotNull(generatedCode);
 
         // Verify the generated code contains both @Before and @After annotations
-        assertTrue(generatedCode.contains("@Before(marker = BodyMarker.class, scope = \"StateManager.updateState\")"));
-        assertTrue(generatedCode.contains("@After(marker = BodyMarker.class, scope = \"StateManager.updateState\")"));
+        assertTrue(generatedCode.contains("@Before(marker = BodyMarker.class, scope = \"com.example.StateManager.updateState\")"));
+        assertTrue(generatedCode.contains("@After(marker = BodyMarker.class, scope = \"com.example.StateManager.updateState\")"));
 
         // Count the number of static methods (should be 2: one for @Before, one for @After)
         long methodCount = generatedCode.lines()
@@ -390,8 +390,8 @@ class DiSLModelTests {
 
         // Verify basic structure is still generated
         assertTrue(generatedCode.contains("public class DiSLClass"));
-        assertTrue(generatedCode.contains("@Before(marker = BodyMarker.class, scope = \"TestClass.testMethod\")"));
-        assertTrue(generatedCode.contains("@After(marker = BodyMarker.class, scope = \"TestClass.testMethod\")"));
+        assertTrue(generatedCode.contains("@Before(marker = BodyMarker.class, scope = \"com.example.TestClass.testMethod\")"));
+        assertTrue(generatedCode.contains("@After(marker = BodyMarker.class, scope = \"com.example.TestClass.testMethod\")"));
         assertTrue(generatedCode.contains("public static void"));
         assertTrue(generatedCode.contains("DynamicContext di"));
 
