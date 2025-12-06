@@ -78,14 +78,6 @@ class DiSLAnalyzerProcessInteractionTest {
 
     @BeforeEach
     void setUp() throws IOException {
-        // Ensure stub generator is enabled for predictable non-empty output (env-based)
-        // StubModeExtension also sets this for suite-wide tests; keep here for clarity in this test
-        try {
-            StubResultsHelper.writeMinimalStubTestAndResults(tempDir.resolve("output"));
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-
         // Create a dummy method identifier for testing
         JavaClassIdentifier classIdentifier = new JavaClassIdentifier(
                 ClassIdentifierParameters.builder()
@@ -170,16 +162,13 @@ class DiSLAnalyzerProcessInteractionTest {
         // Given
         TestableAnalyzer analyzer = new TestableAnalyzer(testConfig, "mock-disl-failure.py");
 
-        // When
-        var generated = analyzer.runAnalysis(InstrumentationResult.builder()
-                .primaryArtifact(instrumentationJarPath)
-                .resultsListPath(resultsListPath)
-                .build());
-
-        // Then
-        assertNotNull(generated, "Analysis should return generated test paths even on failure");
-        // The analyzer should handle process failures gracefully and still return an empty list of generated tests
-        assertTrue(generated.getTestFiles().isEmpty() || generated.getTestFiles().size() >= 0);
+        // When/Then - Process failure should throw RuntimeException
+        assertThrows(RuntimeException.class, () -> {
+            analyzer.runAnalysis(InstrumentationResult.builder()
+                    .primaryArtifact(instrumentationJarPath)
+                    .resultsListPath(resultsListPath)
+                    .build());
+        });
     }
 
     @Test

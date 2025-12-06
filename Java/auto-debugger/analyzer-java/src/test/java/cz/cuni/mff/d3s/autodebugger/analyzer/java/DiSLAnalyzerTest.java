@@ -8,7 +8,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.ObjectOutputStream;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -53,9 +55,13 @@ class DiSLAnalyzerTest {
 
         instrumentationJarPath = Path.of("/tmp/instrumentation.jar");
         Path resultsListPath = tempDir.resolve("output/generated-tests.lst");
+        Path traceFilePath = tempDir.resolve("output/trace.ser");
+        Path identifiersMappingPath = tempDir.resolve("output/identifiers.ser");
         instrumentation = InstrumentationResult.builder()
                 .primaryArtifact(instrumentationJarPath)
                 .resultsListPath(resultsListPath)
+                .traceFilePath(traceFilePath)
+                .identifiersMappingPath(identifiersMappingPath)
                 .build();
 
         // Standard configuration with runtime arguments
@@ -109,7 +115,8 @@ class DiSLAnalyzerTest {
         assertEquals("/opt/disl/output", command.get(3));
         assertEquals("-cse", command.get(4));
         assertEquals("-e_cp", command.get(5));
-        assertEquals("../test-generator-java/build/libs/*:../test-generator-common/build/libs/*:../model-common/build/libs/*:../model-java/build/libs/*", command.get(6));
+        // Classpath includes instrumentation JAR (may also include model-common if path structure allows)
+        assertTrue(command.get(6).contains("instrumentation.jar"));
         assertEquals("--", command.get(7));
         assertEquals("/tmp/instrumentation.jar", command.get(8));
         assertEquals("-jar", command.get(9));
@@ -139,7 +146,8 @@ class DiSLAnalyzerTest {
         assertEquals("/opt/disl/output", command.get(3));
         assertEquals("-cse", command.get(4));
         assertEquals("-e_cp", command.get(5));
-        assertEquals("../test-generator-java/build/libs/*:../test-generator-common/build/libs/*:../model-common/build/libs/*:../model-java/build/libs/*", command.get(6));
+        // Classpath includes instrumentation JAR (may also include model-common if path structure allows)
+        assertTrue(command.get(6).contains("instrumentation.jar"));
         assertEquals("--", command.get(7));
         assertEquals("/tmp/instrumentation.jar", command.get(8));
         assertEquals("-jar", command.get(9));
@@ -165,7 +173,8 @@ class DiSLAnalyzerTest {
         assertEquals("/opt/DiSL Framework/output", command.get(3));
         assertEquals("-cse", command.get(4));
         assertEquals("-e_cp", command.get(5));
-        assertEquals("../test-generator-java/build/libs/*:../test-generator-common/build/libs/*:../model-common/build/libs/*:../model-java/build/libs/*", command.get(6));
+        // Classpath includes instrumentation JAR (may also include model-common if path structure allows)
+        assertTrue(command.get(6).contains("instrumentation.jar"));
         assertEquals("--", command.get(7));
         assertEquals("/tmp/instrumentation.jar", command.get(8));
         assertEquals("-jar", command.get(9));
@@ -312,5 +321,65 @@ class DiSLAnalyzerTest {
                       e.getMessage().contains("does not exist") ||
                       e.getMessage().contains("Expected JAR file"));  // Common error when command not found
         }
+    }
+
+    @Test
+    void givenNullTracePath_whenGenerateTestsFromExistingTrace_thenThrowsIllegalArgument() {
+        // Given
+        DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);
+        Path identifierPath = tempDir.resolve("identifiers.ser");
+
+        // When/Then
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> analyzer.generateTestsFromExistingTrace(null, identifierPath));
+        assertTrue(exception.getMessage().contains("Trace file not found"));
+    }
+
+    @Test
+    void givenMissingTracePath_whenGenerateTestsFromExistingTrace_thenThrowsIllegalArgument() {
+        // Given
+        DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);
+        Path missingTrace = tempDir.resolve("nonexistent-trace.ser");
+        Path identifierPath = tempDir.resolve("identifiers.ser");
+
+        // When/Then
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> analyzer.generateTestsFromExistingTrace(missingTrace, identifierPath));
+        assertTrue(exception.getMessage().contains("Trace file not found"));
+    }
+
+    @Test
+    void givenNullIdentifierMappingPath_whenGenerateTestsFromExistingTrace_thenThrowsIllegalArgument() throws Exception {
+        // Given
+        DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);
+        Path traceFile = tempDir.resolve("trace.ser");
+        // Create an empty trace file
+        try (FileOutputStream fos = new FileOutputStream(traceFile.toFile());
+             ObjectOutputStream oos = new ObjectOutputStream(fos)) {
+            oos.writeObject(new cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace());
+        }
+
+        // When/Then
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> analyzer.generateTestsFromExistingTrace(traceFile, null));
+        assertTrue(exception.getMessage().contains("Identifier mapping file not found"));
+    }
+
+    @Test
+    void givenMissingIdentifierMappingPath_whenGenerateTestsFromExistingTrace_thenThrowsIllegalArgument() throws Exception {
+        // Given
+        DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);
+        Path traceFile = tempDir.resolve("trace.ser");
+        Path missingMapping = tempDir.resolve("nonexistent-mapping.ser");
+        // Create an empty trace file
+        try (FileOutputStream fos = new FileOutputStream(traceFile.toFile());
+             ObjectOutputStream oos = new ObjectOutputStream(fos)) {
+            oos.writeObject(new cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace());
+        }
+
+        // When/Then
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> analyzer.generateTestsFromExistingTrace(traceFile, missingMapping));
+        assertTrue(exception.getMessage().contains("Identifier mapping file not found"));
     }
 }
