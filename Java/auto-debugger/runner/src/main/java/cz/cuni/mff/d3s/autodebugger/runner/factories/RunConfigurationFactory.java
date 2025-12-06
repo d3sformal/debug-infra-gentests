@@ -34,6 +34,8 @@ public class RunConfigurationFactory {
         throw new IllegalArgumentException("Unsupported language: " + arguments.language);
     }
 
+    private static final String DISL_HOME_ENV = "DISL_HOME";
+
     private static JavaRunConfiguration createJavaRunConfiguration(Arguments arguments) {
         log.info("Creating Java run configuration from arguments");
 
@@ -42,7 +44,7 @@ public class RunConfigurationFactory {
             var applicationPath = Path.of(arguments.applicationJarPath);
             var sourceCodePath = Path.of(arguments.sourceCodePath);
             var outputDir = arguments.outputDirectory != null ? Path.of(arguments.outputDirectory) : Path.of("auto-debugger-output");
-            var dislHomePath = Path.of(arguments.dislHomePath);
+            var dislHomePath = resolveDislHomePath(arguments.dislHomePath);
             var classpathEntries = arguments.classpath.stream().map(Path::of).toList();
 
             var parser = new JavaMethodSignatureParser();
@@ -75,6 +77,7 @@ public class RunConfigurationFactory {
                     .dislHomePath(dislHomePath)
                     .outputDirectory(outputDir)
                     .traceMode(traceMode)
+                    .testGenerationStrategy(arguments.testGenerationStrategy)
                     .build();
 
             // Validate the configuration
@@ -87,5 +90,32 @@ public class RunConfigurationFactory {
             log.error("Failed to create Java run configuration", e);
             throw new RuntimeException("Failed to create run configuration", e);
         }
+    }
+
+    /**
+     * Resolves DiSL home path from CLI argument or DISL_HOME environment variable.
+     *
+     * @param cliDislHomePath CLI argument value (may be null)
+     * @return Resolved DiSL home path
+     * @throws IllegalArgumentException if DiSL path cannot be resolved
+     */
+    private static Path resolveDislHomePath(String cliDislHomePath) {
+        // 1. CLI argument takes precedence
+        if (cliDislHomePath != null && !cliDislHomePath.isBlank()) {
+            log.debug("Using DiSL home from CLI argument: {}", cliDislHomePath);
+            return Path.of(cliDislHomePath).toAbsolutePath().normalize();
+        }
+
+        // 2. Fall back to DISL_HOME environment variable
+        String envDislHome = System.getenv(DISL_HOME_ENV);
+        if (envDislHome != null && !envDislHome.isBlank()) {
+            log.info("Using {} from environment: {}", DISL_HOME_ENV, envDislHome);
+            return Path.of(envDislHome).toAbsolutePath().normalize();
+        }
+
+        // 3. No DiSL path available
+        throw new IllegalArgumentException(
+            "DiSL home path not specified. Use --disl-home argument or set " +
+            DISL_HOME_ENV + " environment variable.");
     }
 }
