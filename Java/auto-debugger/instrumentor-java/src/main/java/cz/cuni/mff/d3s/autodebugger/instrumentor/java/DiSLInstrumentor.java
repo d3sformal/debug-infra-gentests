@@ -62,43 +62,21 @@ public class DiSLInstrumentor implements Instrumentor {
         Path resultsBaseDir = Optional.ofNullable(System.getenv("AUTODEBUGGER_RESULTS_DIR"))
                 .map(Path::of)
                 .orElse(runConfiguration.getOutputDirectory());
-        var resultsListPath = generateResultsListPath(resultsBaseDir);
+        var traceFilePath = generateTraceFilePath(resultsBaseDir);
         // No need to set a system property; analyzer will read from runConfiguration output directory
-
-        // Extract minimal generation context from the model if possible
-        String targetPackage = "";
-        String targetClass = "";
-        String targetMethod = "";
-        String targetReturn = "";
-        try {
-            if (model instanceof DiSLModel dislModel) {
-                var tm = dislModel.getTargetMethod();
-                targetPackage = tm.getPackageName();
-                targetClass = tm.getClassName();
-                targetMethod = tm.getSimpleSignature();
-                try { targetReturn = tm.getReturnType(); } catch (Exception ignored) { targetReturn = ""; }
-            }
-        } catch (Exception ignore) {
-            log.warn("Failed to extract target method from model; skipping target metadata injection into Collector");
-        }
 
         templateHandler.transformFile(
                 collectorTemplate,
                 generatedCodeOutputDirectory.resolve("Collector.java"),
                 Pair.with("PATH", identifierMapping.toAbsolutePath().toString()),
-                Pair.with("RESULTS", resultsListPath.toAbsolutePath().toString()),
-                Pair.with("TARGET_PACKAGE", targetPackage),
-                Pair.with("TARGET_CLASS", targetClass),
-                Pair.with("TARGET_METHOD", targetMethod),
-                Pair.with("TARGET_RETURN", targetReturn),
-                Pair.with("STRATEGY", strategyId != null ? strategyId : "trace-based-naive"),
+                Pair.with("TRACE_PATH", traceFilePath.toAbsolutePath().toString()),
                 Pair.with("TRACE_MODE", runConfiguration.getTraceMode().name().toLowerCase()));
         var instrumentationJarPath = generateDiSLClass(model).flatMap(this::compileDiSLClass)
                 .orElseThrow();
         return InstrumentationResult.builder()
                 .primaryArtifact(instrumentationJarPath)
                 .identifiersMappingPath(identifierMapping)
-                .resultsListPath(resultsListPath)
+                .traceFilePath(traceFilePath)
                 .build();
     }
 
@@ -153,17 +131,17 @@ public class DiSLInstrumentor implements Instrumentor {
         }
     }
 
-    private Path generateResultsListPath(Path outputDirectory) {
+    private Path generateTraceFilePath(Path outputDirectory) {
         try {
             if (!Files.exists(outputDirectory)) {
                 Files.createDirectories(outputDirectory);
             }
             String runId = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS")
                     .format(java.time.LocalDateTime.now()) + "-" + java.util.UUID.randomUUID();
-            String fileName = String.format("generated-tests-%s.lst", runId);
+            String fileName = String.format("trace-%s.ser", runId);
             return outputDirectory.resolve(fileName);
         } catch (IOException e) {
-            log.error("Failed to create results list file", e);
+            log.error("Failed to create trace file path", e);
             throw new RuntimeException(e);
         }
     }
