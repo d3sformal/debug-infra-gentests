@@ -9,10 +9,16 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.common.AnthropicClient;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.common.LLMConfiguration;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerationContext;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerator;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.java.JavaTestGenerationContextFactory;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.java.llm.CodeValidator;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.java.llm.LLMBasedTestGenerator;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.java.llm.PromptBuilder;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.java.trace.NaiveTraceBasedGenerator;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.java.trace.TemporalTraceBasedGenerator;
 import java.io.FileInputStream;
 import java.io.ObjectInputStream;
 
@@ -91,10 +97,10 @@ public class DiSLAnalyzer implements Analyzer {
                     .build();
         }
 
-        NaiveTraceBasedGenerator generator = createTestGenerator(instrumentation.getIdentifiersMappingPath());
+        TestGenerator generator = createTestGenerator(instrumentation.getIdentifiersMappingPath());
         TestGenerationContext context = JavaTestGenerationContextFactory
                 .createFromJavaRunConfiguration(runConfiguration);
-        List<Path> generatedTests = generator.generateTests(trace, context);
+        List<Path> generatedTests = generator.generateTests(trace, runConfiguration.getSourceCodePath(), context);
 
         return TestSuite.builder()
                 .baseDirectory(runConfiguration.getOutputDirectory())
@@ -130,10 +136,10 @@ public class DiSLAnalyzer implements Analyzer {
                     .build();
         }
 
-        NaiveTraceBasedGenerator generator = createTestGenerator(identifierMappingPath);
+        TestGenerator generator = createTestGenerator(identifierMappingPath);
         TestGenerationContext context = JavaTestGenerationContextFactory
                 .createFromJavaRunConfiguration(runConfiguration);
-        List<Path> generatedTests = generator.generateTests(trace, context);
+        List<Path> generatedTests = generator.generateTests(trace, runConfiguration.getSourceCodePath(), context);
 
         return TestSuite.builder()
                 .baseDirectory(runConfiguration.getOutputDirectory())
@@ -170,13 +176,12 @@ public class DiSLAnalyzer implements Analyzer {
         // Run with the client (target app), server (DiSL instrumentation server), and evaluation (ShadowVM)
         command.add("-cse");
 
-        // Add the evaluation classpath
-        // Note that this is not present in the basic distribution of DiSL - and might potentially be unnecessary
-        // Subject to further testing...
-        command.add("-e_cp");
-        // Include the instrumentation JAR so DiSL RE server can find the Collector class
+        // Add the evaluation (Shadow VM) classpath via JVM options
+        // Include the instrumentation JAR so Shadow VM can find the Collector class
         // Convert relative paths to absolute paths since DiSL runs from output directory
+        // DiSL script requires using '=' syntax for arguments starting with dash
         String evaluationClasspath = getEvaluationClasspath(instrumentationJarPath);
+        command.add("-e_opts=-cp");
         command.add(evaluationClasspath);
 
         command.add("--");
@@ -267,14 +272,53 @@ public class DiSLAnalyzer implements Analyzer {
     /**
      * Creates the appropriate TestGenerator based on configuration.
      * @param identifierMappingPath Path to the serialized identifier mapping
-     * @return A NaiveTraceBasedGenerator instance
+     * @return A TestGenerator instance based on the configured strategy
      */
-    private NaiveTraceBasedGenerator createTestGenerator(Path identifierMappingPath) {
+    private TestGenerator createTestGenerator(Path identifierMappingPath) {
         if (identifierMappingPath == null || !Files.exists(identifierMappingPath)) {
             throw new IllegalArgumentException("Identifier mapping file not found: " + identifierMappingPath);
         }
-        log.info("Creating test generator with identifier mapping: {}", identifierMappingPath);
-        return new NaiveTraceBasedGenerator(identifierMappingPath);
+
+        String strategy = runConfiguration.getTestGenerationStrategy();
+        log.info("Creating test generator with strategy: {} and identifier mapping: {}", strategy, identifierMappingPath);
+
+        return switch (strategy) {
+            case "trace-based-basic" -> new NaiveTraceBasedGenerator(identifierMappingPath);
+            case "trace-based-advanced" -> new TemporalTraceBasedGenerator();
+            case "ai-assisted" -> createLLMBasedGenerator();
+            default -> {
+                log.warn("Unknown strategy '{}', falling back to trace-based-basic", strategy);
+                yield new NaiveTraceBasedGenerator(identifierMappingPath);
+            }
+        };
+    }
+
+    private LLMBasedTestGenerator createLLMBasedGenerator() {
+        AnthropicClient anthropicClient = new AnthropicClient();
+        PromptBuilder promptBuilder = new PromptBuilder();
+        CodeValidator codeValidator = new CodeValidator();
+
+        LLMBasedTestGenerator generator = new LLMBasedTestGenerator(
+                anthropicClient, promptBuilder, codeValidator);
+
+        try {
+            String apiKey = System.getenv("ANTHROPIC_API_KEY");
+            LLMConfiguration llmConfig = LLMConfiguration.builder()
+                    .modelName("claude-sonnet-4-20250514")
+                    .apiKey(apiKey)
+                    .maxTokens(4000)
+                    .temperature(0.3)
+                    .build();
+
+            generator.configure(llmConfig);
+            generator.setGenerationTechnique("ai-assisted");
+
+            log.info("Created LLM-based test generator with Claude");
+            return generator;
+        } catch (Exception e) {
+            log.error("Failed to configure LLM-based test generator", e);
+            throw new RuntimeException("Failed to configure LLM-based test generator", e);
+        }
     }
 
     /**
