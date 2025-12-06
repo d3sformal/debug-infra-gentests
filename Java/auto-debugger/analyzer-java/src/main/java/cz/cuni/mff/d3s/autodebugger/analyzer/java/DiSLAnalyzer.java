@@ -8,6 +8,13 @@ import cz.cuni.mff.d3s.autodebugger.model.java.helper.DiSLPathHelper;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerationContext;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerator;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.java.JavaTestGenerationContextFactory;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.java.trace.NaiveTraceBasedGenerator;
+import java.io.FileInputStream;
+import java.io.ObjectInputStream;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -43,15 +50,14 @@ public class DiSLAnalyzer implements Analyzer {
     /**
      * Executes the instrumented Java application and collects runtime traces.
      * Runs the application as a separate process with DiSL instrumentation,
-     * captures output streams, and collects generated test files.
+     * captures output streams, and generates tests locally.
      *
      * The Collector (running in the DiSL process) is responsible for:
      * - Collecting runtime values
      * - Building the Trace
-     * - Generating tests
-     * - Writing test file paths to the results list
+     * - Serializing the Trace to disk
      *
-     * This method only orchestrates the execution and collects the results.
+     * This method orchestrates the execution, deserializes the trace, and generates tests.
      */
     @Override
     public TestSuite runAnalysis(InstrumentationResult instrumentation) {
@@ -75,8 +81,59 @@ public class DiSLAnalyzer implements Analyzer {
             throw new RuntimeException("Analysis execution failed", e);
         }
 
-        // Collector has already generated tests - just collect the results
-        List<Path> generatedTests = collectGeneratedTestFiles(instrumentation);
+        // Post-processing: deserialize trace and generate tests locally
+        Trace trace = deserializeTrace(instrumentation.getTraceFilePath());
+        if (trace == null || isTraceEmpty(trace)) {
+            log.warn("No trace data collected, returning empty test suite");
+            return TestSuite.builder()
+                    .baseDirectory(runConfiguration.getOutputDirectory())
+                    .testFiles(List.of())
+                    .build();
+        }
+
+        NaiveTraceBasedGenerator generator = createTestGenerator(instrumentation.getIdentifiersMappingPath());
+        TestGenerationContext context = JavaTestGenerationContextFactory
+                .createFromJavaRunConfiguration(runConfiguration);
+        List<Path> generatedTests = generator.generateTests(trace, context);
+
+        return TestSuite.builder()
+                .baseDirectory(runConfiguration.getOutputDirectory())
+                .testFiles(generatedTests)
+                .build();
+    }
+
+    /**
+     * Generates tests from an existing serialized trace file without running instrumentation.
+     * This enables retry capability when test generation failed but the trace was successfully collected.
+     *
+     * @param traceFilePath Path to the serialized trace file
+     * @param identifierMappingPath Path to the serialized identifier mapping
+     * @return TestSuite containing generated test files
+     * @throws IllegalArgumentException if either file is null or doesn't exist
+     */
+    public TestSuite generateTestsFromExistingTrace(Path traceFilePath, Path identifierMappingPath) {
+        log.info("Generating tests from existing trace: {}", traceFilePath);
+
+        if (traceFilePath == null || !Files.exists(traceFilePath)) {
+            throw new IllegalArgumentException("Trace file not found: " + traceFilePath);
+        }
+        if (identifierMappingPath == null || !Files.exists(identifierMappingPath)) {
+            throw new IllegalArgumentException("Identifier mapping file not found: " + identifierMappingPath);
+        }
+
+        Trace trace = deserializeTrace(traceFilePath);
+        if (trace == null || isTraceEmpty(trace)) {
+            log.warn("Trace is empty or could not be deserialized");
+            return TestSuite.builder()
+                    .baseDirectory(runConfiguration.getOutputDirectory())
+                    .testFiles(List.of())
+                    .build();
+        }
+
+        NaiveTraceBasedGenerator generator = createTestGenerator(identifierMappingPath);
+        TestGenerationContext context = JavaTestGenerationContextFactory
+                .createFromJavaRunConfiguration(runConfiguration);
+        List<Path> generatedTests = generator.generateTests(trace, context);
 
         return TestSuite.builder()
                 .baseDirectory(runConfiguration.getOutputDirectory())
@@ -180,37 +237,86 @@ public class DiSLAnalyzer implements Analyzer {
         return exitCode;
     }
 
-    private List<Path> collectGeneratedTestFiles(InstrumentationResult instrumentation) {
-        List<Path> generatedTests = new ArrayList<>();
-        try {
-            Path resultsFile = instrumentation.getResultsListPath();
-            if (resultsFile == null) {
-                log.warn("No results list path available; no tests will be returned");
-                return generatedTests;
-            }
-            if (!Files.exists(resultsFile)) {
-                log.warn("No generated test list file found at {}", resultsFile);
-                return generatedTests;
-            }
-            log.info("Reading generated test list from {}", resultsFile);
-            var lines = Files.readAllLines(resultsFile);
-            lines.forEach(l -> {
-                log.info("Generated test: {}", l);
-                generatedTests.add(Path.of(l));
-            });
-        } catch (Exception ex) {
-            log.warn("Failed to read generated test list", ex);
+    /**
+     * Deserializes a Trace object from a file.
+     * @param traceFilePath Path to the serialized trace file
+     * @return The deserialized Trace object, or null if not available
+     */
+    private Trace deserializeTrace(Path traceFilePath) {
+        if (traceFilePath == null) {
+            log.warn("Trace file path is null");
+            return null;
         }
-        return generatedTests;
+        if (!Files.exists(traceFilePath)) {
+            log.warn("Trace file does not exist: {}", traceFilePath);
+            return null;
+        }
+
+        log.info("Deserializing trace from: {}", traceFilePath);
+        try (FileInputStream fileInput = new FileInputStream(traceFilePath.toFile());
+             ObjectInputStream objectInput = new ObjectInputStream(fileInput)) {
+            Trace trace = (Trace) objectInput.readObject();
+            log.info("Successfully deserialized trace");
+            return trace;
+        } catch (Exception e) {
+            log.error("Failed to deserialize trace from {}", traceFilePath, e);
+            return null;
+        }
+    }
+
+    /**
+     * Creates the appropriate TestGenerator based on configuration.
+     * @param identifierMappingPath Path to the serialized identifier mapping
+     * @return A NaiveTraceBasedGenerator instance
+     */
+    private NaiveTraceBasedGenerator createTestGenerator(Path identifierMappingPath) {
+        if (identifierMappingPath == null || !Files.exists(identifierMappingPath)) {
+            throw new IllegalArgumentException("Identifier mapping file not found: " + identifierMappingPath);
+        }
+        log.info("Creating test generator with identifier mapping: {}", identifierMappingPath);
+        return new NaiveTraceBasedGenerator(identifierMappingPath);
+    }
+
+    /**
+     * Checks if a Trace object is empty (has no values).
+     * @param trace The trace to check
+     * @return true if the trace has no values, false otherwise
+     */
+    private boolean isTraceEmpty(Trace trace) {
+        // Check if trace has any values in any slot
+        // We need to check a reasonable range of slots (0-100)
+        for (int slot = 0; slot < 100; slot++) {
+            if (!trace.getIntValues(slot).isEmpty() ||
+                !trace.getLongValues(slot).isEmpty() ||
+                !trace.getBooleanValues(slot).isEmpty() ||
+                !trace.getFloatValues(slot).isEmpty() ||
+                !trace.getDoubleValues(slot).isEmpty() ||
+                !trace.getCharValues(slot).isEmpty() ||
+                !trace.getByteValues(slot).isEmpty() ||
+                !trace.getShortValues(slot).isEmpty()) {
+                return false; // Found at least one value
+            }
+        }
+        return true; // No values found in any checked slot
     }
 
     private static String getEvaluationClasspath(Path instrumentationJarPath) {
         Path instrumentationJarAbsolutePath = instrumentationJarPath.toAbsolutePath();
-        return instrumentationJarAbsolutePath + ":" +
-                                   instrumentationJarAbsolutePath.getParent().getParent().getParent().resolve("test-generator-java/build/libs").toAbsolutePath() + "/*:" +
-                                   instrumentationJarAbsolutePath.getParent().getParent().getParent().resolve("test-generator-common/build/libs").toAbsolutePath() + "/*:" +
-                                   instrumentationJarAbsolutePath.getParent().getParent().getParent().resolve("model-common/build/libs").toAbsolutePath() + "/*:" +
-                                   instrumentationJarAbsolutePath.getParent().getParent().getParent().resolve("model-java/build/libs").toAbsolutePath() + "/*";
+        // Only need model-common for Trace serialization in ShadowVM
+        // Navigate up to find the project root (where model-common is located)
+        Path parent = instrumentationJarAbsolutePath.getParent();
+        if (parent != null) {
+            Path grandparent = parent.getParent();
+            if (grandparent != null) {
+                Path greatGrandparent = grandparent.getParent();
+                if (greatGrandparent != null) {
+                    return instrumentationJarAbsolutePath + ":" +
+                           greatGrandparent.resolve("model-common/build/libs").toAbsolutePath() + "/*";
+                }
+            }
+        }
+        // Fallback: just include the instrumentation JAR itself
+        return instrumentationJarAbsolutePath.toString();
     }
 
     private void readStream(InputStream inputStream, StringBuilder output) {
