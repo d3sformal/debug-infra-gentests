@@ -114,7 +114,7 @@ class DiSLAnalyzerTest {
         assertEquals("-d", command.get(2));
         assertEquals("/opt/disl/output", command.get(3));
         assertEquals("-cse", command.get(4));
-        assertEquals("-e_cp", command.get(5));
+        assertEquals("-e_opts=-cp", command.get(5));
         // Classpath includes instrumentation JAR (may also include model-common if path structure allows)
         assertTrue(command.get(6).contains("instrumentation.jar"));
         assertEquals("--", command.get(7));
@@ -145,7 +145,7 @@ class DiSLAnalyzerTest {
         assertEquals("-d", command.get(2));
         assertEquals("/opt/disl/output", command.get(3));
         assertEquals("-cse", command.get(4));
-        assertEquals("-e_cp", command.get(5));
+        assertEquals("-e_opts=-cp", command.get(5));
         // Classpath includes instrumentation JAR (may also include model-common if path structure allows)
         assertTrue(command.get(6).contains("instrumentation.jar"));
         assertEquals("--", command.get(7));
@@ -172,7 +172,7 @@ class DiSLAnalyzerTest {
         assertEquals("-d", command.get(2));
         assertEquals("/opt/DiSL Framework/output", command.get(3));
         assertEquals("-cse", command.get(4));
-        assertEquals("-e_cp", command.get(5));
+        assertEquals("-e_opts=-cp", command.get(5));
         // Classpath includes instrumentation JAR (may also include model-common if path structure allows)
         assertTrue(command.get(6).contains("instrumentation.jar"));
         assertEquals("--", command.get(7));
