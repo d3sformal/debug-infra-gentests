@@ -1,14 +1,8 @@
 import ch.usi.dag.dislreserver.remoteanalysis.RemoteAnalysis;
 import ch.usi.dag.dislreserver.shadow.ShadowObject;
 import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
-import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaValueIdentifier;
-import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerationContext;
-import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerationContextFactory;
-import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerator;
-import cz.cuni.mff.d3s.autodebugger.testgenerator.java.trace.NaiveTraceBasedGenerator;
 import java.nio.file.Path;
 import java.nio.file.Files;
-import java.nio.file.StandardOpenOption;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.List;
@@ -21,26 +15,23 @@ public class Collector extends RemoteAnalysis {
   private final String messageFormat = "[%s]: %s";
   private final String processName = "Receiving process";
   private final String identifierMappingFilePath = "${PATH}";
-  private final String resultsListPath = "${RESULTS}";
+  private final String traceFilePath = "${TRACE_PATH}";
   private final String traceMode = "${TRACE_MODE}";
-  private final String targetPackage = "${TARGET_PACKAGE}";
-  private final String targetClass = "${TARGET_CLASS}";
-  private final String targetMethod = "${TARGET_METHOD}";
-  private final String targetReturn = "${TARGET_RETURN}";
-  private final String strategyId = "${STRATEGY}";
 
-  private Map<Integer, JavaValueIdentifier> identifierMapping;
+  // Debug mode: set to true for verbose output, false for production
+  private static final boolean DEBUG = true;
+
   private Trace trace;
-  private Map<Integer, Object> collectedValues = new HashMap<>(); // Fallback storage for last values
-  private java.util.List<Map<Integer, Object>> allInvocations = new java.util.ArrayList<>(); // All method invocations
-  private Map<Integer, Object> currentInvocation = new HashMap<>(); // Current method invocation being collected
+  private Map<Integer, Object> collectedValues = new HashMap<>();
+  private java.util.List<Map<Integer, Object>> allInvocations = new java.util.ArrayList<>();
+  private Map<Integer, Object> currentInvocation = new HashMap<>();
   private int currentEventIndex = 0;
 
   public Collector() {
     System.out.println("*** COLLECTOR CONSTRUCTOR CALLED ***");
     try {
       System.out.println("*** COLLECTOR: identifierMappingFilePath = " + identifierMappingFilePath + " ***");
-      System.out.println("*** COLLECTOR: resultsListPath = " + resultsListPath + " ***");
+      System.out.println("*** COLLECTOR: traceFilePath = " + traceFilePath + " ***");
 
       System.out.println("*** COLLECTOR: About to initialize simple data structures ***");
 
@@ -49,7 +40,6 @@ public class Collector extends RemoteAnalysis {
       this.allInvocations = new java.util.ArrayList<>();
       this.currentInvocation = new HashMap<>();
       this.trace = null; // Will be created lazily in atExit
-      this.identifierMapping = null; // Will be loaded lazily in atExit
 
       System.out.println("*** COLLECTOR: Simple initialization completed ***");
 
@@ -57,8 +47,6 @@ public class Collector extends RemoteAnalysis {
     } catch (Exception e) {
       System.err.println("*** COLLECTOR: Constructor failed: " + e.getMessage() + " ***");
       e.printStackTrace();
-      // Initialize with defaults to prevent further failures
-      this.identifierMapping = new HashMap<>();
     }
   }
 
@@ -72,21 +60,7 @@ public class Collector extends RemoteAnalysis {
     }
   }
 
-  private Map<Integer, JavaValueIdentifier> loadIdentifierMapping(String path) {
-    System.out.println("*** COLLECTOR: loadIdentifierMapping called with path = " + path + " ***");
-    try {
-      try (java.io.FileInputStream fileReader = new java.io.FileInputStream(java.nio.file.Path.of(path).toFile());
-           java.io.ObjectInputStream objectStream = new java.io.ObjectInputStream(fileReader)) {
-        @SuppressWarnings("unchecked")
-        Map<Integer, JavaValueIdentifier> loaded = (HashMap<Integer, JavaValueIdentifier>) objectStream.readObject();
-        System.out.println("*** COLLECTOR: Loaded identifier mapping with " + loaded.size() + " entries ***");
-        return loaded;
-      }
-    } catch (Exception e) {
-      System.err.println("*** COLLECTOR: Failed to load identifier mapping: " + e.getMessage() + " ***");
-      return new HashMap<>();
-    }
-  }
+
 
 
 
@@ -327,68 +301,44 @@ public class Collector extends RemoteAnalysis {
 
     try {
       if (allInvocations.isEmpty()) {
-        System.out.println(String.format(messageFormat, processName, "No values collected"));
+        System.out.println(String.format(messageFormat, processName, "No values collected - skipping trace serialization"));
         return;
       }
 
-      // Print all invocations for debugging
-      for (int i = 0; i < allInvocations.size(); i++) {
-        Map<Integer, Object> invocation = allInvocations.get(i);
-        System.out.println(String.format(messageFormat, processName, "Invocation " + (i + 1) + ":"));
-        for (Map.Entry<Integer, Object> entry : invocation.entrySet()) {
-          System.out.println(String.format(messageFormat, processName, "  Slot " + entry.getKey() + ": " + entry.getValue()));
+      // Print all invocations for debugging (only in DEBUG mode)
+      if (DEBUG) {
+        for (int i = 0; i < allInvocations.size(); i++) {
+          Map<Integer, Object> invocation = allInvocations.get(i);
+          System.out.println(String.format(messageFormat, processName, "Invocation " + (i + 1) + ":"));
+          for (Map.Entry<Integer, Object> entry : invocation.entrySet()) {
+            System.out.println(String.format(messageFormat, processName, "  Slot " + entry.getKey() + ": " + entry.getValue()));
+          }
         }
       }
 
-      // 1. Load identifier mapping
-      System.out.println(String.format(messageFormat, processName, "Loading identifier mapping from: " + identifierMappingFilePath));
-      identifierMapping = loadIdentifierMapping(identifierMappingFilePath);
-      if (identifierMapping == null || identifierMapping.isEmpty()) {
-        System.err.println(String.format(messageFormat, processName, "Failed to load identifier mapping - cannot generate tests"));
-        return;
-      }
-
-      // 2. Build Trace from collected invocations
+      // Build Trace from collected invocations
       System.out.println(String.format(messageFormat, processName, "Building trace from " + allInvocations.size() + " invocations"));
       Trace trace = buildTraceFromInvocations(allInvocations);
 
-      // 3. Create test generation context
-      System.out.println(String.format(messageFormat, processName, "Creating test generation context"));
-      TestGenerationContext context = buildContext();
+      // Serialize trace to traceFilePath
+      System.out.println(String.format(messageFormat, processName, "Serializing trace to: " + traceFilePath));
+      Path traceFile = Path.of(traceFilePath);
+      Files.createDirectories(traceFile.getParent());
 
-      // 4. Create appropriate test generator
-      System.out.println(String.format(messageFormat, processName, "Creating test generator for strategy: " + strategyId));
-      TestGenerator generator = createTestGenerator(strategyId, identifierMapping);
-
-      // 5. Generate tests
-      System.out.println(String.format(messageFormat, processName, "Generating tests..."));
-      List<Path> generatedTestFiles = generator.generateTests(trace, context);
-      System.out.println(String.format(messageFormat, processName, "Generated " + generatedTestFiles.size() + " test files"));
-
-      // 6. Write test file paths to results list
-      Path resultsFile = Path.of(resultsListPath);
-      Files.createDirectories(resultsFile.getParent());
-
-      for (Path testFile : generatedTestFiles) {
-        Files.writeString(resultsFile,
-            testFile.toAbsolutePath().toString() + System.lineSeparator(),
-            StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        System.out.println(String.format(messageFormat, processName, "Wrote test file path: " + testFile.toAbsolutePath()));
+      try (java.io.FileOutputStream fileOutput = new java.io.FileOutputStream(traceFile.toFile());
+           java.io.ObjectOutputStream objectStream = new java.io.ObjectOutputStream(fileOutput)) {
+        objectStream.writeObject(trace);
       }
 
-      System.out.println(String.format(messageFormat, processName, "Test generation complete"));
+      System.out.println(String.format(messageFormat, processName, "Trace serialization complete"));
 
     } catch (Exception e) {
-      System.err.println(String.format(messageFormat, processName, "Error during test generation: " + e.getMessage()));
+      System.err.println(String.format(messageFormat, processName, "Error during trace serialization: " + e.getMessage()));
       e.printStackTrace();
     }
   }
 
-  private TestGenerationContext buildContext() {
-    var outDir = Path.of(resultsListPath).getParent();
-    return TestGenerationContextFactory.createFromStrings(
-      targetPackage, targetClass, targetMethod, targetReturn, outDir);
-  }
+
 
   /**
    * Builds a Trace object from the collected invocations.
@@ -425,28 +375,7 @@ public class Collector extends RemoteAnalysis {
     return trace;
   }
 
-  /**
-   * Creates the appropriate test generator based on the strategy ID.
-   * Currently supports:
-   * - "trace-based-naive": NaiveTraceBasedGenerator
-   * Falls back to NaiveTraceBasedGenerator for unknown strategies.
-   */
-  private TestGenerator createTestGenerator(String strategy, Map<Integer, JavaValueIdentifier> mapping) {
-    switch (strategy) {
-      case "trace-based-naive":
-        System.out.println(String.format(messageFormat, processName, "Creating NaiveTraceBasedGenerator"));
-        return new NaiveTraceBasedGenerator(mapping);
-      case "trace-based-temporal":
-        // Future: return new TemporalTraceBasedGenerator(mapping);
-        System.err.println(String.format(messageFormat, processName,
-            "Temporal trace strategy not yet supported in Collector, falling back to naive"));
-        return new NaiveTraceBasedGenerator(mapping);
-      default:
-        System.err.println(String.format(messageFormat, processName,
-            "Unknown strategy: " + strategy + ", falling back to naive"));
-        return new NaiveTraceBasedGenerator(mapping);
-    }
-  }
+
 
   @Override
   public void objectFree(ch.usi.dag.dislreserver.shadow.ShadowObject obj) {
