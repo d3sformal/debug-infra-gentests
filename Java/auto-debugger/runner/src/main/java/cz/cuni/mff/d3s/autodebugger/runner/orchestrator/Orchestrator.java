@@ -100,11 +100,12 @@ public class Orchestrator {
                 analysisResult.getTraceFilePath());
         }
 
-        // Create the test generator
+        // Create the test generator with identifier mapping path from analysis result
         TestGenerator generator = TestGeneratorFactory.createTestGenerator(
             runConfiguration,
             technique.getId(),
-            technique.getApiKey());
+            technique.getApiKey(),
+            analysisResult.getIdentifiersMappingPath());
 
         // Generate tests
         TestGenerationContext context = createTestGenerationContext();

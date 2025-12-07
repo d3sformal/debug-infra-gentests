@@ -23,15 +23,19 @@ public class TestGeneratorFactory {
     }
 
     public static TestGenerator createTestGenerator(RunConfiguration runConfiguration, String strategyId, String apiKey) {
+        return createTestGenerator(runConfiguration, strategyId, apiKey, null);
+    }
+
+    public static TestGenerator createTestGenerator(RunConfiguration runConfiguration, String strategyId, String apiKey, Path identifierMappingPath) {
         TargetLanguage language = runConfiguration.getLanguage();
         if (language == TargetLanguage.JAVA) {
-            return createJavaTestGenerator(runConfiguration, strategyId, apiKey);
+            return createJavaTestGenerator(runConfiguration, strategyId, apiKey, identifierMappingPath);
         }
 
         throw new IllegalArgumentException("Unsupported language: " + language);
     }
 
-    private static TestGenerator createJavaTestGenerator(RunConfiguration runConfiguration, String strategyId, String apiKey) {
+    private static TestGenerator createJavaTestGenerator(RunConfiguration runConfiguration, String strategyId, String apiKey, Path identifierMappingPath) {
         log.info("Creating Java test generator with strategy: {}", strategyId);
 
         // Validate that the strategy exists
@@ -70,7 +74,10 @@ public class TestGeneratorFactory {
 
                 } else if (strategyId.startsWith("trace-based")) {
                     // Create the trace-based test generator
-                    Path identifiersPath = javaRunConfiguration.getSourceCodePath().resolve("identifiers");
+                    // Use provided identifier mapping path if available, otherwise fall back to default location
+                    Path identifiersPath = identifierMappingPath != null
+                            ? identifierMappingPath
+                            : javaRunConfiguration.getSourceCodePath().resolve("identifiers");
                     NaiveTraceBasedGenerator generator = new NaiveTraceBasedGenerator(identifiersPath);
 
                     log.info("Successfully created Java test generator with strategy: {}", strategyId);
