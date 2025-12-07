@@ -3,25 +3,11 @@ package cz.cuni.mff.d3s.autodebugger.analyzer.java;
 import cz.cuni.mff.d3s.autodebugger.analyzer.common.Analyzer;
 import cz.cuni.mff.d3s.autodebugger.analyzer.common.AnalysisResult;
 import cz.cuni.mff.d3s.autodebugger.model.common.artifacts.InstrumentationResult;
-import cz.cuni.mff.d3s.autodebugger.model.common.tests.TestSuite;
 import cz.cuni.mff.d3s.autodebugger.model.java.JavaRunConfiguration;
 import cz.cuni.mff.d3s.autodebugger.model.java.helper.DiSLPathHelper;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
-import cz.cuni.mff.d3s.autodebugger.testgenerator.common.AnthropicClient;
-import cz.cuni.mff.d3s.autodebugger.testgenerator.common.LLMConfiguration;
-import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerationContext;
-import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerator;
-import cz.cuni.mff.d3s.autodebugger.testgenerator.java.JavaTestGenerationContextFactory;
-import cz.cuni.mff.d3s.autodebugger.testgenerator.java.llm.CodeValidator;
-import cz.cuni.mff.d3s.autodebugger.testgenerator.java.llm.LLMBasedTestGenerator;
-import cz.cuni.mff.d3s.autodebugger.testgenerator.java.llm.PromptBuilder;
-import cz.cuni.mff.d3s.autodebugger.testgenerator.java.trace.NaiveTraceBasedGenerator;
-import cz.cuni.mff.d3s.autodebugger.testgenerator.java.trace.TemporalTraceBasedGenerator;
-import java.io.FileInputStream;
-import java.io.ObjectInputStream;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -96,83 +82,7 @@ public class DiSLAnalyzer implements Analyzer {
                 .build();
     }
 
-    /**
-     * Executes the instrumented Java application and collects runtime traces.
-     * Runs the application as a separate process with DiSL instrumentation,
-     * captures output streams, and generates tests locally.
-     *
-     * The Collector (running in the DiSL process) is responsible for:
-     * - Collecting runtime values
-     * - Building the Trace
-     * - Serializing the Trace to disk
-     *
-     * This method orchestrates the execution, deserializes the trace, and generates tests.
-     *
-     * @deprecated Use {@link #executeAnalysis(InstrumentationResult)} followed by
-     *             test generation in the Orchestrator for cleaner separation.
-     */
-    @Override
-    @Deprecated
-    public TestSuite runAnalysis(InstrumentationResult instrumentation) {
-        // Delegate to new method for analysis
-        AnalysisResult analysisResult = executeAnalysis(instrumentation);
 
-        // Then do test generation (the part that will move to Orchestrator)
-        Trace trace = deserializeTrace(analysisResult.getTraceFilePath());
-        validateTestGenerationPrerequisites(
-                analysisResult.getTraceFilePath(),
-                analysisResult.getIdentifiersMappingPath(),
-                trace);
-
-        TestGenerator generator = createTestGenerator(analysisResult.getIdentifiersMappingPath());
-        TestGenerationContext context = JavaTestGenerationContextFactory
-                .createFromJavaRunConfiguration(runConfiguration);
-        List<Path> generatedTests = generator.generateTests(trace, runConfiguration.getSourceCodePath(), context);
-
-        return TestSuite.builder()
-                .baseDirectory(analysisResult.getOutputDirectory())
-                .testFiles(generatedTests)
-                .build();
-    }
-
-    /**
-     * Generates tests from an existing serialized trace file without running instrumentation.
-     * This enables retry capability when test generation failed but the trace was successfully collected.
-     *
-     * @param traceFilePath Path to the serialized trace file
-     * @param identifierMappingPath Path to the serialized identifier mapping
-     * @return TestSuite containing generated test files
-     * @throws IllegalArgumentException if either file is null or doesn't exist
-     */
-    public TestSuite generateTestsFromExistingTrace(Path traceFilePath, Path identifierMappingPath) {
-        log.info("Generating tests from existing trace: {}", traceFilePath);
-
-        if (traceFilePath == null || !Files.exists(traceFilePath)) {
-            throw new IllegalArgumentException("Trace file not found: " + traceFilePath);
-        }
-        if (identifierMappingPath == null || !Files.exists(identifierMappingPath)) {
-            throw new IllegalArgumentException("Identifier mapping file not found: " + identifierMappingPath);
-        }
-
-        Trace trace = deserializeTrace(traceFilePath);
-        if (trace == null || isTraceEmpty(trace)) {
-            log.warn("Trace is empty or could not be deserialized");
-            return TestSuite.builder()
-                    .baseDirectory(runConfiguration.getOutputDirectory())
-                    .testFiles(List.of())
-                    .build();
-        }
-
-        TestGenerator generator = createTestGenerator(identifierMappingPath);
-        TestGenerationContext context = JavaTestGenerationContextFactory
-                .createFromJavaRunConfiguration(runConfiguration);
-        List<Path> generatedTests = generator.generateTests(trace, runConfiguration.getSourceCodePath(), context);
-
-        return TestSuite.builder()
-                .baseDirectory(runConfiguration.getOutputDirectory())
-                .testFiles(generatedTests)
-                .build();
-    }
 
     @Override
     public void validateInstrumentation(InstrumentationResult instrumentation) {
@@ -269,153 +179,7 @@ public class DiSLAnalyzer implements Analyzer {
         return exitCode;
     }
 
-    /**
-     * Deserializes a Trace object from a file.
-     * @param traceFilePath Path to the serialized trace file
-     * @return The deserialized Trace object, or null if not available
-     */
-    private Trace deserializeTrace(Path traceFilePath) {
-        if (traceFilePath == null) {
-            log.warn("Trace file path is null");
-            return null;
-        }
-        if (!Files.exists(traceFilePath)) {
-            log.warn("Trace file does not exist: {}", traceFilePath);
-            return null;
-        }
 
-        log.info("Deserializing trace from: {}", traceFilePath);
-        try (FileInputStream fileInput = new FileInputStream(traceFilePath.toFile());
-             ObjectInputStream objectInput = new ObjectInputStream(fileInput)) {
-            Trace trace = (Trace) objectInput.readObject();
-            log.info("Successfully deserialized trace");
-            return trace;
-        } catch (Exception e) {
-            log.error("Failed to deserialize trace from {}", traceFilePath, e);
-            return null;
-        }
-    }
-
-    /**
-     * Creates the appropriate TestGenerator based on configuration.
-     * @param identifierMappingPath Path to the serialized identifier mapping
-     * @return A TestGenerator instance based on the configured strategy
-     */
-    protected TestGenerator createTestGenerator(Path identifierMappingPath) {
-        if (identifierMappingPath == null || !Files.exists(identifierMappingPath)) {
-            throw new IllegalArgumentException("Identifier mapping file not found: " + identifierMappingPath);
-        }
-
-        String strategy = runConfiguration.getTestGenerationStrategy();
-        log.info("Creating test generator with strategy: {} and identifier mapping: {}", strategy, identifierMappingPath);
-
-        return switch (strategy) {
-            case "trace-based-basic" -> new NaiveTraceBasedGenerator(identifierMappingPath);
-            case "trace-based-advanced" -> new TemporalTraceBasedGenerator();
-            case "ai-assisted" -> createLLMBasedGenerator();
-            default -> {
-                log.warn("Unknown strategy '{}', falling back to trace-based-basic", strategy);
-                yield new NaiveTraceBasedGenerator(identifierMappingPath);
-            }
-        };
-    }
-
-    private LLMBasedTestGenerator createLLMBasedGenerator() {
-        AnthropicClient anthropicClient = new AnthropicClient();
-        PromptBuilder promptBuilder = new PromptBuilder();
-        CodeValidator codeValidator = new CodeValidator();
-
-        LLMBasedTestGenerator generator = new LLMBasedTestGenerator(
-                anthropicClient, promptBuilder, codeValidator);
-
-        try {
-            String apiKey = System.getenv("ANTHROPIC_API_KEY");
-            LLMConfiguration llmConfig = LLMConfiguration.builder()
-                    .modelName("claude-sonnet-4-20250514")
-                    .apiKey(apiKey)
-                    .maxTokens(4000)
-                    .temperature(0.3)
-                    .build();
-
-            generator.configure(llmConfig);
-            generator.setGenerationTechnique("ai-assisted");
-
-            log.info("Created LLM-based test generator with Claude");
-            return generator;
-        } catch (Exception e) {
-            log.error("Failed to configure LLM-based test generator", e);
-            throw new RuntimeException("Failed to configure LLM-based test generator", e);
-        }
-    }
-
-    /**
-     * Checks if a Trace object is empty (has no values).
-     * @param trace The trace to check
-     * @return true if the trace has no values, false otherwise
-     */
-    private boolean isTraceEmpty(Trace trace) {
-        // Check if trace has any values in any slot
-        // We need to check a reasonable range of slots (0-100)
-        for (int slot = 0; slot < 100; slot++) {
-            if (!trace.getIntValues(slot).isEmpty() ||
-                !trace.getLongValues(slot).isEmpty() ||
-                !trace.getBooleanValues(slot).isEmpty() ||
-                !trace.getFloatValues(slot).isEmpty() ||
-                !trace.getDoubleValues(slot).isEmpty() ||
-                !trace.getCharValues(slot).isEmpty() ||
-                !trace.getByteValues(slot).isEmpty() ||
-                !trace.getShortValues(slot).isEmpty()) {
-                return false; // Found at least one value
-            }
-        }
-        return true; // No values found in any checked slot
-    }
-
-    /**
-     * Validates all prerequisites for test generation.
-     * @throws IllegalArgumentException if any prerequisite is not met
-     * @throws IllegalStateException if the system is in an unexpected state
-     */
-    private void validateTestGenerationPrerequisites(
-            Path traceFilePath,
-            Path identifierMappingPath,
-            Trace trace) {
-
-        // 1. Validate trace file exists
-        if (traceFilePath == null) {
-            throw new IllegalStateException(
-                "Trace file path is null - DiSL execution may not have configured trace output");
-        }
-        if (!Files.exists(traceFilePath)) {
-            throw new IllegalStateException(
-                "Trace file not created after DiSL execution: " + traceFilePath +
-                ". Check DiSL process logs for errors.");
-        }
-
-        // 2. Validate trace deserialized successfully
-        if (trace == null) {
-            throw new IllegalArgumentException(
-                "Failed to deserialize trace from: " + traceFilePath);
-        }
-
-        // 3. Validate trace has actual data (invocations)
-        if (isTraceEmpty(trace)) {
-            throw new IllegalArgumentException(
-                "Trace contains no invocation data. " +
-                "The instrumented method may not have been executed, " +
-                "or instrumentation did not capture any values.");
-        }
-
-        // 4. Validate identifier mapping is available
-        if (identifierMappingPath == null) {
-            throw new IllegalArgumentException(
-                "Identifier mapping path is null - instrumentation may have failed");
-        }
-        if (!Files.exists(identifierMappingPath)) {
-            throw new IllegalArgumentException(
-                "Identifier mapping file not found: " + identifierMappingPath);
-        }
-    }
 
     /**
      * Validates that analysis produced required output files.

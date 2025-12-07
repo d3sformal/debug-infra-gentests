@@ -124,20 +124,6 @@ public class Orchestrator {
                 .build();
     }
 
-    /**
-     * @deprecated Use {@link #executeAnalysis(InstrumentationResult)} and {@link #generateTests(AnalysisResult)} instead.
-     */
-    @Deprecated
-    public TestSuite runAnalysis(InstrumentationResult instrumentation) {
-        var analyzer = AnalyzerFactory.createAnalyzer(runConfiguration);
-        TestSuite suite = analyzer.runAnalysis(instrumentation);
-        if (suite == null || suite.getTestFiles() == null || suite.getTestFiles().isEmpty()) {
-            log.warn("Analysis completed but generated no test files. Terminating.");
-            throw new IllegalStateException("Analysis produced no test files");
-        }
-        return suite;
-    }
-
     public TestExecutionResult runTests(TestSuite testSuite) {
         var testRunner = TestRunnerFactory.createTestRunner(runConfiguration);
         return testRunner.executeTests(testSuite.getTestFiles());
