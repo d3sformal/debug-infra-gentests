@@ -1,5 +1,6 @@
 package cz.cuni.mff.d3s.autodebugger.runner;
 
+import cz.cuni.mff.d3s.autodebugger.analyzer.common.AnalysisResult;
 import cz.cuni.mff.d3s.autodebugger.runner.args.Arguments;
 import cz.cuni.mff.d3s.autodebugger.runner.orchestrator.Orchestrator;
 import lombok.extern.slf4j.Slf4j;
@@ -69,8 +70,12 @@ public class Runner {
     log.info("Created instrumentation: {}", instrumentation);
 
     log.info("Running analysis...");
-    var testSuite = orchestrator.runAnalysis(instrumentation);
-    log.info("Analysis completed and tests generated. {} test files: {}", testSuite.getTestFiles().size(), testSuite.getTestFiles());
+    var analysisResult = orchestrator.executeAnalysis(instrumentation);
+    log.info("Analysis completed. Trace at: {}", analysisResult.getTraceFilePath());
+
+    log.info("Generating tests...");
+    var testSuite = orchestrator.generateTests(analysisResult);
+    log.info("Test generation completed. {} test files: {}", testSuite.getTestFiles().size(), testSuite.getTestFiles());
 
     var testResults = orchestrator.runTests(testSuite);
     log.info("Test execution completed. Results: {}", testResults);
