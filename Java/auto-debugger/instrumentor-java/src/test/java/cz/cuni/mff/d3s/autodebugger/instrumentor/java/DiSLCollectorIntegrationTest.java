@@ -5,7 +5,6 @@ import cz.cuni.mff.d3s.autodebugger.instrumentor.java.modelling.DiSLModel;
 import cz.cuni.mff.d3s.autodebugger.model.java.JavaRunConfiguration;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.*;
 import cz.cuni.mff.d3s.autodebugger.testutils.DiSLPathResolver;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -36,57 +35,12 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  */
 class DiSLCollectorIntegrationTest {
 
-    private static Path modelCommonLibsPath;
-
     @TempDir
     Path tempDir;
 
     private Path testOutputDirectory;
     private Path testCollectorOutputFile;
     private Path mockDislHome;
-
-    @BeforeAll
-    static void verifyDependencies() {
-        // Verify model-common JAR exists - needed for ShadowVM to find Trace class
-        modelCommonLibsPath = findModelCommonLibs();
-
-        if (modelCommonLibsPath != null) {
-            System.out.println("model-common/build/libs found at: " + modelCommonLibsPath);
-        } else {
-            System.out.println("WARNING: model-common/build/libs not found. " +
-                "Integration tests requiring DiSL execution may be skipped. " +
-                "Run './gradlew :model-common:build' to build the required JARs.");
-        }
-    }
-
-    private static Path findModelCommonLibs() {
-        // Check relative to CWD first (most common case when running from auto-debugger)
-        Path cwdPath = Path.of("").toAbsolutePath();
-        Path fromCwd = cwdPath.resolve("model-common/build/libs");
-        if (Files.isDirectory(fromCwd)) {
-            return fromCwd;
-        }
-
-        // Try to find via repository root
-        Path current = cwdPath;
-        while (current != null) {
-            if (Files.isDirectory(current.resolve(".git"))) {
-                // Found repo root
-                Path fromRepo = current.resolve("Java/auto-debugger/model-common/build/libs");
-                if (Files.isDirectory(fromRepo)) {
-                    return fromRepo;
-                }
-                Path fromRepoAlt = current.resolve("model-common/build/libs");
-                if (Files.isDirectory(fromRepoAlt)) {
-                    return fromRepoAlt;
-                }
-                break;
-            }
-            current = current.getParent();
-        }
-
-        return null;
-    }
 
     @BeforeEach
     void setUp() throws IOException {
@@ -294,10 +248,6 @@ class DiSLCollectorIntegrationTest {
      */
     @Test
     void givenPrimitiveExerciser_whenCollectingAllTypes_thenWritesAllValues() throws IOException {
-        // Prerequisites - skip if dependencies not available
-        assumeTrue(modelCommonLibsPath != null,
-            "Skipping test - model-common/build/libs not found. Run './gradlew :model-common:build' first.");
-
         // given - Create a simple target JAR that exercises all primitive types
         Path targetJar = createSimpleTargetJar();
 
