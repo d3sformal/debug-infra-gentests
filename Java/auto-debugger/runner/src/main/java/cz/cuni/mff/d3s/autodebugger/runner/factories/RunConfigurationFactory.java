@@ -2,8 +2,8 @@ package cz.cuni.mff.d3s.autodebugger.runner.factories;
 
 import cz.cuni.mff.d3s.autodebugger.model.common.RunConfiguration;
 import cz.cuni.mff.d3s.autodebugger.model.common.TargetLanguage;
+import cz.cuni.mff.d3s.autodebugger.model.common.TempPathResolver;
 import cz.cuni.mff.d3s.autodebugger.model.java.JavaRunConfiguration;
-import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaMethodIdentifier;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaValueIdentifier;
 import cz.cuni.mff.d3s.autodebugger.runner.args.Arguments;
 import cz.cuni.mff.d3s.autodebugger.model.common.TraceMode;
@@ -43,7 +43,9 @@ public class RunConfigurationFactory {
             // Parse paths
             var applicationPath = Path.of(arguments.applicationJarPath);
             var sourceCodePath = Path.of(arguments.sourceCodePath);
-            var outputDir = arguments.outputDirectory != null ? Path.of(arguments.outputDirectory) : Path.of("auto-debugger-output");
+            var outputDir = arguments.outputDirectory != null
+                ? Path.of(arguments.outputDirectory)
+                : TempPathResolver.getDefaultOutputDirectory();
             var dislHomePath = resolveDislHomePath(arguments.dislHomePath);
             var classpathEntries = arguments.classpath.stream().map(Path::of).toList();
 
