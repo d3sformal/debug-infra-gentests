@@ -88,14 +88,12 @@ public class DiSLAnalyzer implements Analyzer {
         }
 
         // Post-processing: deserialize trace and generate tests locally
-        Trace trace = deserializeTrace(instrumentation.getTraceFilePath());
-        if (trace == null || isTraceEmpty(trace)) {
-            log.warn("No trace data collected, returning empty test suite");
-            return TestSuite.builder()
-                    .baseDirectory(runConfiguration.getOutputDirectory())
-                    .testFiles(List.of())
-                    .build();
-        }
+        Path traceFilePath = instrumentation.getTraceFilePath();
+        Path identifierMappingPath = instrumentation.getIdentifiersMappingPath();
+        Trace trace = deserializeTrace(traceFilePath);
+
+        // Validate all prerequisites before proceeding to test generation
+        validateTestGenerationPrerequisites(traceFilePath, identifierMappingPath, trace);
 
         TestGenerator generator = createTestGenerator(instrumentation.getIdentifiersMappingPath());
         TestGenerationContext context = JavaTestGenerationContextFactory
@@ -274,7 +272,7 @@ public class DiSLAnalyzer implements Analyzer {
      * @param identifierMappingPath Path to the serialized identifier mapping
      * @return A TestGenerator instance based on the configured strategy
      */
-    private TestGenerator createTestGenerator(Path identifierMappingPath) {
+    protected TestGenerator createTestGenerator(Path identifierMappingPath) {
         if (identifierMappingPath == null || !Files.exists(identifierMappingPath)) {
             throw new IllegalArgumentException("Identifier mapping file not found: " + identifierMappingPath);
         }
@@ -342,6 +340,52 @@ public class DiSLAnalyzer implements Analyzer {
             }
         }
         return true; // No values found in any checked slot
+    }
+
+    /**
+     * Validates all prerequisites for test generation.
+     * @throws IllegalArgumentException if any prerequisite is not met
+     * @throws IllegalStateException if the system is in an unexpected state
+     */
+    private void validateTestGenerationPrerequisites(
+            Path traceFilePath,
+            Path identifierMappingPath,
+            Trace trace) {
+
+        // 1. Validate trace file exists
+        if (traceFilePath == null) {
+            throw new IllegalStateException(
+                "Trace file path is null - DiSL execution may not have configured trace output");
+        }
+        if (!Files.exists(traceFilePath)) {
+            throw new IllegalStateException(
+                "Trace file not created after DiSL execution: " + traceFilePath +
+                ". Check DiSL process logs for errors.");
+        }
+
+        // 2. Validate trace deserialized successfully
+        if (trace == null) {
+            throw new IllegalArgumentException(
+                "Failed to deserialize trace from: " + traceFilePath);
+        }
+
+        // 3. Validate trace has actual data (invocations)
+        if (isTraceEmpty(trace)) {
+            throw new IllegalArgumentException(
+                "Trace contains no invocation data. " +
+                "The instrumented method may not have been executed, " +
+                "or instrumentation did not capture any values.");
+        }
+
+        // 4. Validate identifier mapping is available
+        if (identifierMappingPath == null) {
+            throw new IllegalArgumentException(
+                "Identifier mapping path is null - instrumentation may have failed");
+        }
+        if (!Files.exists(identifierMappingPath)) {
+            throw new IllegalArgumentException(
+                "Identifier mapping file not found: " + identifierMappingPath);
+        }
     }
 
     private static String getEvaluationClasspath(Path instrumentationJarPath) {
