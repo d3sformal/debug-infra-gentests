@@ -184,6 +184,7 @@ class DiSLInstrumentorTest {
                     .applicationPath(Constants.targetJarPath)
                     .classpathEntry(Constants.targetJarPath)
                     .dislHomePath(getDislHomeOrMock())
+                    .outputDirectory(tempDir)
                     .sourceCodePath(Path.of("src/test/resources/targets/extraction"))
                     .targetMethod(new JavaMethodIdentifier(Constants.targetMethodIdentifierParameters))
                     .exportableValues(List.of(argIdentifier, fieldIdentifier))
@@ -267,6 +268,7 @@ class DiSLInstrumentorTest {
             .applicationPath(Constants.targetJarPath)
             .classpathEntry(Constants.targetJarPath)
             .dislHomePath(getDislHomeOrMock())
+            .outputDirectory(tempDir)
             .sourceCodePath(Path.of("src/test/resources/targets/extraction"))
             .targetMethod(new JavaMethodIdentifier(
                     MethodIdentifierParameters.builder()
@@ -370,6 +372,7 @@ class DiSLInstrumentorTest {
             .applicationPath(Constants.targetJarPath)
             .classpathEntry(Constants.targetJarPath)
             .dislHomePath(getDislHomeOrMock())
+            .outputDirectory(tempDir)
             .sourceCodePath(Path.of("src/test/resources/targets/extraction"))
             .targetMethod(new JavaMethodIdentifier(Constants.targetMethodIdentifierParameters))
             .exportableValues(List.of(
@@ -440,6 +443,7 @@ class DiSLInstrumentorTest {
             .applicationPath(Path.of("src/test/resources/targets/extraction/Test.jar"))
             .classpathEntry(Constants.targetJarPath)
             .dislHomePath(getDislHomeOrMock())
+            .outputDirectory(tempDir)
             .sourceCodePath(Path.of("src/test/resources/targets/extraction"))
             .targetMethod(new JavaMethodIdentifier(
                     MethodIdentifierParameters.builder()
@@ -504,6 +508,7 @@ class DiSLInstrumentorTest {
             .applicationPath(Constants.targetJarPath)
             .classpathEntry(Constants.targetJarPath)
             .dislHomePath(getDislHomeOrMock())
+            .outputDirectory(tempDir)
             .sourceCodePath(Path.of("src/test/resources/targets/extraction"))
             .targetMethod(new JavaMethodIdentifier(
                     MethodIdentifierParameters.builder()
@@ -588,6 +593,7 @@ class DiSLInstrumentorTest {
             .applicationPath(Path.of("src/test/resources/targets/extraction/Test.jar"))
             .classpathEntry(Constants.targetJarPath)
             .dislHomePath(getDislHomeOrMock())
+            .outputDirectory(tempDir)
             .sourceCodePath(Path.of("src/test/resources/targets/extraction"))
             .targetMethod(methodIdentifier)
             .exportableValues(
