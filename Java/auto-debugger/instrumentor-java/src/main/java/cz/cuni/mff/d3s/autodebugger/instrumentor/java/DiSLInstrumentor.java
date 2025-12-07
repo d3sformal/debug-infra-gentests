@@ -88,7 +88,8 @@ public class DiSLInstrumentor implements Instrumentor {
                 effectiveGeneratedCodeDir.resolve("Collector.java"),
                 Pair.with("PATH", identifierMapping.toAbsolutePath().toString()),
                 Pair.with("TRACE_PATH", traceFilePath.toAbsolutePath().toString()),
-                Pair.with("TRACE_MODE", runConfiguration.getTraceMode().name().toLowerCase()));
+                Pair.with("TRACE_MODE", runConfiguration.getTraceMode().name().toLowerCase()),
+                Pair.with("PARAM_COUNT", String.valueOf(runConfiguration.getExportableValues().size())));
         var instrumentationJarPath = generateDiSLClass(effectiveGeneratedCodeDir, model)
                 .flatMap(p -> compileDiSLClass(p, effectiveJarPath))
                 .orElseThrow();

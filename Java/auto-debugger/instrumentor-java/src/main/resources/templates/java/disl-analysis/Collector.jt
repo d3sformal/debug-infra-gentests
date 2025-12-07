@@ -97,9 +97,9 @@ public class Collector extends RemoteAnalysis {
   }
 
   private boolean isInvocationComplete() {
-    // For naive mode, we expect to collect all target parameters
-    // We know we have 2 parameters (slots 1 and 2) for the add method
-    return currentInvocation.size() >= 2;
+    // For naive mode, we expect to collect all exportable values
+    // PARAM_COUNT is substituted at instrumentation time with the actual count
+    return currentInvocation.size() >= ${PARAM_COUNT};
   }
 
 
@@ -301,7 +301,16 @@ public class Collector extends RemoteAnalysis {
 
     try {
       if (allInvocations.isEmpty()) {
-        System.out.println(String.format(messageFormat, processName, "No values collected - skipping trace serialization"));
+        System.out.println(String.format(messageFormat, processName, "No values collected - writing empty trace"));
+        // Still write an empty trace so callers know atExit ran but no data was collected
+        Trace emptyTrace = new Trace();
+        Path traceFile = Path.of(traceFilePath);
+        Files.createDirectories(traceFile.getParent());
+        try (java.io.FileOutputStream fileOutput = new java.io.FileOutputStream(traceFile.toFile());
+             java.io.ObjectOutputStream objectStream = new java.io.ObjectOutputStream(fileOutput)) {
+          objectStream.writeObject(emptyTrace);
+        }
+        System.out.println(String.format(messageFormat, processName, "Empty trace written to: " + traceFilePath));
         return;
       }
 
