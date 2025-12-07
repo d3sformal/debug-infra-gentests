@@ -116,7 +116,8 @@ class DiSLAnalyzerTest {
         assertEquals("-cse", command.get(4));
         assertEquals("-e_opts=-cp", command.get(5));
         // Classpath includes instrumentation JAR (may also include model-common if path structure allows)
-        assertTrue(command.get(6).contains("instrumentation.jar"));
+        // Uses -e_opts= prefix per disl.py requirements for dash-starting arguments
+        assertTrue(command.get(6).startsWith("-e_opts=") && command.get(6).contains("instrumentation.jar"));
         assertEquals("--", command.get(7));
         assertEquals("/tmp/instrumentation.jar", command.get(8));
         assertEquals("-jar", command.get(9));
@@ -147,7 +148,7 @@ class DiSLAnalyzerTest {
         assertEquals("-cse", command.get(4));
         assertEquals("-e_opts=-cp", command.get(5));
         // Classpath includes instrumentation JAR (may also include model-common if path structure allows)
-        assertTrue(command.get(6).contains("instrumentation.jar"));
+        assertTrue(command.get(6).startsWith("-e_opts=") && command.get(6).contains("instrumentation.jar"));
         assertEquals("--", command.get(7));
         assertEquals("/tmp/instrumentation.jar", command.get(8));
         assertEquals("-jar", command.get(9));
@@ -174,7 +175,7 @@ class DiSLAnalyzerTest {
         assertEquals("-cse", command.get(4));
         assertEquals("-e_opts=-cp", command.get(5));
         // Classpath includes instrumentation JAR (may also include model-common if path structure allows)
-        assertTrue(command.get(6).contains("instrumentation.jar"));
+        assertTrue(command.get(6).startsWith("-e_opts=") && command.get(6).contains("instrumentation.jar"));
         assertEquals("--", command.get(7));
         assertEquals("/tmp/instrumentation.jar", command.get(8));
         assertEquals("-jar", command.get(9));
