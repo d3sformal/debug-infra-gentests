@@ -15,7 +15,7 @@ dependencies {
     implementation(project(mapOf("path" to ":model-java")))
     implementation(project(mapOf("path" to ":analyzer-common")))
     implementation(project(mapOf("path" to ":test-generator-common")))
-    implementation(project(mapOf("path" to ":test-generator-java")))
+    implementation(project(":test-generator-java", "shadow"))
     implementation(platform(libs.log4j.bom))
     implementation(libs.log4j)
     testImplementation(platform(libs.junit.bom))
@@ -23,6 +23,8 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter-engine")
     testImplementation(libs.mockito)
     testImplementation(project(":test-utils"))
+    testImplementation(project(":instrumentor-common"))
+    testImplementation(project(":instrumentor-java"))
 }
 
 tasks.test {
