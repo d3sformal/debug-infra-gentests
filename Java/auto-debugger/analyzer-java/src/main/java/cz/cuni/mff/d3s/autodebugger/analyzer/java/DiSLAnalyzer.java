@@ -17,7 +17,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -29,12 +28,6 @@ import java.util.concurrent.TimeUnit;
 public class DiSLAnalyzer implements Analyzer {
 
     private static final int DEFAULT_TIMEOUT_SECONDS = 300; // 5 minutes
-
-    /**
-     * Environment variable for explicitly setting the model-common classpath.
-     * Useful for tests running from temp directories where project structure isn't accessible.
-     */
-    public static final String MODEL_COMMON_CLASSPATH_ENV = "AUTODEBUGGER_MODEL_COMMON_CLASSPATH";
 
     @Getter
     private final JavaRunConfiguration runConfiguration;
@@ -120,14 +113,6 @@ public class DiSLAnalyzer implements Analyzer {
         // Run with the client (target app), server (DiSL instrumentation server), and evaluation (ShadowVM)
         command.add("-cse");
 
-        // Add extra classpath entries for the Shadow VM via -Xbootclasspath/a
-        // This appends to the bootstrap classpath and won't be overwritten by disl.py's -cp
-        // We need model-common on the classpath for Trace serialization
-        Optional<String> modelCommonClasspath = resolveModelCommonClasspath();
-        if (modelCommonClasspath.isPresent()) {
-            command.add("-e_opts=-Xbootclasspath/a:" + modelCommonClasspath.get());
-        }
-
         command.add("--");
 
         // Add the generated DiSL instrumentation JAR (use absolute path)
@@ -205,108 +190,6 @@ public class DiSLAnalyzer implements Analyzer {
             throw new IllegalStateException(
                 "Identifier mapping file not found: " + identifierMappingPath);
         }
-    }
-
-    /**
-     * Resolves the model-common classpath using a multi-strategy approach:
-     * 1. Check AUTODEBUGGER_MODEL_COMMON_CLASSPATH environment variable
-     * 2. Try to find model-common relative to repository root (found via .git directory)
-     * 3. Try from current working directory
-     *
-     * @return Optional containing the model-common classpath, or empty if not found
-     */
-    private static Optional<String> resolveModelCommonClasspath() {
-        // Strategy 1: Check environment variable
-        String envClasspath = System.getenv(MODEL_COMMON_CLASSPATH_ENV);
-        if (envClasspath != null && !envClasspath.isBlank()) {
-            Path envPath = Path.of(envClasspath);
-            if (Files.exists(envPath)) {
-                log.debug("Using model-common classpath from environment variable: {}", envClasspath);
-                return Optional.of(envClasspath);
-            } else {
-                log.warn("Environment variable {} points to non-existent path: {}",
-                        MODEL_COMMON_CLASSPATH_ENV, envClasspath);
-            }
-        }
-
-        // Strategy 2: Try to find relative to repository root
-        Optional<Path> repoRoot = findRepositoryRoot();
-        if (repoRoot.isPresent()) {
-            // Try Java/auto-debugger/model-common first (full project structure)
-            Path modelCommonFull = repoRoot.get().resolve("Java/auto-debugger/model-common/build/libs");
-            Optional<String> classpath = listJarsInDirectory(modelCommonFull);
-            if (classpath.isPresent()) {
-                log.debug("Found model-common classpath relative to repository root: {}", classpath.get());
-                return classpath;
-            }
-            // Also try model-common directly (if running from auto-debugger directory)
-            Path modelCommonPath = repoRoot.get().resolve("model-common/build/libs");
-            classpath = listJarsInDirectory(modelCommonPath);
-            if (classpath.isPresent()) {
-                log.debug("Found model-common classpath relative to repository root (direct): {}", classpath.get());
-                return classpath;
-            }
-        }
-
-        // Strategy 3: Try from current working directory
-        Path cwdModelCommon = Path.of("model-common/build/libs");
-        Optional<String> classpath = listJarsInDirectory(cwdModelCommon);
-        if (classpath.isPresent()) {
-            log.debug("Found model-common classpath relative to current directory: {}", classpath.get());
-            return classpath;
-        }
-
-        log.warn("Could not resolve model-common classpath. Tried: " +
-                "1) {} environment variable, " +
-                "2) repository root relative path, " +
-                "3) current directory relative path",
-                MODEL_COMMON_CLASSPATH_ENV);
-        return Optional.empty();
-    }
-
-    /**
-     * Lists all JAR files in a directory and returns them as a colon-separated classpath.
-     */
-    private static Optional<String> listJarsInDirectory(Path directory) {
-        if (!Files.isDirectory(directory)) {
-            return Optional.empty();
-        }
-
-        try (var files = Files.list(directory)) {
-            String jars = files
-                    .filter(p -> p.toString().endsWith(".jar"))
-                    .map(Path::toAbsolutePath)
-                    .map(Path::toString)
-                    .reduce((a, b) -> a + ":" + b)
-                    .orElse(null);
-
-            if (jars != null && !jars.isEmpty()) {
-                return Optional.of(jars);
-            }
-        } catch (IOException e) {
-            log.warn("Failed to list JARs in directory: {}", directory, e);
-        }
-
-        return Optional.empty();
-    }
-
-    /**
-     * Finds the repository root by walking up the directory tree looking for .git directory.
-     *
-     * @return Optional containing the repository root path, or empty if not found
-     */
-    private static Optional<Path> findRepositoryRoot() {
-        Path current = Path.of("").toAbsolutePath();
-
-        // Walk up the directory tree looking for .git
-        while (current != null) {
-            if (Files.isDirectory(current.resolve(".git"))) {
-                return Optional.of(current);
-            }
-            current = current.getParent();
-        }
-
-        return Optional.empty();
     }
 
     private void readStream(InputStream inputStream, StringBuilder output) {
