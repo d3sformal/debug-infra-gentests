@@ -324,31 +324,5 @@ class DiSLAnalyzerTest {
         }
     }
 
-    @Test
-    @org.junit.jupiter.api.Disabled("generateTestsFromExistingTrace() method removed - test generation moved to Orchestrator")
-    void givenNullTracePath_whenGenerateTestsFromExistingTrace_thenThrowsIllegalArgument() {
-        // This test is disabled because generateTestsFromExistingTrace() has been removed from DiSLAnalyzer.
-        // Test generation is now handled by Orchestrator.generateTests()
-    }
 
-    @Test
-    @org.junit.jupiter.api.Disabled("generateTestsFromExistingTrace() method removed - test generation moved to Orchestrator")
-    void givenMissingTracePath_whenGenerateTestsFromExistingTrace_thenThrowsIllegalArgument() {
-        // This test is disabled because generateTestsFromExistingTrace() has been removed from DiSLAnalyzer.
-        // Test generation is now handled by Orchestrator.generateTests()
-    }
-
-    @Test
-    @org.junit.jupiter.api.Disabled("generateTestsFromExistingTrace() method removed - test generation moved to Orchestrator")
-    void givenNullIdentifierMappingPath_whenGenerateTestsFromExistingTrace_thenThrowsIllegalArgument() throws Exception {
-        // This test is disabled because generateTestsFromExistingTrace() has been removed from DiSLAnalyzer.
-        // Test generation is now handled by Orchestrator.generateTests()
-    }
-
-    @Test
-    @org.junit.jupiter.api.Disabled("generateTestsFromExistingTrace() method removed - test generation moved to Orchestrator")
-    void givenMissingIdentifierMappingPath_whenGenerateTestsFromExistingTrace_thenThrowsIllegalArgument() throws Exception {
-        // This test is disabled because generateTestsFromExistingTrace() has been removed from DiSLAnalyzer.
-        // Test generation is now handled by Orchestrator.generateTests()
-    }
 }

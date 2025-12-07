@@ -149,20 +149,5 @@ class DecoupledPipelineIntegrationTest {
         assertNotNull(result.getResultsListPath(), "Results list path should not be null");
     }
 
-    /**
-     * Test Case 2: End-to-end pipeline test with mock trace and test generation.
-     *
-     * This test validates:
-     * 1. Creating instrumentation artifacts
-     * 2. Manually creating and serializing a mock Trace with known values
-     * 3. Using DiSLAnalyzer.generateTestsFromExistingTrace() to generate tests
-     * 4. Verifying the generated test contains the expected values
-     */
-    @Test
-    @org.junit.jupiter.api.Disabled("generateTestsFromExistingTrace() method removed - test generation moved to Orchestrator")
-    void givenMockTrace_whenGeneratingTestsFromExistingTrace_thenGeneratesCorrectTests() throws IOException {
-        // This test is disabled because generateTestsFromExistingTrace() has been removed from DiSLAnalyzer.
-        // Test generation is now handled by Orchestrator.generateTests()
-        // The test should be rewritten to use the new pattern: executeAnalysis() + generateTests()
-    }
+
 }
