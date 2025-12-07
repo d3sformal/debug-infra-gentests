@@ -330,60 +330,35 @@ class DiSLCollectorIntegrationTest {
             protected long getTimeoutSeconds() { return 180; }
         };
 
-        var testSuite = analyzer.runAnalysis(instrumentation);
+        var analysisResult = analyzer.executeAnalysis(instrumentation);
 
-        // then - Verify generated tests exist and contain the collected primitive values
-        assertNotNull(testSuite, "Analyzer should return a TestSuite");
-        assertNotNull(testSuite.getTestFiles(), "TestSuite should contain generated test files");
+        // then - Verify analysis result exists and contains trace file path
+        assertNotNull(analysisResult, "Analyzer should return an AnalysisResult");
+        assertNotNull(analysisResult.getTraceFilePath(), "AnalysisResult should contain trace file path");
 
         // Debug: Print information about what was generated
-        System.out.println("Test suite contains " + testSuite.getTestFiles().size() + " test files");
-        if (testSuite.getTestFiles().isEmpty()) {
-            // Check if the results list file exists and what it contains
-            Path resultsFile = instrumentation.getResultsListPath();
-            System.out.println("Results file path: " + resultsFile);
-            System.out.println("Results file exists: " + Files.exists(resultsFile));
-            if (Files.exists(resultsFile)) {
-                try {
-                    List<String> lines = Files.readAllLines(resultsFile);
-                    System.out.println("Results file contains " + lines.size() + " lines:");
-                    for (String line : lines) {
-                        System.out.println("  " + line);
-                    }
-                } catch (IOException e) {
-                    System.out.println("Error reading results file: " + e.getMessage());
-                }
-            }
+        System.out.println("Analysis result trace file: " + analysisResult.getTraceFilePath());
+        System.out.println("Trace file exists: " + Files.exists(analysisResult.getTraceFilePath()));
 
-            // Check the output directory for any generated files
-            Path outputDir = runConfiguration.getOutputDirectory();
-            System.out.println("Output directory: " + outputDir);
-            System.out.println("Output directory exists: " + Files.exists(outputDir));
-            if (Files.exists(outputDir)) {
-                try {
-                    Files.walk(outputDir)
-                        .filter(Files::isRegularFile)
-                        .forEach(file -> System.out.println("  Found file: " + file));
-                } catch (IOException e) {
-                    System.out.println("Error listing output directory: " + e.getMessage());
-                }
+        // Verify trace file was created
+        assertTrue(Files.exists(analysisResult.getTraceFilePath()), "Trace file should be created");
+
+        // Check the output directory for any generated files
+        Path outputDir = runConfiguration.getOutputDirectory();
+        System.out.println("Output directory: " + outputDir);
+        System.out.println("Output directory exists: " + Files.exists(outputDir));
+        if (Files.exists(outputDir)) {
+            try {
+                Files.walk(outputDir)
+                    .filter(Files::isRegularFile)
+                    .forEach(file -> System.out.println("  Found file: " + file));
+            } catch (IOException e) {
+                System.out.println("Error listing output directory: " + e.getMessage());
             }
         }
 
-        assertFalse(testSuite.getTestFiles().isEmpty(), "At least one test file should be generated");
-
-        Path generatedTest = testSuite.getTestFiles().getFirst();
-        assertTrue(Files.exists(generatedTest), "Generated test file should exist");
-
-        String content = Files.readString(generatedTest);
-        // Basic sanity checks
-        assertTrue(content.contains("package com.example.target"), "Generated test should use target package");
-        assertTrue(content.contains("SimpleTargetTest"), "Generated test class should match target class");
-        assertTrue(content.contains("simpleMethod"), "Generated test should target the correct method");
-
-        // Verify that the method call contains the expected int value
-        assertTrue(content.contains("simpletarget.simpleMethod("), "Should invoke the target method");
-        assertTrue(content.contains("42"), "Should contain the int literal 42");
+        // Verify the trace file is not empty
+        assertTrue(Files.size(analysisResult.getTraceFilePath()) > 0, "Trace file should not be empty");
     }
 
     /**
@@ -530,7 +505,7 @@ class DiSLCollectorIntegrationTest {
         // Run the DiSL analyzer to execute the instrumented application
         try {
             DiSLAnalyzer analyzer = new DiSLAnalyzer(runConfiguration);
-            var generated = analyzer.runAnalysis(instrumentation);
+            var analysisResult = analyzer.executeAnalysis(instrumentation);
 
             // Verify the collector output file was created and contains expected values
             assertTrue(Files.exists(testCollectorOutputFile), "Collector output file should exist");
@@ -633,7 +608,7 @@ class DiSLCollectorIntegrationTest {
         // Run the DiSL analyzer to verify correct slot-to-value mapping
         try {
             DiSLAnalyzer analyzer = new DiSLAnalyzer(runConfiguration);
-            var generated = analyzer.runAnalysis(instrumentation);
+            var analysisResult = analyzer.executeAnalysis(instrumentation);
 
             // Verify the collector output file was created and contains correct slot mapping
             assertTrue(Files.exists(testCollectorOutputFile), "Collector output file should exist");

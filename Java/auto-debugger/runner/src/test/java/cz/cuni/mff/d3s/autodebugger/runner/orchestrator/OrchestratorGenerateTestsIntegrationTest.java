@@ -101,7 +101,8 @@ class OrchestratorGenerateTestsIntegrationTest {
         var instrumentation = orchestrator.createInstrumentation(model);
         // Pre-create stub results using the resultsListPath from instrumentation
         prepareStubResults(instrumentation);
-        var testSuite = orchestrator.runAnalysis(instrumentation);
+        var analysisResult = orchestrator.executeAnalysis(instrumentation);
+        var testSuite = orchestrator.generateTests(analysisResult);
         var generatedFiles = testSuite.getTestFiles();
         assertFalse(generatedFiles.isEmpty(), "In stub mode, some files should be generated");
         for (Path testFile : generatedFiles) {
@@ -194,7 +195,8 @@ class OrchestratorGenerateTestsIntegrationTest {
         var model = orchestrator.buildInstrumentationModel();
         var instrumentation = orchestrator.createInstrumentation(model);
         prepareStubResults(instrumentation);
-        var generatedFiles = orchestrator.runAnalysis(instrumentation).getTestFiles();
+        var analysisResult = orchestrator.executeAnalysis(instrumentation);
+        var generatedFiles = orchestrator.generateTests(analysisResult).getTestFiles();
 
         assertFalse(generatedFiles.isEmpty());
 
@@ -246,7 +248,8 @@ class OrchestratorGenerateTestsIntegrationTest {
         var model = orchestrator.buildInstrumentationModel();
         var instrumentation = orchestrator.createInstrumentation(model);
         prepareStubResults(instrumentation);
-        var generatedFiles = orchestrator.runAnalysis(instrumentation).getTestFiles();
+        var analysisResult = orchestrator.executeAnalysis(instrumentation);
+        var generatedFiles = orchestrator.generateTests(analysisResult).getTestFiles();
 
         assertFalse(generatedFiles.isEmpty());
 

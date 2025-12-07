@@ -182,7 +182,7 @@ class DiSLAnalyzerTest {
     }
 
     @Test
-    void givenInvalidInstrumentationPath_whenRunAnalysis_thenThrows() {
+    void givenInvalidInstrumentationPath_whenExecuteAnalysis_thenThrows() {
         // Given
         DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);
         Path nonExistentJar = Path.of("/non/existent/instrumentation.jar");
@@ -190,7 +190,7 @@ class DiSLAnalyzerTest {
 
         // When & Then
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            analyzer.runAnalysis(InstrumentationResult.builder()
+            analyzer.executeAnalysis(InstrumentationResult.builder()
                     .primaryArtifact(nonExistentJar)
                     .resultsListPath(resultsListPath)
                     .build());
@@ -200,26 +200,26 @@ class DiSLAnalyzerTest {
     }
 
     @Test
-    void givenEmptyInstrumentationPaths_whenRunAnalysis_thenThrows() {
+    void givenEmptyInstrumentationPaths_whenExecuteAnalysis_thenThrows() {
         // Given
         DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);
 
         // When & Then
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            analyzer.runAnalysis(null);
+            analyzer.executeAnalysis(null);
         });
 
         assertTrue(exception.getMessage().contains("cannot be null"));
     }
 
     @Test
-    void givenNullInstrumentationPaths_whenRunAnalysis_thenThrows() {
+    void givenNullInstrumentationPaths_whenExecuteAnalysis_thenThrows() {
         // Given
         DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);
 
         // When & Then
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            analyzer.runAnalysis(null);
+            analyzer.executeAnalysis(null);
         });
 
         assertTrue(exception.getMessage().contains("cannot be null"));
@@ -230,7 +230,7 @@ class DiSLAnalyzerTest {
      * This test creates a simple executable that simulates DiSL behavior.
      */
     @Test
-    void givenMockInstrumentationJar_whenRunAnalysis_thenHandlesProcessExecution() throws IOException {
+    void givenMockInstrumentationJar_whenExecuteAnalysis_thenHandlesProcessExecution() throws IOException {
         // Given - Create a mock instrumentation jar file
         Path mockInstrumentationJar = tempDir.resolve("mock-instrumentation.jar");
         Files.createFile(mockInstrumentationJar);
@@ -297,16 +297,18 @@ class DiSLAnalyzerTest {
 
         // When & Then - This test demonstrates the structure for testing process execution
         // The test may succeed or fail depending on the system setup, but it should not crash
-        Path resultsListPath = tempDir.resolve("output/generated-tests.lst");
+        Path traceFilePath = tempDir.resolve("output/trace.ser");
+        Path identifierMappingPath = tempDir.resolve("output/identifiers.ser");
         try {
-            var generated = analyzer.runAnalysis(InstrumentationResult.builder()
+            var result = analyzer.executeAnalysis(InstrumentationResult.builder()
                     .primaryArtifact(mockInstrumentationJar)
-                    .resultsListPath(resultsListPath)
+                    .traceFilePath(traceFilePath)
+                    .identifiersMappingPath(identifierMappingPath)
                     .build());
 
-            // If it succeeds, we should get a list of generated test paths
-            assertNotNull(generated, "Analysis should return a non-null TestSuite");
-            assertTrue(generated.getTestFiles().size() >= 0, "Generated tests list should be returned");
+            // If it succeeds, we should get an AnalysisResult
+            assertNotNull(result, "Analysis should return a non-null AnalysisResult");
+            assertNotNull(result.getTraceFilePath(), "AnalysisResult should contain trace file path");
 
         } catch (Exception e) {
             // If it fails, it should be due to process execution issues or validation failures
@@ -322,69 +324,35 @@ class DiSLAnalyzerTest {
                       e.getMessage().contains("Expected JAR file") ||
                       e.getMessage().contains("Trace file path is null") ||
                       e.getMessage().contains("Trace file not created") ||
-                      e.getMessage().contains("Failed to deserialize trace") ||
-                      e.getMessage().contains("Trace contains no invocation data") ||
-                      e.getMessage().contains("Identifier mapping"));  // New validation error messages
+                      e.getMessage().contains("Identifier mapping"));  // Validation error messages
         }
     }
 
     @Test
+    @org.junit.jupiter.api.Disabled("generateTestsFromExistingTrace() method removed - test generation moved to Orchestrator")
     void givenNullTracePath_whenGenerateTestsFromExistingTrace_thenThrowsIllegalArgument() {
-        // Given
-        DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);
-        Path identifierPath = tempDir.resolve("identifiers.ser");
-
-        // When/Then
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> analyzer.generateTestsFromExistingTrace(null, identifierPath));
-        assertTrue(exception.getMessage().contains("Trace file not found"));
+        // This test is disabled because generateTestsFromExistingTrace() has been removed from DiSLAnalyzer.
+        // Test generation is now handled by Orchestrator.generateTests()
     }
 
     @Test
+    @org.junit.jupiter.api.Disabled("generateTestsFromExistingTrace() method removed - test generation moved to Orchestrator")
     void givenMissingTracePath_whenGenerateTestsFromExistingTrace_thenThrowsIllegalArgument() {
-        // Given
-        DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);
-        Path missingTrace = tempDir.resolve("nonexistent-trace.ser");
-        Path identifierPath = tempDir.resolve("identifiers.ser");
-
-        // When/Then
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> analyzer.generateTestsFromExistingTrace(missingTrace, identifierPath));
-        assertTrue(exception.getMessage().contains("Trace file not found"));
+        // This test is disabled because generateTestsFromExistingTrace() has been removed from DiSLAnalyzer.
+        // Test generation is now handled by Orchestrator.generateTests()
     }
 
     @Test
+    @org.junit.jupiter.api.Disabled("generateTestsFromExistingTrace() method removed - test generation moved to Orchestrator")
     void givenNullIdentifierMappingPath_whenGenerateTestsFromExistingTrace_thenThrowsIllegalArgument() throws Exception {
-        // Given
-        DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);
-        Path traceFile = tempDir.resolve("trace.ser");
-        // Create an empty trace file
-        try (FileOutputStream fos = new FileOutputStream(traceFile.toFile());
-             ObjectOutputStream oos = new ObjectOutputStream(fos)) {
-            oos.writeObject(new cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace());
-        }
-
-        // When/Then
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> analyzer.generateTestsFromExistingTrace(traceFile, null));
-        assertTrue(exception.getMessage().contains("Identifier mapping file not found"));
+        // This test is disabled because generateTestsFromExistingTrace() has been removed from DiSLAnalyzer.
+        // Test generation is now handled by Orchestrator.generateTests()
     }
 
     @Test
+    @org.junit.jupiter.api.Disabled("generateTestsFromExistingTrace() method removed - test generation moved to Orchestrator")
     void givenMissingIdentifierMappingPath_whenGenerateTestsFromExistingTrace_thenThrowsIllegalArgument() throws Exception {
-        // Given
-        DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);
-        Path traceFile = tempDir.resolve("trace.ser");
-        Path missingMapping = tempDir.resolve("nonexistent-mapping.ser");
-        // Create an empty trace file
-        try (FileOutputStream fos = new FileOutputStream(traceFile.toFile());
-             ObjectOutputStream oos = new ObjectOutputStream(fos)) {
-            oos.writeObject(new cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace());
-        }
-
-        // When/Then
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> analyzer.generateTestsFromExistingTrace(traceFile, missingMapping));
-        assertTrue(exception.getMessage().contains("Identifier mapping file not found"));
+        // This test is disabled because generateTestsFromExistingTrace() has been removed from DiSLAnalyzer.
+        // Test generation is now handled by Orchestrator.generateTests()
     }
 }

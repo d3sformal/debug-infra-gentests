@@ -35,6 +35,8 @@ class DiSLAnalyzerProcessInteractionTest {
     private JavaRunConfiguration testConfig;
     private Path instrumentationJarPath;
     private Path resultsListPath;
+    private Path traceFilePath;
+    private Path identifierMappingPath;
 
     /**
      * Testable DiSLAnalyzer that allows overriding the command construction
@@ -115,6 +117,8 @@ class DiSLAnalyzerProcessInteractionTest {
 
         // Create results list path and prime with stub entry
         resultsListPath = outputDir.resolve("generated-tests.lst");
+        traceFilePath = outputDir.resolve("trace.ser");
+        identifierMappingPath = outputDir.resolve("identifiers.ser");
         try {
             StubResultsHelper.writeMinimalStubTestAndResults(resultsListPath);
         } catch (Exception e) {
@@ -142,36 +146,38 @@ class DiSLAnalyzerProcessInteractionTest {
     }
 
     @Test
-    void givenSuccessfulProcess_whenRunAnalysis_thenValidatesPrerequisites() {
+    void givenSuccessfulProcess_whenExecuteAnalysis_thenValidatesPrerequisites() {
         // Given
         TestableAnalyzer analyzer = new TestableAnalyzer(testConfig, "mock-disl-success.py");
 
         // When/Then - Process executes successfully but validation fails due to missing trace files
         // This demonstrates that the process execution works and validation is enforced
         assertThrows(IllegalStateException.class, () -> {
-            analyzer.runAnalysis(InstrumentationResult.builder()
+            analyzer.executeAnalysis(InstrumentationResult.builder()
                     .primaryArtifact(instrumentationJarPath)
-                    .resultsListPath(resultsListPath)
+                    .traceFilePath(traceFilePath)
+                    .identifiersMappingPath(identifierMappingPath)
                     .build());
         }, "Should throw IllegalStateException when trace file is not created");
     }
 
     @Test
-    void givenFailedProcess_whenRunAnalysis_thenThrows() {
+    void givenFailedProcess_whenExecuteAnalysis_thenThrows() {
         // Given
         TestableAnalyzer analyzer = new TestableAnalyzer(testConfig, "mock-disl-failure.py");
 
         // When/Then - Process failure should throw RuntimeException
         assertThrows(RuntimeException.class, () -> {
-            analyzer.runAnalysis(InstrumentationResult.builder()
+            analyzer.executeAnalysis(InstrumentationResult.builder()
                     .primaryArtifact(instrumentationJarPath)
-                    .resultsListPath(resultsListPath)
+                    .traceFilePath(traceFilePath)
+                    .identifiersMappingPath(identifierMappingPath)
                     .build());
         });
     }
 
     @Test
-    void givenTimeout_whenRunAnalysis_thenThrowsTimeout() {
+    void givenTimeout_whenExecuteAnalysis_thenThrowsTimeout() {
         // Given - Use a very short timeout for this test
         TestableAnalyzer analyzer = new TestableAnalyzer(testConfig, "mock-disl-timeout.py") {
             @Override
@@ -182,9 +188,10 @@ class DiSLAnalyzerProcessInteractionTest {
 
         // When & Then
         RuntimeException exception = assertThrows(RuntimeException.class, () -> {
-            analyzer.runAnalysis(InstrumentationResult.builder()
+            analyzer.executeAnalysis(InstrumentationResult.builder()
                     .primaryArtifact(instrumentationJarPath)
-                    .resultsListPath(resultsListPath)
+                    .traceFilePath(traceFilePath)
+                    .identifiersMappingPath(identifierMappingPath)
                     .build());
         });
 
@@ -193,15 +200,16 @@ class DiSLAnalyzerProcessInteractionTest {
     }
 
     @Test
-    void givenIOExceptionOnProcessStart_whenRunAnalysis_thenThrows() {
+    void givenIOExceptionOnProcessStart_whenExecuteAnalysis_thenThrows() {
         // Given - Use a non-existent script to trigger IOException
         TestableAnalyzer analyzer = new TestableAnalyzer(testConfig, "non-existent-script.py");
 
         // When & Then
         RuntimeException exception = assertThrows(RuntimeException.class, () -> {
-            analyzer.runAnalysis(InstrumentationResult.builder()
+            analyzer.executeAnalysis(InstrumentationResult.builder()
                     .primaryArtifact(instrumentationJarPath)
-                    .resultsListPath(resultsListPath)
+                    .traceFilePath(traceFilePath)
+                    .identifiersMappingPath(identifierMappingPath)
                     .build());
         });
 
@@ -230,15 +238,16 @@ class DiSLAnalyzerProcessInteractionTest {
     }
 
     @Test
-    void givenProcessOutput_whenRunAnalysis_thenValidatesPrerequisites() {
+    void givenProcessOutput_whenExecuteAnalysis_thenValidatesPrerequisites() {
         // Given
         TestableAnalyzer analyzer = new TestableAnalyzer(testConfig, "mock-disl-success.py");
 
         // When/Then - Process executes and captures logs, but validation fails
         assertThrows(IllegalStateException.class, () -> {
-            analyzer.runAnalysis(InstrumentationResult.builder()
+            analyzer.executeAnalysis(InstrumentationResult.builder()
                     .primaryArtifact(instrumentationJarPath)
-                    .resultsListPath(resultsListPath)
+                    .traceFilePath(traceFilePath)
+                    .identifiersMappingPath(identifierMappingPath)
                     .build());
         }, "Should throw IllegalStateException when trace file is not created");
     }
@@ -248,7 +257,7 @@ class DiSLAnalyzerProcessInteractionTest {
      * with real Python script execution and output capture.
      */
     @Test
-    void givenSuccessfulFlow_whenRunAnalysis_thenValidatesPrerequisites() {
+    void givenSuccessfulFlow_whenExecuteAnalysis_thenValidatesPrerequisites() {
         // Given
         TestableAnalyzer analyzer = new TestableAnalyzer(testConfig, "mock-disl-success.py");
 
@@ -260,9 +269,10 @@ class DiSLAnalyzerProcessInteractionTest {
         // 4. Validation of prerequisites
         long startTime = System.currentTimeMillis();
         assertThrows(IllegalStateException.class, () -> {
-            analyzer.runAnalysis(InstrumentationResult.builder()
+            analyzer.executeAnalysis(InstrumentationResult.builder()
                     .primaryArtifact(instrumentationJarPath)
-                    .resultsListPath(resultsListPath)
+                    .traceFilePath(traceFilePath)
+                    .identifiersMappingPath(identifierMappingPath)
                     .build());
         }, "Should throw IllegalStateException when trace file is not created");
         long endTime = System.currentTimeMillis();

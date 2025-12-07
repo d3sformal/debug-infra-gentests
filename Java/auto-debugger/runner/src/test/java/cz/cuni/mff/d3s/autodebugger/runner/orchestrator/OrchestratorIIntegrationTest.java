@@ -117,7 +117,8 @@ class OrchestratorIIntegrationTest {
         prepareStubResults(instrumentation);
 
         // when
-        var testSuite = orchestrator.runAnalysis(instrumentation);
+        var analysisResult = orchestrator.executeAnalysis(instrumentation);
+        var testSuite = orchestrator.generateTests(analysisResult);
         var generated = testSuite.getTestFiles();
 
         // then
