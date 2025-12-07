@@ -2,6 +2,7 @@ package cz.cuni.mff.d3s.autodebugger.model.java;
 
 import cz.cuni.mff.d3s.autodebugger.model.common.RunConfiguration;
 import cz.cuni.mff.d3s.autodebugger.model.common.TargetLanguage;
+import cz.cuni.mff.d3s.autodebugger.model.common.TempPathResolver;
 import cz.cuni.mff.d3s.autodebugger.model.common.TraceMode;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaArgumentIdentifier;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaFieldIdentifier;
@@ -45,7 +46,7 @@ public class JavaRunConfiguration implements RunConfiguration {
     public final List<String> runtimeArguments;
 
     @Builder.Default
-    private final Path outputDirectory = Path.of("auto-debugger-output");
+    private final Path outputDirectory = TempPathResolver.getDefaultOutputDirectory();
 
 
     @Builder.Default
