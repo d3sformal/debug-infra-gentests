@@ -1,6 +1,7 @@
 package cz.cuni.mff.d3s.autodebugger.analyzer.java;
 
 import cz.cuni.mff.d3s.autodebugger.analyzer.common.Analyzer;
+import cz.cuni.mff.d3s.autodebugger.analyzer.common.AnalysisResult;
 import cz.cuni.mff.d3s.autodebugger.model.common.artifacts.InstrumentationResult;
 import cz.cuni.mff.d3s.autodebugger.model.common.tests.TestSuite;
 import cz.cuni.mff.d3s.autodebugger.model.java.JavaRunConfiguration;
@@ -54,28 +55,24 @@ public class DiSLAnalyzer implements Analyzer {
     }
 
     /**
-     * Executes the instrumented Java application and collects runtime traces.
-     * Runs the application as a separate process with DiSL instrumentation,
-     * captures output streams, and generates tests locally.
+     * Executes analysis on the instrumented application and returns analysis artifacts.
+     * This method only performs the instrumentation execution and trace collection.
      *
      * The Collector (running in the DiSL process) is responsible for:
      * - Collecting runtime values
      * - Building the Trace
      * - Serializing the Trace to disk
      *
-     * This method orchestrates the execution, deserializes the trace, and generates tests.
+     * This method orchestrates the execution and validates the output.
      */
     @Override
-    public TestSuite runAnalysis(InstrumentationResult instrumentation) {
+    public AnalysisResult executeAnalysis(InstrumentationResult instrumentation) {
         log.info("Starting Java analysis on instrumented application: {}", instrumentation);
 
         validateInstrumentation(instrumentation);
         Path instrumentationJarPath = instrumentation.getPrimaryArtifact();
         try {
-            // Build the command to execute the instrumented JAR
             List<String> command = buildExecutionCommand(instrumentationJarPath);
-
-            // Execute the instrumented application
             int exitCode = runCommandAsProcess(command);
 
             if (exitCode != 0) {
@@ -87,21 +84,53 @@ public class DiSLAnalyzer implements Analyzer {
             throw new RuntimeException("Analysis execution failed", e);
         }
 
-        // Post-processing: deserialize trace and generate tests locally
+        // Validate analysis produced output
         Path traceFilePath = instrumentation.getTraceFilePath();
         Path identifierMappingPath = instrumentation.getIdentifiersMappingPath();
-        Trace trace = deserializeTrace(traceFilePath);
+        validateAnalysisOutput(traceFilePath, identifierMappingPath);
 
-        // Validate all prerequisites before proceeding to test generation
-        validateTestGenerationPrerequisites(traceFilePath, identifierMappingPath, trace);
+        return AnalysisResult.builder()
+                .traceFilePath(traceFilePath)
+                .identifiersMappingPath(identifierMappingPath)
+                .outputDirectory(runConfiguration.getOutputDirectory())
+                .build();
+    }
 
-        TestGenerator generator = createTestGenerator(instrumentation.getIdentifiersMappingPath());
+    /**
+     * Executes the instrumented Java application and collects runtime traces.
+     * Runs the application as a separate process with DiSL instrumentation,
+     * captures output streams, and generates tests locally.
+     *
+     * The Collector (running in the DiSL process) is responsible for:
+     * - Collecting runtime values
+     * - Building the Trace
+     * - Serializing the Trace to disk
+     *
+     * This method orchestrates the execution, deserializes the trace, and generates tests.
+     *
+     * @deprecated Use {@link #executeAnalysis(InstrumentationResult)} followed by
+     *             test generation in the Orchestrator for cleaner separation.
+     */
+    @Override
+    @Deprecated
+    public TestSuite runAnalysis(InstrumentationResult instrumentation) {
+        // Delegate to new method for analysis
+        AnalysisResult analysisResult = executeAnalysis(instrumentation);
+
+        // Then do test generation (the part that will move to Orchestrator)
+        Trace trace = deserializeTrace(analysisResult.getTraceFilePath());
+        validateTestGenerationPrerequisites(
+                analysisResult.getTraceFilePath(),
+                analysisResult.getIdentifiersMappingPath(),
+                trace);
+
+        TestGenerator generator = createTestGenerator(analysisResult.getIdentifiersMappingPath());
         TestGenerationContext context = JavaTestGenerationContextFactory
                 .createFromJavaRunConfiguration(runConfiguration);
         List<Path> generatedTests = generator.generateTests(trace, runConfiguration.getSourceCodePath(), context);
 
         return TestSuite.builder()
-                .baseDirectory(runConfiguration.getOutputDirectory())
+                .baseDirectory(analysisResult.getOutputDirectory())
                 .testFiles(generatedTests)
                 .build();
     }
@@ -384,6 +413,25 @@ public class DiSLAnalyzer implements Analyzer {
         }
         if (!Files.exists(identifierMappingPath)) {
             throw new IllegalArgumentException(
+                "Identifier mapping file not found: " + identifierMappingPath);
+        }
+    }
+
+    /**
+     * Validates that analysis produced required output files.
+     */
+    private void validateAnalysisOutput(Path traceFilePath, Path identifierMappingPath) {
+        if (traceFilePath == null) {
+            throw new IllegalStateException(
+                "Trace file path is null - DiSL execution may not have configured trace output");
+        }
+        if (!Files.exists(traceFilePath)) {
+            throw new IllegalStateException(
+                "Trace file not created after DiSL execution: " + traceFilePath +
+                ". Check DiSL process logs for errors.");
+        }
+        if (identifierMappingPath == null || !Files.exists(identifierMappingPath)) {
+            throw new IllegalStateException(
                 "Identifier mapping file not found: " + identifierMappingPath);
         }
     }
