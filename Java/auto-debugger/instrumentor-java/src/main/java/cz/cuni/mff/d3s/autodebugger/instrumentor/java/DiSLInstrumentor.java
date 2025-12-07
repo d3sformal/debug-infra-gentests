@@ -2,6 +2,7 @@ package cz.cuni.mff.d3s.autodebugger.instrumentor.java;
 
 import cz.cuni.mff.d3s.autodebugger.instrumentor.common.Instrumentor;
 import cz.cuni.mff.d3s.autodebugger.instrumentor.common.modelling.InstrumentationModel;
+import cz.cuni.mff.d3s.autodebugger.model.common.TempPathResolver;
 import cz.cuni.mff.d3s.autodebugger.model.common.artifacts.InstrumentationResult;
 
 import java.io.*;
@@ -11,7 +12,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
-import cz.cuni.mff.d3s.autodebugger.instrumentor.java.modelling.DiSLModel;
 import cz.cuni.mff.d3s.autodebugger.model.common.identifiers.ExportableValue;
 import cz.cuni.mff.d3s.autodebugger.model.java.JavaRunConfiguration;
 import cz.cuni.mff.d3s.autodebugger.model.java.helper.DiSLPathHelper;
@@ -34,45 +34,63 @@ public class DiSLInstrumentor implements Instrumentor {
 
     private final JavaRunConfiguration runConfiguration;
 
-    @Builder.Default
-    private Path generatedCodeOutputDirectory =
-            Path.of("analyzer-disl/src/main/java/cz/cuni/mff/d3s/autodebugger/analyzer/disl/");
+    private Path generatedCodeOutputDirectory;
 
-    @Getter @Builder.Default
-    private Path jarOutputPath = Path.of("analyzer-disl/build/libs/instrumentation.jar");
+    @Getter
+    private Path jarOutputPath;
 
     // Injected from the runner to control generation technique and credentials
     private final String strategyId;
     private final String apiKey;
 
+    private Path resolveGeneratedCodeDir() {
+        return generatedCodeOutputDirectory != null
+            ? generatedCodeOutputDirectory
+            : TempPathResolver.getGeneratedSourcesDir(runConfiguration.getOutputDirectory());
+    }
+
+    private Path resolveJarOutputPath() {
+        return jarOutputPath != null
+            ? jarOutputPath
+            : TempPathResolver.getInstrumentationJarPath(runConfiguration.getOutputDirectory());
+    }
+
     @Override
     public InstrumentationResult generateInstrumentation(InstrumentationModel model) {
+        // Resolve effective paths using TempPathResolver
+        Path effectiveGeneratedCodeDir = resolveGeneratedCodeDir();
+        Path effectiveJarPath = resolveJarOutputPath();
+
         // Determine temp directory for identifier mapping files; allow override for tests
         Path identifiersBaseDir = Optional.ofNullable(System.getenv("AUTODEBUGGER_IDENTIFIERS_DIR"))
                 .map(Path::of)
-                .orElse(runConfiguration.getOutputDirectory().resolve("identifiers"));
+                .orElse(TempPathResolver.getIdentifiersDir(runConfiguration.getOutputDirectory()));
         var identifierMapping = serializeIdentifiers(identifiersBaseDir);
         var templateHandler = new JavaTemplateHandler(new JavaTemplateTransformer("${%s}"));
 
         // Ensure the Collector.jt template and CollectorRE.java are available in the output directory
-        Path collectorTemplate = generatedCodeOutputDirectory.resolve("Collector.jt");
+        Path collectorTemplate = effectiveGeneratedCodeDir.resolve("Collector.jt");
         copyResourceTo(collectorTemplate, "/templates/java/disl-analysis/Collector.jt");
-        copyResourceTo(generatedCodeOutputDirectory.resolve("CollectorRE.java"), "/templates/java/disl-analysis/CollectorRE.java");
+        copyResourceTo(effectiveGeneratedCodeDir.resolve("CollectorRE.java"), "/templates/java/disl-analysis/CollectorRE.java");
 
+        Path tracesBaseDir = Optional.ofNullable(System.getenv("AUTODEBUGGER_TRACES_DIR"))
+                .map(Path::of)
+                .orElse(TempPathResolver.getTracesDir(runConfiguration.getOutputDirectory()));
         Path resultsBaseDir = Optional.ofNullable(System.getenv("AUTODEBUGGER_RESULTS_DIR"))
                 .map(Path::of)
-                .orElse(runConfiguration.getOutputDirectory());
-        var traceFilePath = generateTraceFilePath(resultsBaseDir);
+                .orElse(TempPathResolver.getResultsDir(runConfiguration.getOutputDirectory()));
+        var traceFilePath = generateTraceFilePath(tracesBaseDir);
         var resultsListPath = generateResultsListPath(resultsBaseDir);
         // No need to set a system property; analyzer will read from runConfiguration output directory
 
         templateHandler.transformFile(
                 collectorTemplate,
-                generatedCodeOutputDirectory.resolve("Collector.java"),
+                effectiveGeneratedCodeDir.resolve("Collector.java"),
                 Pair.with("PATH", identifierMapping.toAbsolutePath().toString()),
                 Pair.with("TRACE_PATH", traceFilePath.toAbsolutePath().toString()),
                 Pair.with("TRACE_MODE", runConfiguration.getTraceMode().name().toLowerCase()));
-        var instrumentationJarPath = generateDiSLClass(model).flatMap(this::compileDiSLClass)
+        var instrumentationJarPath = generateDiSLClass(effectiveGeneratedCodeDir, model)
+                .flatMap(p -> compileDiSLClass(p, effectiveJarPath))
                 .orElseThrow();
         return InstrumentationResult.builder()
                 .primaryArtifact(instrumentationJarPath)
@@ -82,13 +100,13 @@ public class DiSLInstrumentor implements Instrumentor {
                 .build();
     }
 
-    private Optional<Path> generateDiSLClass(InstrumentationModel model) {
-        var generator = new DiSLClassGenerator(generatedCodeOutputDirectory, model);
+    private Optional<Path> generateDiSLClass(Path outputDir, InstrumentationModel model) {
+        var generator = new DiSLClassGenerator(outputDir, model);
         return generator.generateCode();
     }
 
-    private Optional<Path> compileDiSLClass(Path instrumentationSource) {
-        var compiler = new DiSLCompiler(jarOutputPath, DiSLPathHelper.getDislClassPathRoot(runConfiguration),
+    private Optional<Path> compileDiSLClass(Path instrumentationSource, Path targetJarPath) {
+        var compiler = new DiSLCompiler(targetJarPath, DiSLPathHelper.getDislClassPathRoot(runConfiguration),
                 runConfiguration.getClasspathEntries());
         return compiler.compileDiSLClass(instrumentationSource);
     }
