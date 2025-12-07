@@ -17,6 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -28,6 +29,12 @@ import java.util.concurrent.TimeUnit;
 public class DiSLAnalyzer implements Analyzer {
 
     private static final int DEFAULT_TIMEOUT_SECONDS = 300; // 5 minutes
+
+    /**
+     * Environment variable for explicitly setting the model-common classpath.
+     * Useful for tests running from temp directories where project structure isn't accessible.
+     */
+    public static final String MODEL_COMMON_CLASSPATH_ENV = "AUTODEBUGGER_MODEL_COMMON_CLASSPATH";
 
     @Getter
     private final JavaRunConfiguration runConfiguration;
@@ -116,10 +123,11 @@ public class DiSLAnalyzer implements Analyzer {
         // Add the evaluation (Shadow VM) classpath via JVM options
         // Include the instrumentation JAR so Shadow VM can find the Collector class
         // Convert relative paths to absolute paths since DiSL runs from output directory
-        // DiSL script requires using '=' syntax for arguments starting with dash
+        // DiSL script requires '=' syntax for arguments starting with dash (see disl.py help)
+        // Format: -e_opts=-cp -e_opts=<classpath>
         String evaluationClasspath = getEvaluationClasspath(instrumentationJarPath);
         command.add("-e_opts=-cp");
-        command.add(evaluationClasspath);
+        command.add("-e_opts=" + evaluationClasspath);
 
         command.add("--");
 
@@ -200,23 +208,128 @@ public class DiSLAnalyzer implements Analyzer {
         }
     }
 
+    /**
+     * Constructs the classpath for the ShadowVM (evaluation JVM).
+     * Includes the instrumentation JAR and model-common for Trace serialization.
+     *
+     * @param instrumentationJarPath Path to the instrumentation JAR
+     * @return Classpath string for the ShadowVM
+     */
     private static String getEvaluationClasspath(Path instrumentationJarPath) {
         Path instrumentationJarAbsolutePath = instrumentationJarPath.toAbsolutePath();
-        // Only need model-common for Trace serialization in ShadowVM
-        // Navigate up to find the project root (where model-common is located)
-        Path parent = instrumentationJarAbsolutePath.getParent();
-        if (parent != null) {
-            Path grandparent = parent.getParent();
-            if (grandparent != null) {
-                Path greatGrandparent = grandparent.getParent();
-                if (greatGrandparent != null) {
-                    return instrumentationJarAbsolutePath + ":" +
-                           greatGrandparent.resolve("model-common/build/libs").toAbsolutePath() + "/*";
-                }
+
+        // Try to resolve model-common classpath
+        Optional<String> modelCommonClasspath = resolveModelCommonClasspath();
+
+        if (modelCommonClasspath.isPresent()) {
+            return instrumentationJarAbsolutePath + ":" + modelCommonClasspath.get();
+        } else {
+            log.warn("model-common classpath not found. ShadowVM will only have instrumentation JAR. " +
+                    "Trace serialization may fail if model-common classes are needed.");
+            return instrumentationJarAbsolutePath.toString();
+        }
+    }
+
+    /**
+     * Resolves the model-common classpath using a multi-strategy approach:
+     * 1. Check AUTODEBUGGER_MODEL_COMMON_CLASSPATH environment variable
+     * 2. Try to find model-common relative to repository root (found via .git directory)
+     * 3. Try from current working directory
+     *
+     * @return Optional containing the model-common classpath, or empty if not found
+     */
+    private static Optional<String> resolveModelCommonClasspath() {
+        // Strategy 1: Check environment variable
+        String envClasspath = System.getenv(MODEL_COMMON_CLASSPATH_ENV);
+        if (envClasspath != null && !envClasspath.isBlank()) {
+            Path envPath = Path.of(envClasspath);
+            if (Files.exists(envPath)) {
+                log.debug("Using model-common classpath from environment variable: {}", envClasspath);
+                return Optional.of(envClasspath);
+            } else {
+                log.warn("Environment variable {} points to non-existent path: {}",
+                        MODEL_COMMON_CLASSPATH_ENV, envClasspath);
             }
         }
-        // Fallback: just include the instrumentation JAR itself
-        return instrumentationJarAbsolutePath.toString();
+
+        // Strategy 2: Try to find relative to repository root
+        Optional<Path> repoRoot = findRepositoryRoot();
+        if (repoRoot.isPresent()) {
+            // Try Java/auto-debugger/model-common first (full project structure)
+            Path modelCommonFull = repoRoot.get().resolve("Java/auto-debugger/model-common/build/libs");
+            Optional<String> classpath = listJarsInDirectory(modelCommonFull);
+            if (classpath.isPresent()) {
+                log.debug("Found model-common classpath relative to repository root: {}", classpath.get());
+                return classpath;
+            }
+            // Also try model-common directly (if running from auto-debugger directory)
+            Path modelCommonPath = repoRoot.get().resolve("model-common/build/libs");
+            classpath = listJarsInDirectory(modelCommonPath);
+            if (classpath.isPresent()) {
+                log.debug("Found model-common classpath relative to repository root (direct): {}", classpath.get());
+                return classpath;
+            }
+        }
+
+        // Strategy 3: Try from current working directory
+        Path cwdModelCommon = Path.of("model-common/build/libs");
+        Optional<String> classpath = listJarsInDirectory(cwdModelCommon);
+        if (classpath.isPresent()) {
+            log.debug("Found model-common classpath relative to current directory: {}", classpath.get());
+            return classpath;
+        }
+
+        log.warn("Could not resolve model-common classpath. Tried: " +
+                "1) {} environment variable, " +
+                "2) repository root relative path, " +
+                "3) current directory relative path",
+                MODEL_COMMON_CLASSPATH_ENV);
+        return Optional.empty();
+    }
+
+    /**
+     * Lists all JAR files in a directory and returns them as a colon-separated classpath.
+     */
+    private static Optional<String> listJarsInDirectory(Path directory) {
+        if (!Files.isDirectory(directory)) {
+            return Optional.empty();
+        }
+
+        try (var files = Files.list(directory)) {
+            String jars = files
+                    .filter(p -> p.toString().endsWith(".jar"))
+                    .map(Path::toAbsolutePath)
+                    .map(Path::toString)
+                    .reduce((a, b) -> a + ":" + b)
+                    .orElse(null);
+
+            if (jars != null && !jars.isEmpty()) {
+                return Optional.of(jars);
+            }
+        } catch (IOException e) {
+            log.warn("Failed to list JARs in directory: {}", directory, e);
+        }
+
+        return Optional.empty();
+    }
+
+    /**
+     * Finds the repository root by walking up the directory tree looking for .git directory.
+     *
+     * @return Optional containing the repository root path, or empty if not found
+     */
+    private static Optional<Path> findRepositoryRoot() {
+        Path current = Path.of("").toAbsolutePath();
+
+        // Walk up the directory tree looking for .git
+        while (current != null) {
+            if (Files.isDirectory(current.resolve(".git"))) {
+                return Optional.of(current);
+            }
+            current = current.getParent();
+        }
+
+        return Optional.empty();
     }
 
     private void readStream(InputStream inputStream, StringBuilder output) {
