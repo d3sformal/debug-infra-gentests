@@ -106,26 +106,33 @@ class DiSLAnalyzerTest {
 
         // Then
         assertNotNull(command);
-        assertEquals(15, command.size());
+        // Command size depends on whether model-common is found (adds -e_opts=-Xbootclasspath/a:...)
+        assertTrue(command.size() >= 13 && command.size() <= 14);
 
-        // Verify exact order and content
+        // Verify core command structure
         assertEquals("python3", command.get(0));
         assertEquals("/opt/disl/bin/disl.py", command.get(1));
         assertEquals("-d", command.get(2));
         assertEquals("/opt/disl/output", command.get(3));
         assertEquals("-cse", command.get(4));
-        assertEquals("-e_opts=-cp", command.get(5));
-        // Classpath includes instrumentation JAR (may also include model-common if path structure allows)
-        // Uses -e_opts= prefix per disl.py requirements for dash-starting arguments
-        assertTrue(command.get(6).startsWith("-e_opts=") && command.get(6).contains("instrumentation.jar"));
-        assertEquals("--", command.get(7));
-        assertEquals("/tmp/instrumentation.jar", command.get(8));
-        assertEquals("-jar", command.get(9));
-        assertEquals("/path/to/my-app.jar", command.get(10));
-        assertEquals("--user", command.get(11));
-        assertEquals("test", command.get(12));
-        assertEquals("--mode", command.get(13));
-        assertEquals("fast", command.get(14));
+
+        // Find the "--" separator to verify command structure
+        int separatorIndex = command.indexOf("--");
+        assertTrue(separatorIndex > 4, "Should have '--' separator");
+
+        // If model-common is found, there will be a -Xbootclasspath/a option before "--"
+        if (separatorIndex == 6) {
+            assertTrue(command.get(5).startsWith("-e_opts=-Xbootclasspath/a:"));
+        }
+
+        // After "--" comes: instrumentation.jar, -jar, app.jar, runtime args...
+        assertEquals("/tmp/instrumentation.jar", command.get(separatorIndex + 1));
+        assertEquals("-jar", command.get(separatorIndex + 2));
+        assertEquals("/path/to/my-app.jar", command.get(separatorIndex + 3));
+        assertEquals("--user", command.get(separatorIndex + 4));
+        assertEquals("test", command.get(separatorIndex + 5));
+        assertEquals("--mode", command.get(separatorIndex + 6));
+        assertEquals("fast", command.get(separatorIndex + 7));
     }
 
     @Test
@@ -138,21 +145,24 @@ class DiSLAnalyzerTest {
 
         // Then
         assertNotNull(command);
-        assertEquals(11, command.size());
+        // Command size depends on whether model-common is found
+        assertTrue(command.size() >= 9 && command.size() <= 10);
 
-        // Verify command up to application jar (no runtime arguments should follow)
+        // Verify core structure
         assertEquals("python3", command.get(0));
         assertEquals("/opt/disl/bin/disl.py", command.get(1));
         assertEquals("-d", command.get(2));
         assertEquals("/opt/disl/output", command.get(3));
         assertEquals("-cse", command.get(4));
-        assertEquals("-e_opts=-cp", command.get(5));
-        // Classpath includes instrumentation JAR (may also include model-common if path structure allows)
-        assertTrue(command.get(6).startsWith("-e_opts=") && command.get(6).contains("instrumentation.jar"));
-        assertEquals("--", command.get(7));
-        assertEquals("/tmp/instrumentation.jar", command.get(8));
-        assertEquals("-jar", command.get(9));
-        assertEquals("/path/to/my-app.jar", command.get(10));
+
+        // Find "--" and verify structure after it
+        int separatorIndex = command.indexOf("--");
+        assertTrue(separatorIndex > 4);
+        assertEquals("/tmp/instrumentation.jar", command.get(separatorIndex + 1));
+        assertEquals("-jar", command.get(separatorIndex + 2));
+        assertEquals("/path/to/my-app.jar", command.get(separatorIndex + 3));
+        // No runtime arguments after app.jar
+        assertEquals(separatorIndex + 4, command.size());
     }
 
     @Test
@@ -165,7 +175,8 @@ class DiSLAnalyzerTest {
 
         // Then
         assertNotNull(command);
-        assertEquals(11, command.size());
+        // Command size depends on whether model-common is found
+        assertTrue(command.size() >= 9 && command.size() <= 10);
 
         // Verify paths with spaces are correctly represented as single arguments
         assertEquals("python3", command.get(0));
@@ -173,13 +184,13 @@ class DiSLAnalyzerTest {
         assertEquals("-d", command.get(2));
         assertEquals("/opt/DiSL Framework/output", command.get(3));
         assertEquals("-cse", command.get(4));
-        assertEquals("-e_opts=-cp", command.get(5));
-        // Classpath includes instrumentation JAR (may also include model-common if path structure allows)
-        assertTrue(command.get(6).startsWith("-e_opts=") && command.get(6).contains("instrumentation.jar"));
-        assertEquals("--", command.get(7));
-        assertEquals("/tmp/instrumentation.jar", command.get(8));
-        assertEquals("-jar", command.get(9));
-        assertEquals("/home/user/my app/app.jar", command.get(10));
+
+        // Find "--" and verify structure after it
+        int separatorIndex = command.indexOf("--");
+        assertTrue(separatorIndex > 4);
+        assertEquals("/tmp/instrumentation.jar", command.get(separatorIndex + 1));
+        assertEquals("-jar", command.get(separatorIndex + 2));
+        assertEquals("/home/user/my app/app.jar", command.get(separatorIndex + 3));
     }
 
     @Test
