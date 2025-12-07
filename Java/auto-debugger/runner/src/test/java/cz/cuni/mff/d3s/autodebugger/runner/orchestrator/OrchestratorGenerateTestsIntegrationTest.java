@@ -1,5 +1,6 @@
 package cz.cuni.mff.d3s.autodebugger.runner.orchestrator;
 
+import cz.cuni.mff.d3s.autodebugger.analyzer.common.AnalysisResult;
 import cz.cuni.mff.d3s.autodebugger.model.common.TargetLanguage;
 import cz.cuni.mff.d3s.autodebugger.model.common.artifacts.InstrumentationResult;
 import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
@@ -50,6 +51,27 @@ class OrchestratorGenerateTestsIntegrationTest {
         StubResultsHelper.writeMinimalStubTestAndResults(resultsListPath);
     }
 
+    /**
+     * Creates a mock AnalysisResult by writing mock trace and identifier mapping files.
+     * This bypasses the need for DiSL runtime while testing the test generation pipeline.
+     */
+    private AnalysisResult createMockAnalysisResult(InstrumentationResult instrumentation) throws Exception {
+        Path traceFilePath = instrumentation.getTraceFilePath();
+        Path identifierMappingPath = instrumentation.getIdentifiersMappingPath();
+
+        Trace mockTrace = StubResultsHelper.createMinimalMockTrace();
+        StubResultsHelper.writeSerializedTrace(traceFilePath, mockTrace);
+
+        Map<Integer, JavaValueIdentifier> mapping = StubResultsHelper.createMinimalIdentifierMapping();
+        StubResultsHelper.writeSerializedIdentifierMapping(identifierMappingPath, mapping);
+
+        return AnalysisResult.builder()
+            .traceFilePath(traceFilePath)
+            .identifiersMappingPath(identifierMappingPath)
+            .outputDirectory(outputDir)
+            .build();
+    }
+
     @BeforeEach
     void setUp() throws Exception {
         // Create test directories
@@ -91,17 +113,14 @@ class OrchestratorGenerateTestsIntegrationTest {
      * from a mock trace using the trace-based-basic strategy.
      */
     @Test
-    @Disabled("Requires DiSL runtime environment - the new architecture runs DiSL process and deserializes trace")
-    void givenTraceBasedStrategy_whenRunAnalysis_thenGeneratesCompilableTests() throws Exception {
+    void givenTraceBasedStrategy_whenGenerateTests_thenGeneratesCompilableTests() throws Exception {
         // given - orchestrator configured with trace-based-basic strategy
         // (already set up in setUp method)
 
         // when - run analysis to generate tests
         var model = orchestrator.buildInstrumentationModel();
         var instrumentation = orchestrator.createInstrumentation(model);
-        // Pre-create stub results using the resultsListPath from instrumentation
-        prepareStubResults(instrumentation);
-        var analysisResult = orchestrator.executeAnalysis(instrumentation);
+        var analysisResult = createMockAnalysisResult(instrumentation);
         var testSuite = orchestrator.generateTests(analysisResult);
         var generatedFiles = testSuite.getTestFiles();
         assertFalse(generatedFiles.isEmpty(), "In stub mode, some files should be generated");
@@ -189,13 +208,11 @@ class OrchestratorGenerateTestsIntegrationTest {
      * Note: Full compilation may fail due to missing dependencies, but syntax should be valid.
      */
     @Test
-    @Disabled("Requires DiSL runtime environment - the new architecture runs DiSL process and deserializes trace")
-    void givenGeneratedTests_whenValidatingSyntax_thenAreWellFormed() throws Exception {
+    void givenMockTrace_whenValidatingSyntax_thenAreWellFormed() throws Exception {
         // given - orchestrator configured with trace-based strategy
         var model = orchestrator.buildInstrumentationModel();
         var instrumentation = orchestrator.createInstrumentation(model);
-        prepareStubResults(instrumentation);
-        var analysisResult = orchestrator.executeAnalysis(instrumentation);
+        var analysisResult = createMockAnalysisResult(instrumentation);
         var generatedFiles = orchestrator.generateTests(analysisResult).getTestFiles();
 
         assertFalse(generatedFiles.isEmpty());
@@ -242,13 +259,11 @@ class OrchestratorGenerateTestsIntegrationTest {
      * Provides comprehensive validation of generated test content beyond basic string checks.
      */
     @Test
-    @Disabled("Requires DiSL runtime environment - the new architecture runs DiSL process and deserializes trace")
-    void givenGeneratedTests_whenValidatingContent_thenContainExpectedElements() throws Exception {
+    void givenMockTrace_whenValidatingContent_thenContainExpectedElements() throws Exception {
         // given - orchestrator with trace-based strategy
         var model = orchestrator.buildInstrumentationModel();
         var instrumentation = orchestrator.createInstrumentation(model);
-        prepareStubResults(instrumentation);
-        var analysisResult = orchestrator.executeAnalysis(instrumentation);
+        var analysisResult = createMockAnalysisResult(instrumentation);
         var generatedFiles = orchestrator.generateTests(analysisResult).getTestFiles();
 
         assertFalse(generatedFiles.isEmpty());
