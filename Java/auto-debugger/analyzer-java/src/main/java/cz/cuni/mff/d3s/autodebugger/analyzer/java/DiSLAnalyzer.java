@@ -120,14 +120,13 @@ public class DiSLAnalyzer implements Analyzer {
         // Run with the client (target app), server (DiSL instrumentation server), and evaluation (ShadowVM)
         command.add("-cse");
 
-        // Add the evaluation (Shadow VM) classpath via JVM options
-        // Include the instrumentation JAR so Shadow VM can find the Collector class
-        // Convert relative paths to absolute paths since DiSL runs from output directory
-        // DiSL script requires '=' syntax for arguments starting with dash (see disl.py help)
-        // Format: -e_opts=-cp -e_opts=<classpath>
-        String evaluationClasspath = getEvaluationClasspath(instrumentationJarPath);
-        command.add("-e_opts=-cp");
-        command.add("-e_opts=" + evaluationClasspath);
+        // Add extra classpath entries for the Shadow VM via -Xbootclasspath/a
+        // This appends to the bootstrap classpath and won't be overwritten by disl.py's -cp
+        // We need model-common on the classpath for Trace serialization
+        Optional<String> modelCommonClasspath = resolveModelCommonClasspath();
+        if (modelCommonClasspath.isPresent()) {
+            command.add("-e_opts=-Xbootclasspath/a:" + modelCommonClasspath.get());
+        }
 
         command.add("--");
 
@@ -205,28 +204,6 @@ public class DiSLAnalyzer implements Analyzer {
         if (identifierMappingPath == null || !Files.exists(identifierMappingPath)) {
             throw new IllegalStateException(
                 "Identifier mapping file not found: " + identifierMappingPath);
-        }
-    }
-
-    /**
-     * Constructs the classpath for the ShadowVM (evaluation JVM).
-     * Includes the instrumentation JAR and model-common for Trace serialization.
-     *
-     * @param instrumentationJarPath Path to the instrumentation JAR
-     * @return Classpath string for the ShadowVM
-     */
-    private static String getEvaluationClasspath(Path instrumentationJarPath) {
-        Path instrumentationJarAbsolutePath = instrumentationJarPath.toAbsolutePath();
-
-        // Try to resolve model-common classpath
-        Optional<String> modelCommonClasspath = resolveModelCommonClasspath();
-
-        if (modelCommonClasspath.isPresent()) {
-            return instrumentationJarAbsolutePath + ":" + modelCommonClasspath.get();
-        } else {
-            log.warn("model-common classpath not found. ShadowVM will only have instrumentation JAR. " +
-                    "Trace serialization may fail if model-common classes are needed.");
-            return instrumentationJarAbsolutePath.toString();
         }
     }
 
