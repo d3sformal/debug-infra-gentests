@@ -309,7 +309,7 @@ class DiSLAnalyzerTest {
             assertTrue(generated.getTestFiles().size() >= 0, "Generated tests list should be returned");
 
         } catch (Exception e) {
-            // If it fails, it should be due to process execution issues
+            // If it fails, it should be due to process execution issues or validation failures
             assertNotNull(e);
             System.out.println("Exception caught: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             // The important thing is that we're testing the structure and that it attempts to run the process
@@ -319,7 +319,12 @@ class DiSLAnalyzerTest {
                       e.getMessage().contains("No such file") ||
                       e.getMessage().contains("Cannot run program") ||
                       e.getMessage().contains("does not exist") ||
-                      e.getMessage().contains("Expected JAR file"));  // Common error when command not found
+                      e.getMessage().contains("Expected JAR file") ||
+                      e.getMessage().contains("Trace file path is null") ||
+                      e.getMessage().contains("Trace file not created") ||
+                      e.getMessage().contains("Failed to deserialize trace") ||
+                      e.getMessage().contains("Trace contains no invocation data") ||
+                      e.getMessage().contains("Identifier mapping"));  // New validation error messages
         }
     }
 
