@@ -23,6 +23,8 @@ dependencies {
     testImplementation(project(":test-utils"))
     testImplementation(project(":instrumentor-common"))
     testImplementation(project(":instrumentor-java"))
+    testImplementation(project(":test-generator-java", "shadow"))
+    testImplementation(project(":test-generator-common"))
 }
 
 tasks.test {
