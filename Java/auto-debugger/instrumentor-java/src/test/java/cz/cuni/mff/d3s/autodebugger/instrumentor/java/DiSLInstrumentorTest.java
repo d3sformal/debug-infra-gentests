@@ -579,14 +579,14 @@ class DiSLInstrumentorTest {
   }
 
   @Test
-  @Disabled
-  void givenStaticMethod_whenInstrumentingReturnValue_thenValuesAreExtracted() {
+  void givenStaticMethod_whenInstrumentingReturnValue_thenValuesAreExtracted() throws IOException {
     // given
     JavaMethodIdentifier methodIdentifier = new JavaMethodIdentifier(
             MethodIdentifierParameters.builder()
                     .ownerClassIdentifier(Constants.testClassIdentifier)
                     .methodName("testMul")
-                    .returnType("void")
+                    .returnType("int")  // testMul returns int
+                    .parameterTypes(List.of("int", "int"))
                     .build());
 
     JavaRunConfiguration runConfiguration = JavaRunConfiguration.builder()
@@ -604,7 +604,8 @@ class DiSLInstrumentorTest {
             methodIdentifier,
             List.of(new JavaReturnValueIdentifier(new ReturnValueIdentifierParameters(methodIdentifier))));
 
-    Path instrumentationJarPath = Path.of("../analyzer-disl/build/libs/instrumentation.jar");
+    // Use temp directory for output paths
+    Path instrumentationJarPath = tempDir.resolve("instrumentation.jar");
     DiSLInstrumentor instrumentor =
             DiSLInstrumentor.builder()
                     .instrumentationClassName(new JavaClassIdentifier(
@@ -613,9 +614,7 @@ class DiSLInstrumentorTest {
                                     .className("DiSLClass")
                                     .build()))
                     .runConfiguration(runConfiguration)
-                    .generatedCodeOutputDirectory(
-                            Path.of(
-                                    "../analyzer-disl/src/main/java/cz/cuni/mff/d3s/autodebugger/analyzer/disl/"))
+                    .generatedCodeOutputDirectory(testOutputDirectory)
                     .jarOutputPath(instrumentationJarPath)
                     .build();
 
@@ -624,5 +623,14 @@ class DiSLInstrumentorTest {
 
     // then
     assertEquals(instrumentationJarPath, result.getPrimaryArtifact());
+    assertTrue(Files.exists(result.getPrimaryArtifact()), "Instrumentation JAR should exist");
+
+    // Verify return value collection code was generated in DiSLClass
+    Path dislClassPath = testOutputDirectory.resolve("DiSLClass.java");
+    assertTrue(Files.exists(dislClassPath), "DiSLClass.java should be generated");
+    String dislClassContent = Files.readString(dislClassPath);
+    // Should contain getStackValue call for return value extraction
+    assertTrue(dislClassContent.contains("getStackValue"),
+        "DiSLClass should have getStackValue call for return value extraction");
   }
 }
