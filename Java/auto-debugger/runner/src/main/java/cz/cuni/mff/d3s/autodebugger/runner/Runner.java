@@ -60,6 +60,11 @@ public class Runner {
     log.info("  Classpath: {}", arguments.classpath);
     log.info("  DiSL home: {}", arguments.dislHomePath);
 
+    // Validate arguments early with clear error messages
+    log.info("Validating arguments...");
+    arguments.validateOrThrow();
+    log.info("Arguments validated successfully");
+
     var orchestrator = new Orchestrator(arguments);
     log.info("Created orchestrator for language: {}", arguments.language.getDisplayName());
 
