@@ -47,7 +47,9 @@ public class RunConfigurationFactory {
                 ? Path.of(arguments.outputDirectory)
                 : TempPathResolver.getDefaultOutputDirectory();
             var dislHomePath = resolveDislHomePath(arguments.dislHomePath);
-            var classpathEntries = arguments.classpath.stream().map(Path::of).toList();
+            var classpathEntries = arguments.classpath != null
+                ? arguments.classpath.stream().map(Path::of).toList()
+                : List.<Path>of();
 
             var parser = new JavaMethodSignatureParser();
 
