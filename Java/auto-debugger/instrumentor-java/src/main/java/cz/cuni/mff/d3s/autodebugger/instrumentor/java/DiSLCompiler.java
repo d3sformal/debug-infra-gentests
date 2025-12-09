@@ -208,43 +208,47 @@ public class DiSLCompiler {
 
     /**
      * Embeds required classes from model-common into the instrumentation JAR.
-     * This ensures the Trace class is available to the ShadowVM without requiring
-     * complex classpath resolution at runtime.
+     * This ensures the Trace and IndexedTrace classes are available to the ShadowVM
+     * without requiring complex classpath resolution at runtime.
      */
     private void embedModelCommonClasses(JarOutputStream target) {
-        // The class to embed with its full package path
-        String traceClassEntry = "cz/cuni/mff/d3s/autodebugger/model/common/trace/Trace.class";
+        // Classes to embed with their full package paths
+        String[] classEntries = {
+            "cz/cuni/mff/d3s/autodebugger/model/common/trace/Trace.class",
+            "cz/cuni/mff/d3s/autodebugger/model/common/trace/IndexedTrace.class"
+        };
 
         // Find model-common JAR from the classpath we already resolve
         Optional<File> modelCommonJar = findModelCommonJar();
         if (modelCommonJar.isEmpty()) {
-            log.warn("model-common JAR not found - Trace class will not be embedded. " +
+            log.warn("model-common JAR not found - Trace classes will not be embedded. " +
                      "This may cause ClassNotFoundException at runtime.");
             return;
         }
 
         try (JarFile jarFile = new JarFile(modelCommonJar.get())) {
-            JarEntry traceEntry = jarFile.getJarEntry(traceClassEntry);
-            if (traceEntry == null) {
-                log.warn("Trace.class not found in model-common JAR at path: {}", traceClassEntry);
-                return;
-            }
-
-            // Add the Trace class to the output JAR with its full package path
-            JarEntry newEntry = new JarEntry(traceClassEntry);
-            newEntry.setTime(traceEntry.getTime());
-            target.putNextEntry(newEntry);
-
-            try (InputStream in = jarFile.getInputStream(traceEntry)) {
-                byte[] buffer = new byte[8192];
-                int count;
-                while ((count = in.read(buffer)) != -1) {
-                    target.write(buffer, 0, count);
+            for (String classEntry : classEntries) {
+                JarEntry sourceEntry = jarFile.getJarEntry(classEntry);
+                if (sourceEntry == null) {
+                    log.warn("{} not found in model-common JAR", classEntry);
+                    continue;
                 }
-            }
-            target.closeEntry();
-            log.debug("Embedded Trace.class from model-common JAR");
 
+                // Add the class to the output JAR with its full package path
+                JarEntry newEntry = new JarEntry(classEntry);
+                newEntry.setTime(sourceEntry.getTime());
+                target.putNextEntry(newEntry);
+
+                try (InputStream in = jarFile.getInputStream(sourceEntry)) {
+                    byte[] buffer = new byte[8192];
+                    int count;
+                    while ((count = in.read(buffer)) != -1) {
+                        target.write(buffer, 0, count);
+                    }
+                }
+                target.closeEntry();
+                log.debug("Embedded {} from model-common JAR", classEntry);
+            }
         } catch (IOException e) {
             log.error("Failed to embed model-common classes", e);
         }
