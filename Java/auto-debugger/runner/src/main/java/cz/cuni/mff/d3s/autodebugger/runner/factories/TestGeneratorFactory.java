@@ -20,6 +20,9 @@ import java.nio.file.Path;
 @Slf4j
 public class TestGeneratorFactory {
 
+    // Default model for production use
+    private static final String DEFAULT_LLM_MODEL = "claude-sonnet-4-20250514";
+
     public static TestGenerator createTestGenerator(RunConfiguration runConfiguration, String strategyId) {
         return createTestGenerator(runConfiguration, strategyId, null);
     }
@@ -29,16 +32,33 @@ public class TestGeneratorFactory {
     }
 
     public static TestGenerator createTestGenerator(RunConfiguration runConfiguration, String strategyId, String apiKey, Path identifierMappingPath) {
+        return createTestGenerator(runConfiguration, strategyId, apiKey, identifierMappingPath, DEFAULT_LLM_MODEL);
+    }
+
+    /**
+     * Creates a test generator with a custom LLM model name.
+     * This overload is primarily for testing purposes to allow using the "mock" model.
+     *
+     * @param runConfiguration The run configuration
+     * @param strategyId The test generation strategy ID
+     * @param apiKey The API key (can be null for mock model)
+     * @param identifierMappingPath Path to identifier mapping (for trace-based strategies)
+     * @param llmModelName The LLM model name (use "mock" for testing without API calls)
+     * @return The configured test generator
+     */
+    public static TestGenerator createTestGenerator(RunConfiguration runConfiguration, String strategyId,
+            String apiKey, Path identifierMappingPath, String llmModelName) {
         TargetLanguage language = runConfiguration.getLanguage();
         if (language == TargetLanguage.JAVA) {
-            return createJavaTestGenerator(runConfiguration, strategyId, apiKey, identifierMappingPath);
+            return createJavaTestGenerator(runConfiguration, strategyId, apiKey, identifierMappingPath, llmModelName);
         }
 
         throw new IllegalArgumentException("Unsupported language: " + language);
     }
 
-    private static TestGenerator createJavaTestGenerator(RunConfiguration runConfiguration, String strategyId, String apiKey, Path identifierMappingPath) {
-        log.info("Creating Java test generator with strategy: {}", strategyId);
+    private static TestGenerator createJavaTestGenerator(RunConfiguration runConfiguration, String strategyId,
+            String apiKey, Path identifierMappingPath, String llmModelName) {
+        log.info("Creating Java test generator with strategy: {}, model: {}", strategyId, llmModelName);
 
         // Validate that the strategy exists
         if (!TestGenerationStrategyProvider.hasStrategy(strategyId)) {
@@ -58,10 +78,11 @@ public class TestGeneratorFactory {
                             anthropicClient, promptBuilder, codeValidator);
 
                     // Configure with Anthropic Claude settings
-                    String resolvedApiKey = getApiKeyFromEnvironmentOrConfig(apiKey);
+                    // For mock model, API key is not required
+                    String resolvedApiKey = "mock".equals(llmModelName) ? "mock-key" : getApiKeyFromEnvironmentOrConfig(apiKey);
 
                     LLMConfiguration llmConfig = LLMConfiguration.builder()
-                            .modelName("claude-sonnet-4-20250514")
+                            .modelName(llmModelName)
                             .apiKey(resolvedApiKey)
                             .maxTokens(4000)
                             .temperature(0.3)
