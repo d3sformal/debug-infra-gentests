@@ -1,6 +1,7 @@
 import ch.usi.dag.dislreserver.remoteanalysis.RemoteAnalysis;
 import ch.usi.dag.dislreserver.shadow.ShadowObject;
 import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
+import cz.cuni.mff.d3s.autodebugger.model.common.trace.IndexedTrace;
 import java.nio.file.Path;
 import java.nio.file.Files;
 import java.util.HashMap;
@@ -298,14 +299,16 @@ public class Collector extends RemoteAnalysis {
     System.out.println("*** COLLECTOR: atExit called ***");
     System.out.println(String.format(messageFormat, processName, "Exiting analysis..."));
     System.out.println(String.format(messageFormat, processName, "Collected " + allInvocations.size() + " invocations"));
+    System.out.println(String.format(messageFormat, processName, "Trace mode: " + traceMode));
 
     try {
+      Path traceFile = Path.of(traceFilePath);
+      Files.createDirectories(traceFile.getParent());
+
       if (allInvocations.isEmpty()) {
         System.out.println(String.format(messageFormat, processName, "No values collected - writing empty trace"));
-        // Still write an empty trace so callers know atExit ran but no data was collected
-        Trace emptyTrace = new Trace();
-        Path traceFile = Path.of(traceFilePath);
-        Files.createDirectories(traceFile.getParent());
+        // Write empty trace based on mode
+        Object emptyTrace = "temporal".equalsIgnoreCase(traceMode) ? new IndexedTrace() : new Trace();
         try (java.io.FileOutputStream fileOutput = new java.io.FileOutputStream(traceFile.toFile());
              java.io.ObjectOutputStream objectStream = new java.io.ObjectOutputStream(fileOutput)) {
           objectStream.writeObject(emptyTrace);
@@ -325,21 +328,30 @@ public class Collector extends RemoteAnalysis {
         }
       }
 
-      // Build Trace from collected invocations
-      System.out.println(String.format(messageFormat, processName, "Building trace from " + allInvocations.size() + " invocations"));
-      Trace trace = buildTraceFromInvocations(allInvocations);
+      // Build and serialize trace based on mode
+      if ("temporal".equalsIgnoreCase(traceMode)) {
+        // TEMPORAL MODE: Build IndexedTrace with true event indices
+        System.out.println(String.format(messageFormat, processName, "Building IndexedTrace from " + allInvocations.size() + " invocations"));
+        IndexedTrace indexedTrace = buildIndexedTraceFromInvocations(allInvocations);
 
-      // Serialize trace to traceFilePath
-      System.out.println(String.format(messageFormat, processName, "Serializing trace to: " + traceFilePath));
-      Path traceFile = Path.of(traceFilePath);
-      Files.createDirectories(traceFile.getParent());
+        System.out.println(String.format(messageFormat, processName, "Serializing IndexedTrace to: " + traceFilePath));
+        try (java.io.FileOutputStream fileOutput = new java.io.FileOutputStream(traceFile.toFile());
+             java.io.ObjectOutputStream objectStream = new java.io.ObjectOutputStream(fileOutput)) {
+          objectStream.writeObject(indexedTrace);
+        }
+        System.out.println(String.format(messageFormat, processName, "IndexedTrace serialization complete - " + indexedTrace.getTotalEventCount() + " events"));
+      } else {
+        // NAIVE MODE: Build regular Trace (set-based, no temporal ordering)
+        System.out.println(String.format(messageFormat, processName, "Building Trace from " + allInvocations.size() + " invocations"));
+        Trace trace = buildTraceFromInvocations(allInvocations);
 
-      try (java.io.FileOutputStream fileOutput = new java.io.FileOutputStream(traceFile.toFile());
-           java.io.ObjectOutputStream objectStream = new java.io.ObjectOutputStream(fileOutput)) {
-        objectStream.writeObject(trace);
+        System.out.println(String.format(messageFormat, processName, "Serializing Trace to: " + traceFilePath));
+        try (java.io.FileOutputStream fileOutput = new java.io.FileOutputStream(traceFile.toFile());
+             java.io.ObjectOutputStream objectStream = new java.io.ObjectOutputStream(fileOutput)) {
+          objectStream.writeObject(trace);
+        }
+        System.out.println(String.format(messageFormat, processName, "Trace serialization complete"));
       }
-
-      System.out.println(String.format(messageFormat, processName, "Trace serialization complete"));
 
     } catch (Exception e) {
       System.err.println(String.format(messageFormat, processName, "Error during trace serialization: " + e.getMessage()));
@@ -351,7 +363,7 @@ public class Collector extends RemoteAnalysis {
 
   /**
    * Builds a Trace object from the collected invocations.
-   * Iterates through all invocations and adds values to the trace based on their type.
+   * This is used in NAIVE mode - values are stored in Sets (unordered, deduplicated).
    */
   private Trace buildTraceFromInvocations(List<Map<Integer, Object>> invocations) {
     Trace trace = new Trace();
@@ -382,6 +394,33 @@ public class Collector extends RemoteAnalysis {
     }
 
     return trace;
+  }
+
+  /**
+   * Builds an IndexedTrace object from the collected invocations.
+   * This is used in TEMPORAL mode - values are stored with their event indices,
+   * preserving the true temporal ordering of when values were observed.
+   * Each invocation is assigned a sequential event index.
+   */
+  private IndexedTrace buildIndexedTraceFromInvocations(List<Map<Integer, Object>> invocations) {
+    IndexedTrace indexedTrace = new IndexedTrace();
+    int eventIndex = 0;
+
+    for (Map<Integer, Object> invocation : invocations) {
+      // Each invocation gets a unique event index
+      for (Map.Entry<Integer, Object> entry : invocation.entrySet()) {
+        int slot = entry.getKey();
+        Object value = entry.getValue();
+        indexedTrace.addValue(slot, eventIndex, value);
+      }
+      eventIndex++;
+    }
+
+    System.out.println(String.format(messageFormat, processName,
+        "Built IndexedTrace with " + indexedTrace.getAllSlots().size() + " slots and " +
+        indexedTrace.getTotalEventCount() + " events"));
+
+    return indexedTrace;
   }
 
 
