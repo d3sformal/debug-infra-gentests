@@ -107,7 +107,13 @@ public class DiSLModel extends InstrumentationModel {
   private Optional<JavaPackageIdentifier> getImport(
       JavaValueIdentifier valueIdentifier) {
     if (valueIdentifier instanceof JavaFieldIdentifier fieldIdentifier) {
-      return Optional.of(fieldIdentifier.getOwnerClassIdentifier().getAsImportablePackage());
+      // Don't generate import for classes in the default package
+      JavaClassIdentifier ownerClass = fieldIdentifier.getOwnerClassIdentifier();
+      if (ownerClass.getPackageIdentifier() == null ||
+          ownerClass.getPackageIdentifier().getPackageName().isEmpty()) {
+        return Optional.empty();
+      }
+      return Optional.of(ownerClass.getAsImportablePackage());
     }
     return Optional.empty();
   }
