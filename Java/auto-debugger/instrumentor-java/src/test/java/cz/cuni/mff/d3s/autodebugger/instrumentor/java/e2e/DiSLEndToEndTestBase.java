@@ -184,7 +184,9 @@ public abstract class DiSLEndToEndTestBase {
                 .dislHomePath(dislHome)
                 .targetMethod(targetMethod)
                 .exportableValues(exportableValues)
-                .outputDirectory(outputDir);
+                .outputDirectory(outputDir)
+                // Include target JAR in classpath for DiSL compilation (needed for field access)
+                .classpathEntries(List.of(applicationPath));
     }
 
     /**
@@ -336,6 +338,27 @@ public abstract class DiSLEndToEndTestBase {
             }
         }
         throw new IllegalArgumentException("No slot found for argument " + argumentSlot);
+    }
+
+    /**
+     * Finds the slot number for a given field identifier in the mapping.
+     *
+     * @param mapping The identifier mapping from slot to value identifier
+     * @param fieldName The name of the field to find
+     * @return The slot number for the field
+     * @throws IllegalArgumentException if no slot found for the field
+     */
+    protected int findSlotForField(
+            Map<Integer, JavaValueIdentifier> mapping, String fieldName) {
+        for (Map.Entry<Integer, JavaValueIdentifier> entry : mapping.entrySet()) {
+            if (entry.getValue() instanceof JavaFieldIdentifier) {
+                JavaFieldIdentifier fieldId = (JavaFieldIdentifier) entry.getValue();
+                if (fieldId.getFieldName().equals(fieldName)) {
+                    return entry.getKey();
+                }
+            }
+        }
+        throw new IllegalArgumentException("No slot found for field " + fieldName);
     }
 }
 
