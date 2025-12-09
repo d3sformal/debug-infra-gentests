@@ -4,11 +4,15 @@ import cz.cuni.mff.d3s.autodebugger.analyzer.common.AnalysisResult;
 import cz.cuni.mff.d3s.autodebugger.instrumentor.common.modelling.InstrumentationModel;
 import cz.cuni.mff.d3s.autodebugger.model.common.RunConfiguration;
 import cz.cuni.mff.d3s.autodebugger.model.common.TargetLanguage;
+import cz.cuni.mff.d3s.autodebugger.model.common.TraceMode;
 import cz.cuni.mff.d3s.autodebugger.model.common.artifacts.InstrumentationResult;
 import cz.cuni.mff.d3s.autodebugger.model.common.technique.TestTechniqueConfig;
 import cz.cuni.mff.d3s.autodebugger.model.common.tests.TestSuite;
+import cz.cuni.mff.d3s.autodebugger.model.common.trace.TemporalTrace;
 import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
 import cz.cuni.mff.d3s.autodebugger.model.java.JavaRunConfiguration;
+import cz.cuni.mff.d3s.autodebugger.model.java.TraceAdapter;
+import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaValueIdentifier;
 
 import cz.cuni.mff.d3s.autodebugger.runner.args.Arguments;
 import cz.cuni.mff.d3s.autodebugger.runner.factories.AnalyzerFactory;
@@ -23,6 +27,7 @@ import cz.cuni.mff.d3s.autodebugger.runner.strategies.TestGenerationStrategyProv
 import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerationContext;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerator;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.java.JavaTestGenerationContextFactory;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.java.trace.TemporalTraceBasedGenerator;
 import cz.cuni.mff.d3s.autodebugger.testrunner.common.TestExecutionResult;
 import lombok.extern.slf4j.Slf4j;
 
@@ -32,6 +37,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Central orchestrator that coordinates the complete auto-debugger workflow.
@@ -107,12 +113,22 @@ public class Orchestrator {
             technique.getApiKey(),
             analysisResult.getIdentifiersMappingPath());
 
-        // Generate tests
+        // Generate tests - route based on TraceMode
         TestGenerationContext context = createTestGenerationContext();
-        List<Path> generatedTests = generator.generateTests(
-            trace,
-            runConfiguration.getSourceCodePath(),
-            context);
+        List<Path> generatedTests;
+
+        if (runConfiguration.getTraceMode() == TraceMode.TEMPORAL && generator instanceof TemporalTraceBasedGenerator temporalGenerator) {
+            // Convert Trace to TemporalTrace using TraceAdapter and use TemporalTraceBasedGenerator
+            log.info("Temporal trace mode detected, converting Trace to TemporalTrace");
+            TemporalTrace temporalTrace = convertToTemporalTrace(trace, analysisResult.getIdentifiersMappingPath());
+            generatedTests = temporalGenerator.generateTests(temporalTrace, context);
+        } else {
+            // Use standard Trace-based generation
+            generatedTests = generator.generateTests(
+                trace,
+                runConfiguration.getSourceCodePath(),
+                context);
+        }
 
         if (generatedTests == null || generatedTests.isEmpty()) {
             log.warn("Test generation completed but produced no test files");
@@ -123,6 +139,39 @@ public class Orchestrator {
                 .baseDirectory(analysisResult.getOutputDirectory())
                 .testFiles(generatedTests)
                 .build();
+    }
+
+    /**
+     * Converts a legacy Trace to TemporalTrace using the identifier mapping.
+     *
+     * @param trace The legacy slot-based trace
+     * @param identifierMappingPath Path to the identifier mapping file
+     * @return TemporalTrace with converted data
+     */
+    private TemporalTrace convertToTemporalTrace(Trace trace, Path identifierMappingPath) {
+        log.info("Converting Trace to TemporalTrace using identifier mapping: {}", identifierMappingPath);
+
+        Map<Integer, JavaValueIdentifier> identifierMapping = deserializeIdentifierMapping(identifierMappingPath);
+        return TraceAdapter.convertToEnhanced(trace, identifierMapping);
+    }
+
+    /**
+     * Deserializes the identifier mapping from the given path.
+     *
+     * @param path Path to the identifier mapping file
+     * @return Map of slot IDs to JavaValueIdentifier objects
+     */
+    @SuppressWarnings("unchecked")
+    private Map<Integer, JavaValueIdentifier> deserializeIdentifierMapping(Path path) {
+        if (path == null || !Files.exists(path)) {
+            throw new IllegalStateException("Identifier mapping file not found: " + path);
+        }
+
+        try (ObjectInputStream ois = new ObjectInputStream(Files.newInputStream(path))) {
+            return (Map<Integer, JavaValueIdentifier>) ois.readObject();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to deserialize identifier mapping from: " + path, e);
+        }
     }
 
     public TestExecutionResult runTests(TestSuite testSuite) {
