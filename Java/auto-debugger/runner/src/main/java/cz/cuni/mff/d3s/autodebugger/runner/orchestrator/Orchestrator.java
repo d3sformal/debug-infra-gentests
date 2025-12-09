@@ -8,6 +8,7 @@ import cz.cuni.mff.d3s.autodebugger.model.common.TraceMode;
 import cz.cuni.mff.d3s.autodebugger.model.common.artifacts.InstrumentationResult;
 import cz.cuni.mff.d3s.autodebugger.model.common.technique.TestTechniqueConfig;
 import cz.cuni.mff.d3s.autodebugger.model.common.tests.TestSuite;
+import cz.cuni.mff.d3s.autodebugger.model.common.trace.IndexedTrace;
 import cz.cuni.mff.d3s.autodebugger.model.common.trace.TemporalTrace;
 import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
 import cz.cuni.mff.d3s.autodebugger.model.java.JavaRunConfiguration;
@@ -99,13 +100,6 @@ public class Orchestrator {
     public TestSuite generateTests(AnalysisResult analysisResult) {
         log.info("Generating tests from analysis result: {}", analysisResult);
 
-        // Deserialize the trace
-        Trace trace = deserializeTrace(analysisResult.getTraceFilePath());
-        if (trace == null) {
-            throw new IllegalStateException("Failed to deserialize trace from: " +
-                analysisResult.getTraceFilePath());
-        }
-
         // Create the test generator with identifier mapping path from analysis result
         TestGenerator generator = TestGeneratorFactory.createTestGenerator(
             runConfiguration,
@@ -118,11 +112,25 @@ public class Orchestrator {
         List<Path> generatedTests;
 
         if (runConfiguration.getTraceMode() == TraceMode.TEMPORAL && generator instanceof TemporalTraceBasedGenerator temporalGenerator) {
-            // Convert Trace to TemporalTrace using TraceAdapter and use TemporalTraceBasedGenerator
-            log.info("Temporal trace mode detected, converting Trace to TemporalTrace");
-            TemporalTrace temporalTrace = convertToTemporalTrace(trace, analysisResult.getIdentifiersMappingPath());
+            // TEMPORAL MODE: Deserialize IndexedTrace and convert to TemporalTrace with TRUE event indices
+            log.info("Temporal trace mode detected, deserializing IndexedTrace with true temporal data");
+            IndexedTrace indexedTrace = deserializeIndexedTrace(analysisResult.getTraceFilePath());
+            if (indexedTrace == null) {
+                throw new IllegalStateException("Failed to deserialize IndexedTrace from: " +
+                    analysisResult.getTraceFilePath());
+            }
+
+            TemporalTrace temporalTrace = convertIndexedToTemporalTrace(indexedTrace, analysisResult.getIdentifiersMappingPath());
+            log.info("Converted IndexedTrace to TemporalTrace with {} events", indexedTrace.getTotalEventCount());
             generatedTests = temporalGenerator.generateTests(temporalTrace, context);
         } else {
+            // NAIVE MODE: Deserialize regular Trace (set-based)
+            Trace trace = deserializeTrace(analysisResult.getTraceFilePath());
+            if (trace == null) {
+                throw new IllegalStateException("Failed to deserialize Trace from: " +
+                    analysisResult.getTraceFilePath());
+            }
+
             // Use standard Trace-based generation
             generatedTests = generator.generateTests(
                 trace,
@@ -142,17 +150,47 @@ public class Orchestrator {
     }
 
     /**
-     * Converts a legacy Trace to TemporalTrace using the identifier mapping.
+     * Converts an IndexedTrace (with true event indices) to TemporalTrace using the identifier mapping.
+     * This preserves the actual temporal ordering captured during execution.
      *
-     * @param trace The legacy slot-based trace
+     * @param indexedTrace The indexed trace with true event indices
      * @param identifierMappingPath Path to the identifier mapping file
-     * @return TemporalTrace with converted data
+     * @return TemporalTrace with true temporal data
      */
-    private TemporalTrace convertToTemporalTrace(Trace trace, Path identifierMappingPath) {
-        log.info("Converting Trace to TemporalTrace using identifier mapping: {}", identifierMappingPath);
+    private TemporalTrace convertIndexedToTemporalTrace(IndexedTrace indexedTrace, Path identifierMappingPath) {
+        log.info("Converting IndexedTrace to TemporalTrace using identifier mapping: {}", identifierMappingPath);
 
         Map<Integer, JavaValueIdentifier> identifierMapping = deserializeIdentifierMapping(identifierMappingPath);
-        return TraceAdapter.convertToEnhanced(trace, identifierMapping);
+        return TraceAdapter.convertFromIndexed(indexedTrace, identifierMapping);
+    }
+
+    /**
+     * Deserializes an IndexedTrace from the given path.
+     * Used for TEMPORAL mode where true event indices are preserved.
+     *
+     * @param path Path to the serialized IndexedTrace file
+     * @return IndexedTrace or null if deserialization fails
+     */
+    private IndexedTrace deserializeIndexedTrace(Path path) {
+        if (path == null || !Files.exists(path)) {
+            log.error("IndexedTrace file not found: {}", path);
+            return null;
+        }
+
+        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(path.toFile()))) {
+            Object obj = ois.readObject();
+            if (obj instanceof IndexedTrace indexedTrace) {
+                log.info("Deserialized IndexedTrace with {} slots and {} events",
+                    indexedTrace.getAllSlots().size(), indexedTrace.getTotalEventCount());
+                return indexedTrace;
+            } else {
+                log.error("Expected IndexedTrace but got: {}", obj.getClass().getName());
+                return null;
+            }
+        } catch (Exception e) {
+            log.error("Failed to deserialize IndexedTrace from: {}", path, e);
+            return null;
+        }
     }
 
     /**
