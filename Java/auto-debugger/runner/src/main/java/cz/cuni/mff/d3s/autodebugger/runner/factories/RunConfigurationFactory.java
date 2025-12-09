@@ -70,13 +70,18 @@ public class RunConfigurationFactory {
                     ? TraceMode.TEMPORAL
                     : TraceMode.NAIVE;
 
+            // Handle null runtimeArguments - default to empty list
+            var runtimeArgs = arguments.runtimeArguments != null
+                    ? arguments.runtimeArguments
+                    : List.<String>of();
+
             // Create the Java run configuration
             var configuration = JavaRunConfiguration.builder()
                     .applicationPath(applicationPath)
                     .sourceCodePath(sourceCodePath)
                     .targetMethod(methodIdentifier)
                     .exportableValues(exportableValues)
-                    .runtimeArguments(arguments.runtimeArguments)
+                    .runtimeArguments(runtimeArgs)
                     .classpathEntries(classpathEntries)
                     .dislHomePath(dislHomePath)
                     .outputDirectory(outputDir)
