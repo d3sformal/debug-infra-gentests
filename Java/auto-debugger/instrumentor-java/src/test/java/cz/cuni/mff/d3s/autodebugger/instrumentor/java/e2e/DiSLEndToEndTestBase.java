@@ -230,6 +230,14 @@ public abstract class DiSLEndToEndTestBase {
      */
     protected JavaFieldIdentifier createFieldIdentifier(
             String packageName, String className, String fieldName, String fieldType) {
+        return createFieldIdentifier(packageName, className, fieldName, fieldType, false);
+    }
+
+    /**
+     * Creates a JavaFieldIdentifier for a field with optional static modifier.
+     */
+    protected JavaFieldIdentifier createFieldIdentifier(
+            String packageName, String className, String fieldName, String fieldType, boolean isStatic) {
         JavaPackageIdentifier packageId = packageName.isEmpty()
                 ? JavaPackageIdentifier.DEFAULT_PACKAGE
                 : new JavaPackageIdentifier(packageName);
@@ -245,6 +253,7 @@ public abstract class DiSLEndToEndTestBase {
                         .variableName(fieldName)
                         .variableType(fieldType)
                         .ownerClassIdentifier(classId)
+                        .isStatic(isStatic)
                         .build());
     }
 
