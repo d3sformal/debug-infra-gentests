@@ -88,7 +88,7 @@ public class CollectorRE {
   public static void collectString(final int slot, final Object s) {
     REDispatch.analysisStart(collectStringId);
     REDispatch.sendInt(slot);
-    REDispatch.sendObject(s);
+    REDispatch.sendObjectPlusData(s);
     REDispatch.analysisEnd();
   }
 
