@@ -2,7 +2,29 @@
 
 This demo shows how to run the auto-debugger end-to-end against small toy Java applications.
 
-**⚠️ Important: For full functionality, use a real DiSL installation.** The auto-debugger requires DiSL for runtime instrumentation and data collection. While mock DiSL scripts and stub results can be used for testing the pipeline structure, they will not perform actual instrumentation or generate meaningful tests.
+**⚠️ Important: For full functionality, use a real DiSL installation.** The auto-debugger requires DiSL for runtime instrumentation and data collection.
+
+## Quick Start
+
+Build the demo apps and run (all commands from `Java/auto-debugger` directory):
+
+```bash
+# 1. Build demo apps
+./gradlew -PincludeDemo :demo:buildDemoApps
+
+# 2. Run Calculator example (captures arguments)
+./gradlew :runner:run --args="--jar $(pwd)/demo/apps/args/calc-app.jar --source $(pwd)/demo/apps/args/src --output-dir $(pwd)/demo/output/args --method com.example.Calculator.add(int,int) --parameters 0:int --parameters 1:int --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+
+# 3. Run Counter example (captures instance fields)
+./gradlew :runner:run --args="--jar $(pwd)/demo/apps/fields/fields-app.jar --source $(pwd)/demo/apps/fields/src --output-dir $(pwd)/demo/output/fields --method com.example.Counter.increment() --fields int:value --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+
+# 4. Run Globals example (captures static fields)
+./gradlew :runner:run --args="--jar $(pwd)/demo/apps/static/static-app.jar --source $(pwd)/demo/apps/static/src --output-dir $(pwd)/demo/output/static --method com.example.Globals.bump() --fields static:int:X --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+```
+
+Set `DISL_HOME` to your DiSL installation path (e.g., `export DISL_HOME=/path/to/disl`).
+
+---
 
 ## Real DiSL vs Mock DiSL
 
@@ -192,6 +214,7 @@ Examples:
   --source $(pwd)/demo/apps/fields/src \
   --output-dir $(pwd)/demo/output/fields-naive \
   --method com.example.Counter.increment() \
+  --fields int:value \
   --disl-home /Users/leskovde/repos/disl \
   --trace-mode naive \
   --test-strategy trace-based-basic \
@@ -210,6 +233,7 @@ Examples:
   --source $(pwd)/demo/apps/static/src \
   --output-dir $(pwd)/demo/output/static-temporal \
   --method com.example.Globals.bump() \
+  --fields static:int:X \
   --disl-home /Users/leskovde/repos/disl \
   --trace-mode temporal \
   --test-strategy trace-based-basic \
