@@ -408,24 +408,23 @@ class TraceIdentifierMapperTest {
         }
 
         @Test
-        void givenUnsupportedType_whenGettingSlotValues_thenThrowsIllegalArgumentException() {
-            // Given - use a custom object type that's not supported
-            JavaArgumentIdentifier unsupportedIdentifier = new JavaArgumentIdentifier(
+        void givenObjectType_whenGettingSlotValues_thenReturnsObjectValues() {
+            // Given - use a custom object type that's not a primitive
+            JavaArgumentIdentifier objectIdentifier = new JavaArgumentIdentifier(
                 ArgumentIdentifierParameters.builder()
                     .argumentSlot(0)
                     .variableType("java.util.List")
                     .build()
             );
-            identifierMapping.put(0, unsupportedIdentifier);
+            identifierMapping.put(0, objectIdentifier);
             mapper = new TraceIdentifierMapper(trace, identifierMapping);
 
-            // When & Then
-            IllegalArgumentException exception = assertThrows(
-                IllegalArgumentException.class,
-                () -> mapper.getSlotValues(0)
-            );
-            assertTrue(exception.getMessage().contains("Unsupported type"));
-            assertTrue(exception.getMessage().contains("java.util.List"));
+            // When
+            Set<?> values = mapper.getSlotValues(0);
+
+            // Then - should return empty set from object values (no objects added to trace)
+            assertNotNull(values);
+            assertTrue(values.isEmpty());
         }
 
         @Test

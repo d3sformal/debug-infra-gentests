@@ -1,6 +1,7 @@
 package cz.cuni.mff.d3s.autodebugger.testgenerator.java.trace;
 
 import cz.cuni.mff.d3s.autodebugger.model.common.RunConfiguration;
+import cz.cuni.mff.d3s.autodebugger.model.common.trace.ObjectSnapshot;
 import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
 import cz.cuni.mff.d3s.autodebugger.model.java.JavaRunConfiguration;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaArgumentIdentifier;
@@ -27,6 +28,7 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
 
     private final Map<Integer, JavaValueIdentifier> identifierMapping;
     private TestGenerationContext context;
+    private Set<String> objectImports = new HashSet<>();
 
     public NaiveTraceBasedGenerator(Map<Integer, JavaValueIdentifier> identifierMapping) {
         this.identifierMapping = identifierMapping;
@@ -110,6 +112,7 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
      */
     public List<Path> generateTests(Trace trace, TestGenerationContext context) {
         this.context = context;
+        this.objectImports = new HashSet<>();  // Reset object imports for each test generation
         String methodSig = context.getTargetMethod() != null
                 ? context.getTargetMethod().getFullyQualifiedSignature()
                 : "UnknownClass.unknownMethod()";
@@ -159,7 +162,9 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
                 !trace.getDoubleValues(slot).isEmpty() ||
                 !trace.getCharValues(slot).isEmpty() ||
                 !trace.getByteValues(slot).isEmpty() ||
-                !trace.getShortValues(slot).isEmpty()) {
+                !trace.getShortValues(slot).isEmpty() ||
+                !trace.getStringValues(slot).isEmpty() ||
+                !trace.getObjectValues(slot).isEmpty()) {
                 return false; // Found at least one value
             }
         }
@@ -307,19 +312,37 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
     }
     
     private String generateTestClass(List<TestScenario> scenarios) {
+        // First, generate all test methods to collect object imports
+        String targetClass = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
+        String instanceName = targetClass.substring(targetClass.lastIndexOf('.') + 1).toLowerCase();
+
+        StringBuilder testMethodsBuilder = new StringBuilder();
+        for (TestScenario scenario : scenarios) {
+            testMethodsBuilder.append(generateTestMethod(scenario, instanceName));
+            testMethodsBuilder.append("\n");
+        }
+        String testMethods = testMethodsBuilder.toString();
+
+        // Now build the complete class with imports
         StringBuilder sb = new StringBuilder();
-        
+
         // Package declaration
         String pkg = context.getTargetMethod() != null ? context.getTargetMethod().getPackageName() : "";
         if (pkg != null && !pkg.isEmpty()) {
             sb.append("package ").append(pkg).append(";\n\n");
         }
-        
+
         // Imports
         sb.append("import org.junit.jupiter.api.Test;\n");
         sb.append("import org.junit.jupiter.api.BeforeEach;\n");
-        sb.append("import static org.junit.jupiter.api.Assertions.*;\n\n");
-        
+        sb.append("import static org.junit.jupiter.api.Assertions.*;\n");
+
+        // Add object imports (now populated from test method generation)
+        for (String objectImport : objectImports) {
+            sb.append("import ").append(objectImport).append(";\n");
+        }
+        sb.append("\n");
+
         // Class declaration
         String testClassSig = context.getTargetMethod() != null
                 ? context.getTargetMethod().getFullyQualifiedSignature()
@@ -331,27 +354,22 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         sb.append(" * Generation strategy: Naive Trace-Based\n");
         sb.append(" */\n");
         sb.append("public class ").append(testClassName).append(" {\n\n");
-        
+
         // Instance variable for the class under test
-        String targetClass = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
-        String instanceName = targetClass.substring(targetClass.lastIndexOf('.') + 1).toLowerCase();
         sb.append("    private ").append(targetClass).append(" ").append(instanceName).append(";\n\n");
-        
+
         // Setup method
         sb.append("    @BeforeEach\n");
         sb.append("    void setUp() {\n");
         sb.append("        // TODO: Initialize ").append(instanceName).append(" with appropriate constructor\n");
         sb.append("        // ").append(instanceName).append(" = new ").append(targetClass).append("();\n");
         sb.append("    }\n\n");
-        
-        // Generate test methods
-        for (TestScenario scenario : scenarios) {
-            sb.append(generateTestMethod(scenario, instanceName));
-            sb.append("\n");
-        }
-        
+
+        // Add the pre-generated test methods
+        sb.append(testMethods);
+
         sb.append("}\n");
-        
+
         return sb.toString();
     }
     
@@ -456,6 +474,8 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
     private String formatValueForCode(Object value) {
         if (value == null) {
             return "null";
+        } else if (value instanceof ObjectSnapshot) {
+            return formatObjectSnapshot((ObjectSnapshot) value);
         } else if (value instanceof String) {
             return "\"" + value.toString().replace("\"", "\\\"") + "\"";
         } else if (value instanceof Character) {
@@ -484,6 +504,62 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
             return "(byte) " + value.toString();
         } else if (value instanceof Short) {
             return "(short) " + value.toString();
+        } else {
+            return value.toString();
+        }
+    }
+
+    /**
+     * Formats an ObjectSnapshot for code generation.
+     * Generates object construction code with field values as comments.
+     *
+     * @param snapshot The ObjectSnapshot to format
+     * @return Java code string for object construction
+     */
+    private String formatObjectSnapshot(ObjectSnapshot snapshot) {
+        String className = snapshot.getClassName();
+        String simpleClassName = snapshot.getSimpleClassName();
+
+        // Add import for this class
+        objectImports.add(className);
+
+        // Generate basic constructor call
+        StringBuilder code = new StringBuilder();
+        code.append("new ").append(simpleClassName).append("()");
+
+        // Add comment with field values if any
+        if (!snapshot.getFields().isEmpty()) {
+            code.append(" /* ");
+            boolean first = true;
+            for (Map.Entry<String, Object> field : snapshot.getFields().entrySet()) {
+                if (!first) {
+                    code.append(", ");
+                }
+                first = false;
+                code.append(field.getKey()).append("=").append(formatFieldValue(field.getValue()));
+            }
+            code.append(" */");
+        }
+
+        log.debug("Formatted ObjectSnapshot for class {}: {}", className, code);
+        return code.toString();
+    }
+
+    /**
+     * Formats a field value for display in comments.
+     * Handles nested ObjectSnapshots and primitive values.
+     *
+     * @param value The field value to format
+     * @return String representation of the value
+     */
+    private String formatFieldValue(Object value) {
+        if (value == null) {
+            return "null";
+        } else if (value instanceof ObjectSnapshot nestedSnapshot) {
+            // For nested objects, just show the class name
+            return nestedSnapshot.getSimpleClassName() + "{...}";
+        } else if (value instanceof String) {
+            return "\"" + value + "\"";
         } else {
             return value.toString();
         }
