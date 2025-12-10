@@ -208,14 +208,16 @@ public class DiSLCompiler {
 
     /**
      * Embeds required classes from model-common into the instrumentation JAR.
-     * This ensures the Trace and IndexedTrace classes are available to the ShadowVM
+     * This ensures the Trace, IndexedTrace, and ObjectSnapshot classes are available to the ShadowVM
      * without requiring complex classpath resolution at runtime.
      */
     private void embedModelCommonClasses(JarOutputStream target) {
         // Classes to embed with their full package paths
         String[] classEntries = {
             "cz/cuni/mff/d3s/autodebugger/model/common/trace/Trace.class",
-            "cz/cuni/mff/d3s/autodebugger/model/common/trace/IndexedTrace.class"
+            "cz/cuni/mff/d3s/autodebugger/model/common/trace/IndexedTrace.class",
+            "cz/cuni/mff/d3s/autodebugger/model/common/trace/ObjectSnapshot.class",
+            "cz/cuni/mff/d3s/autodebugger/model/common/trace/JsonObjectParser.class"
         };
 
         // Find model-common JAR from the classpath we already resolve

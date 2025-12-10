@@ -38,6 +38,7 @@ class CollectorTemplateCompletenessTest {
         assertTrue(re.contains("registerMethodWithDebug(\"Collector.collectBoolean\")"));
         assertTrue(re.contains("registerMethodWithDebug(\"Collector.collectString\")"));
         assertTrue(re.contains("registerMethodWithDebug(\"Collector.collectObject\")"));
+        assertTrue(re.contains("registerMethodWithDebug(\"Collector.collectObjectJson\")"));
         // method bodies include appropriate send* calls
         assertTrue(re.contains("sendByte("));
         assertTrue(re.contains("sendChar("));
@@ -47,7 +48,7 @@ class CollectorTemplateCompletenessTest {
         assertTrue(re.contains("sendFloat("));
         assertTrue(re.contains("sendDouble("));
         assertTrue(re.contains("sendBoolean("));
-        assertTrue(re.contains("sendObject("));
+        assertTrue(re.contains("sendObjectPlusData("));
     }
 
     @Test
