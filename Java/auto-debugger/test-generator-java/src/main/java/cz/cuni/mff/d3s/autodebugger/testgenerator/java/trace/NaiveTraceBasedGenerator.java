@@ -168,11 +168,11 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
     
     private List<TestScenario> extractTestScenarios(TraceIdentifierMapper mapper) {
         List<TestScenario> scenarios = new ArrayList<>();
-        
+
         // Get all argument and field identifiers
         Map<Integer, JavaArgumentIdentifier> arguments = new HashMap<>();
         Map<Integer, JavaFieldIdentifier> fields = new HashMap<>();
-        
+
         for (Integer slot : mapper.getSlots()) {
             ExportableValue value = mapper.getExportableValue(slot);
             if (value instanceof JavaArgumentIdentifier arg) {
@@ -181,26 +181,58 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
                 fields.put(slot, field);
             }
         }
-        
+
         // Create test scenarios based on unique combinations of values
         Set<String> uniqueScenarios = new HashSet<>();
-        
-        // For simplicity, create one scenario per unique combination of argument values
+
         if (!arguments.isEmpty()) {
+            // Create one scenario per unique combination of argument values
             List<Map<Integer, Object>> argumentCombinations = generateArgumentCombinations(arguments, mapper);
-            
+
             for (Map<Integer, Object> argCombo : argumentCombinations) {
                 Map<Integer, Object> fieldCombo = extractFieldValues(fields, mapper);
-                
+
                 String scenarioKey = createScenarioKey(argCombo, fieldCombo);
                 if (!uniqueScenarios.contains(scenarioKey)) {
                     uniqueScenarios.add(scenarioKey);
                     scenarios.add(new TestScenario(argCombo, fieldCombo, scenarios.size() + 1));
                 }
             }
+        } else if (!fields.isEmpty()) {
+            // Field-only scenario: create scenarios based on unique field value combinations
+            List<Map<Integer, Object>> fieldCombinations = generateFieldCombinations(fields, mapper);
+
+            for (Map<Integer, Object> fieldCombo : fieldCombinations) {
+                String scenarioKey = createScenarioKey(new HashMap<>(), fieldCombo);
+                if (!uniqueScenarios.contains(scenarioKey)) {
+                    uniqueScenarios.add(scenarioKey);
+                    scenarios.add(new TestScenario(new HashMap<>(), fieldCombo, scenarios.size() + 1));
+                }
+            }
         }
-        
+
         return scenarios;
+    }
+
+    private List<Map<Integer, Object>> generateFieldCombinations(Map<Integer, JavaFieldIdentifier> fields,
+                                                                 TraceIdentifierMapper mapper) {
+        List<Map<Integer, Object>> combinations = new ArrayList<>();
+
+        // Get all possible values for each field
+        Map<Integer, List<Object>> fieldValues = new HashMap<>();
+        for (Map.Entry<Integer, JavaFieldIdentifier> entry : fields.entrySet()) {
+            Integer slot = entry.getKey();
+            Set<?> values = mapper.getSlotValues(slot);
+            fieldValues.put(slot, new ArrayList<>(values));
+        }
+
+        // Generate combinations (limit to avoid explosion)
+        if (!fieldValues.isEmpty()) {
+            List<Integer> slots = new ArrayList<>(fieldValues.keySet());
+            generateCombinationsRecursive(slots, 0, new HashMap<>(), fieldValues, combinations, 20);
+        }
+
+        return combinations;
     }
     
     private List<Map<Integer, Object>> generateArgumentCombinations(Map<Integer, JavaArgumentIdentifier> arguments,
@@ -325,13 +357,14 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
     
     private String generateTestMethod(TestScenario scenario, String instanceName) {
         StringBuilder sb = new StringBuilder();
-        
+
         String methodName = generateTestMethodName(scenario);
-        
+        boolean isVoidMethod = isVoidReturnType();
+
         sb.append("    @Test\n");
         sb.append("    void ").append(methodName).append("() {\n");
         sb.append("        // Arrange\n");
-        
+
         // Set up field values if any
         for (Map.Entry<Integer, Object> field : scenario.fieldValues.entrySet()) {
             ExportableValue fieldId = identifierMapping.get(field.getKey());
@@ -340,21 +373,34 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
                   .append(" to ").append(field.getValue()).append("\n");
             }
         }
-        
+
         sb.append("\n        // Act\n");
-        
+
         // Generate method call
-        String methodCall = generateMethodCall(scenario, instanceName);
+        String methodCall = generateMethodCall(scenario, instanceName, isVoidMethod);
         sb.append("        ").append(methodCall).append("\n");
-        
+
         sb.append("\n        // Assert\n");
-        sb.append("        // Basic assertion to verify method execution completed without exception\n");
-        sb.append("        assertNotNull(result, \"Method should return a non-null result\");\n");
-        sb.append("        // Note: Add more specific assertions based on expected behavior\n");
-        
+        if (isVoidMethod) {
+            sb.append("        // Method returns void - test verifies execution completes without exception\n");
+            sb.append("        // Note: Add assertions to verify side effects (e.g., field changes)\n");
+        } else {
+            sb.append("        // Basic assertion to verify method execution completed without exception\n");
+            sb.append("        assertNotNull(result, \"Method should return a non-null result\");\n");
+            sb.append("        // Note: Add more specific assertions based on expected behavior\n");
+        }
+
         sb.append("    }\n");
-        
+
         return sb.toString();
+    }
+
+    private boolean isVoidReturnType() {
+        if (context.getTargetMethod() == null) {
+            return false;
+        }
+        String returnType = context.getTargetMethod().getReturnType();
+        return returnType == null || returnType.equals("void") || returnType.isEmpty();
     }
     
     private String generateTestMethodName(TestScenario scenario) {
@@ -381,12 +427,15 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         return name.toString();
     }
     
-    private String generateMethodCall(TestScenario scenario, String instanceName) {
+    private String generateMethodCall(TestScenario scenario, String instanceName, boolean isVoidMethod) {
         String methodName = extractMethodNameFromSignature(context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : "unknownMethod");
-        
+
         StringBuilder call = new StringBuilder();
-        call.append("var result = ").append(instanceName).append(".").append(methodName).append("(");
-        
+        if (!isVoidMethod) {
+            call.append("var result = ");
+        }
+        call.append(instanceName).append(".").append(methodName).append("(");
+
         // Add arguments in order
         List<String> args = new ArrayList<>();
         for (Map.Entry<Integer, Object> arg : scenario.argumentValues.entrySet()) {
@@ -395,10 +444,10 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
                 args.add(formatValueForCode(arg.getValue()));
             }
         }
-        
+
         call.append(String.join(", ", args));
         call.append(");");
-        
+
         return call.toString();
     }
     
