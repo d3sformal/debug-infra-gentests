@@ -3,6 +3,7 @@ import ch.usi.dag.dislreserver.shadow.ShadowObject;
 import ch.usi.dag.dislreserver.shadow.ShadowString;
 import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
 import cz.cuni.mff.d3s.autodebugger.model.common.trace.IndexedTrace;
+import cz.cuni.mff.d3s.autodebugger.model.common.trace.ObjectSnapshot;
 import java.nio.file.Path;
 import java.nio.file.Files;
 import java.util.HashMap;
@@ -237,7 +238,7 @@ public class Collector extends RemoteAnalysis {
     currentEventIndex++;
   }
 
-  public void collectString(final int slot, final Object s) {
+  public void collectString(final int slot, final ShadowObject s) {
     printPid();
     System.out.println("*** COLLECTOR: collectString called with slot=" + slot + ", value=" + s + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting string: %s", s)));
@@ -301,6 +302,52 @@ public class Collector extends RemoteAnalysis {
       allInvocations.add(completedInvocation);
       System.out.println("*** COLLECTOR: Completed invocation " + allInvocations.size() + " with " + completedInvocation.size() + " parameters ***");
       currentInvocation.clear();
+    }
+
+    currentEventIndex++;
+  }
+
+  public void collectObjectJson(final int slot, final ShadowObject jsonData) {
+    printPid();
+
+    String json = null;
+    if (jsonData instanceof ShadowString shadowString) {
+      json = shadowString.toString();
+    }
+
+    if (json == null || json.isEmpty()) {
+      System.out.println("*** COLLECTOR: collectObjectJson - no JSON data ***");
+      return;
+    }
+
+    System.out.println("*** COLLECTOR: collectObjectJson slot=" + slot + " ***");
+    if (DEBUG) {
+      System.out.println("*** COLLECTOR: JSON length=" + json.length() + " ***");
+    }
+
+    // Parse JSON into ObjectSnapshot
+    ObjectSnapshot snapshot = ObjectSnapshot.fromJson(json);
+
+    if (snapshot == null) {
+      System.out.println("*** COLLECTOR: Failed to parse ObjectSnapshot from JSON ***");
+      return;
+    }
+
+    // Store in current invocation (matches existing pattern)
+    collectedValues.put(slot, snapshot);
+    currentInvocation.put(slot, snapshot);
+
+    if (isInvocationComplete()) {
+      Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
+      allInvocations.add(completedInvocation);
+      System.out.println("*** COLLECTOR: Completed invocation " + allInvocations.size() +
+        " with " + completedInvocation.size() + " parameters ***");
+      currentInvocation.clear();
+    }
+
+    // If trace is initialized, add directly
+    if (trace != null) {
+      trace.addObjectValue(slot, snapshot);
     }
 
     currentEventIndex++;
@@ -403,6 +450,8 @@ public class Collector extends RemoteAnalysis {
           trace.addBooleanValue(slot, boolValue);
         } else if (value instanceof String stringValue) {
           trace.addStringValue(slot, stringValue);
+        } else if (value instanceof ObjectSnapshot objSnapshot) {
+          trace.addObjectValue(slot, objSnapshot);
         }
       }
     }
