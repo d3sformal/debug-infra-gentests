@@ -511,7 +511,8 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
 
     /**
      * Formats an ObjectSnapshot for code generation.
-     * Generates object construction code with field values as comments.
+     * Generates object construction code with captured field values as constructor arguments.
+     * Note: This assumes a constructor exists that takes the fields in the order they were captured.
      *
      * @param snapshot The ObjectSnapshot to format
      * @return Java code string for object construction
@@ -523,22 +524,42 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         // Add import for this class
         objectImports.add(className);
 
-        // Generate basic constructor call
         StringBuilder code = new StringBuilder();
-        code.append("new ").append(simpleClassName).append("()");
+        code.append("new ").append(simpleClassName).append("(");
 
-        // Add comment with field values if any
-        if (!snapshot.getFields().isEmpty()) {
-            code.append(" /* ");
-            boolean first = true;
-            for (Map.Entry<String, Object> field : snapshot.getFields().entrySet()) {
-                if (!first) {
-                    code.append(", ");
-                }
-                first = false;
-                code.append(field.getKey()).append("=").append(formatFieldValue(field.getValue()));
+        // Generate constructor arguments from captured field values
+        // Skip special fields like $class, $value, $cycle, $ref
+        Map<String, Object> fields = snapshot.getFields();
+        List<String> fieldNames = new ArrayList<>();
+        List<Object> constructorArgs = new ArrayList<>();
+
+        for (Map.Entry<String, Object> field : fields.entrySet()) {
+            String fieldName = field.getKey();
+            // Skip internal/metadata fields
+            if (fieldName.startsWith("$")) {
+                continue;
             }
-            code.append(" */");
+            fieldNames.add(fieldName);
+            constructorArgs.add(field.getValue());
+        }
+
+        // Generate constructor call with captured values
+        boolean first = true;
+        for (Object arg : constructorArgs) {
+            if (!first) {
+                code.append(", ");
+            }
+            first = false;
+            code.append(formatConstructorArg(arg));
+        }
+
+        code.append(")");
+
+        // Add TODO comment with field names to help verify constructor signature
+        if (!fieldNames.isEmpty()) {
+            code.append(" /* TODO: verify constructor signature matches (");
+            code.append(String.join(", ", fieldNames));
+            code.append(") */");
         }
 
         log.debug("Formatted ObjectSnapshot for class {}: {}", className, code);
@@ -546,25 +567,49 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
     }
 
     /**
-     * Formats a field value for display in comments.
-     * Handles nested ObjectSnapshots and primitive values.
-     *
-     * @param value The field value to format
-     * @return String representation of the value
+     * Formats a value as a constructor argument.
      */
-    private String formatFieldValue(Object value) {
+    private String formatConstructorArg(Object value) {
         if (value == null) {
             return "null";
         } else if (value instanceof ObjectSnapshot nestedSnapshot) {
-            // For nested objects, just show the class name
-            return nestedSnapshot.getSimpleClassName() + "{...}";
+            // Recursively format nested objects
+            return formatObjectSnapshot(nestedSnapshot);
         } else if (value instanceof String) {
-            return "\"" + value + "\"";
+            return "\"" + escapeString((String) value) + "\"";
+        } else if (value instanceof Character) {
+            char c = (Character) value;
+            return switch (c) {
+                case '\n' -> "'\\n'";
+                case '\t' -> "'\\t'";
+                case '\r' -> "'\\r'";
+                case '\\' -> "'\\\\'";
+                case '\'' -> "'\\''";
+                default -> "'" + c + "'";
+            };
+        } else if (value instanceof Long) {
+            return value.toString() + "L";
+        } else if (value instanceof Float) {
+            return value.toString() + "f";
+        } else if (value instanceof Double) {
+            return value.toString() + "d";
         } else {
             return value.toString();
         }
     }
-    
+
+    /**
+     * Escapes special characters in a string for Java code.
+     */
+    private String escapeString(String s) {
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
+
+
     private Path writeTestFile(String testClassContent) throws IOException {
         String sig = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : "UnknownClass.unknownMethod()";
         String testClassName = extractClassNameFromMethod(sig) + "Test";
