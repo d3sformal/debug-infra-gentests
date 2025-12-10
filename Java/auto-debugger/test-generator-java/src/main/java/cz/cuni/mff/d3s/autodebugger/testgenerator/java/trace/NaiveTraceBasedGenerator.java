@@ -400,7 +400,9 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
             return false;
         }
         String returnType = context.getTargetMethod().getReturnType();
-        return returnType == null || returnType.equals("void") || returnType.isEmpty();
+        // Only treat as void when explicitly set to "void"
+        // Unknown return types (null, empty) are treated as non-void for safety
+        return "void".equals(returnType);
     }
     
     private String generateTestMethodName(TestScenario scenario) {
