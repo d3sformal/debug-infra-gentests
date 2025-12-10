@@ -56,7 +56,7 @@ public class JavaMethodSignatureParser {
             MethodIdentifierParameters.builder()
                 .ownerClassIdentifier(classIdentifier)
                 .methodName(signature.getMethodName())
-                .returnType("void") // Default return type
+                .returnType(null) // Unknown return type - cannot be determined from signature
                 .parameterTypes(signature.getParameterTypes())
                 .build()
         );
