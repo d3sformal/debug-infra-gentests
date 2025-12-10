@@ -13,6 +13,7 @@ public class Trace implements Serializable {
   private final Map<Integer, Set<Float>> floatValues = new HashMap<>();
   private final Map<Integer, Set<Double>> doubleValues = new HashMap<>();
   private final Map<Integer, Set<Boolean>> booleanValues = new HashMap<>();
+  private final Map<Integer, Set<String>> stringValues = new HashMap<>();
 
   public void addByteValue(int slot, byte value) {
     if (byteValues.containsKey(slot)) {
@@ -78,6 +79,14 @@ public class Trace implements Serializable {
     }
   }
 
+  public void addStringValue(int slot, String value) {
+    if (stringValues.containsKey(slot)) {
+      stringValues.get(slot).add(value);
+    } else {
+      stringValues.put(slot, new HashSet<>(List.of(value)));
+    }
+  }
+
   public Set<Byte> getByteValues(int slot) {
     return byteValues.getOrDefault(slot, Collections.emptySet());
   }
@@ -110,6 +119,10 @@ public class Trace implements Serializable {
     return booleanValues.getOrDefault(slot, Collections.emptySet());
   }
 
+  public Set<String> getStringValues(int slot) {
+    return stringValues.getOrDefault(slot, Collections.emptySet());
+  }
+
   public void printSlotValues() {
     printSlotValues(byteValues);
     printSlotValues(charValues);
@@ -119,6 +132,7 @@ public class Trace implements Serializable {
     printSlotValues(floatValues);
     printSlotValues(doubleValues);
     printSlotValues(booleanValues);
+    printSlotValues(stringValues);
   }
 
   private <T> void printSlotValues(final Map<Integer, Set<T>> slotValues) {

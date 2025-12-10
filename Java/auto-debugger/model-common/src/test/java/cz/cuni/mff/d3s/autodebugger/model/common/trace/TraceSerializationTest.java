@@ -68,21 +68,22 @@ class TraceSerializationTest {
         original.addFloatValue(0, 1.5f);
         original.addDoubleValue(0, 2.5);
         original.addBooleanValue(0, true);
-        
+        original.addStringValue(0, "test");
+
         Path traceFile = tempDir.resolve("trace.ser");
-        
+
         // When - serialize and deserialize
         try (FileOutputStream fos = new FileOutputStream(traceFile.toFile());
              ObjectOutputStream oos = new ObjectOutputStream(fos)) {
             oos.writeObject(original);
         }
-        
+
         Trace deserialized;
         try (FileInputStream fis = new FileInputStream(traceFile.toFile());
              ObjectInputStream ois = new ObjectInputStream(fis)) {
             deserialized = (Trace) ois.readObject();
         }
-        
+
         // Then
         assertNotNull(deserialized);
         assertTrue(deserialized.getByteValues(0).contains((byte) 1));
@@ -93,6 +94,7 @@ class TraceSerializationTest {
         assertTrue(deserialized.getFloatValues(0).contains(1.5f));
         assertTrue(deserialized.getDoubleValues(0).contains(2.5));
         assertTrue(deserialized.getBooleanValues(0).contains(true));
+        assertTrue(deserialized.getStringValues(0).contains("test"));
     }
     
     @Test
