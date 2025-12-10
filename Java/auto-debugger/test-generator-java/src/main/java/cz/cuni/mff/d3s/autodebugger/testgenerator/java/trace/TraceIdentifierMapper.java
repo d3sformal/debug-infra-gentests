@@ -24,7 +24,8 @@ public class TraceIdentifierMapper {
                 "long", trace::getLongValues,
                 "float", trace::getFloatValues,
                 "double", trace::getDoubleValues,
-                "boolean", trace::getBooleanValues
+                "boolean", trace::getBooleanValues,
+                "java.lang.String", trace::getStringValues
         );
     }
 

@@ -187,6 +187,14 @@ public class TraceAdapter {
                 }
                 break;
 
+            case "string":
+            case "java.lang.string":
+                Set<String> stringValues = legacyTrace.getStringValues(slot);
+                for (String value : stringValues) {
+                    enhancedTrace.addValue(identifier, currentEventIndex++, value);
+                }
+                break;
+
             default:
                 log.warn("Unknown type '{}' for identifier {}, skipping conversion", type, identifier);
                 break;
@@ -226,6 +234,7 @@ public class TraceAdapter {
                     break;
 
                 case "string":
+                case "java.lang.string":
                     trace.addValue(identifier, eventIndex++, "initial");
                     trace.addValue(identifier, eventIndex++, "modified");
                     break;
