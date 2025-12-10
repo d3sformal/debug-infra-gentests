@@ -112,19 +112,29 @@ public class RunConfigurationFactory {
         // 1. CLI argument takes precedence
         if (cliDislHomePath != null && !cliDislHomePath.isBlank()) {
             log.debug("Using DiSL home from CLI argument: {}", cliDislHomePath);
-            return Path.of(cliDislHomePath).toAbsolutePath().normalize();
+            return Path.of(expandTilde(cliDislHomePath)).toAbsolutePath().normalize();
         }
 
         // 2. Fall back to DISL_HOME environment variable
         String envDislHome = System.getenv(DISL_HOME_ENV);
         if (envDislHome != null && !envDislHome.isBlank()) {
             log.info("Using {} from environment: {}", DISL_HOME_ENV, envDislHome);
-            return Path.of(envDislHome).toAbsolutePath().normalize();
+            return Path.of(expandTilde(envDislHome)).toAbsolutePath().normalize();
         }
 
         // 3. No DiSL path available
         throw new IllegalArgumentException(
             "DiSL home path not specified. Use --disl-home argument or set " +
             DISL_HOME_ENV + " environment variable.");
+    }
+
+    /**
+     * Expands ~ at the beginning of a path to the user's home directory.
+     */
+    private static String expandTilde(String path) {
+        if (path.startsWith("~")) {
+            return System.getProperty("user.home") + path.substring(1);
+        }
+        return path;
     }
 }
