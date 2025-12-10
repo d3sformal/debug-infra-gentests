@@ -73,7 +73,7 @@ tasks.register<Jar>("jarObjectsApp") {
     archiveFileName.set("objects-app.jar")
     from(tasks.named<JavaCompile>("compileObjectsApp").get().destinationDirectory)
     manifest.attributes(mapOf("Main-Class" to "com.example.PersonApp"))
-    destinationDirectory.set(layout.projectDirectory)
+    destinationDirectory.set(layout.projectDirectory.dir("apps/objects"))
 }
 
 // Aggregate convenience task
