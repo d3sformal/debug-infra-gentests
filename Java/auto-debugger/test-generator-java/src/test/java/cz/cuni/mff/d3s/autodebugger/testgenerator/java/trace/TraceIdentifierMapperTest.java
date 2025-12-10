@@ -279,6 +279,23 @@ class TraceIdentifierMapperTest {
             assertTrue(values.contains(true));
             assertTrue(values.contains(false));
         }
+
+        @Test
+        void givenStringType_whenGettingSlotValues_thenReturnsStringValues() {
+            // Given
+            trace.addStringValue(0, "hello");
+            trace.addStringValue(0, "world");
+            identifierMapping.put(0, createArgumentIdentifier(0, "java.lang.String"));
+            mapper = new TraceIdentifierMapper(trace, identifierMapping);
+
+            // When
+            Set<?> values = mapper.getSlotValues(0);
+
+            // Then
+            assertEquals(2, values.size());
+            assertTrue(values.contains("hello"));
+            assertTrue(values.contains("world"));
+        }
     }
 
     @Nested
@@ -392,11 +409,11 @@ class TraceIdentifierMapperTest {
 
         @Test
         void givenUnsupportedType_whenGettingSlotValues_thenThrowsIllegalArgumentException() {
-            // Given
+            // Given - use a custom object type that's not supported
             JavaArgumentIdentifier unsupportedIdentifier = new JavaArgumentIdentifier(
                 ArgumentIdentifierParameters.builder()
                     .argumentSlot(0)
-                    .variableType("java.lang.String")
+                    .variableType("java.util.List")
                     .build()
             );
             identifierMapping.put(0, unsupportedIdentifier);
@@ -408,7 +425,7 @@ class TraceIdentifierMapperTest {
                 () -> mapper.getSlotValues(0)
             );
             assertTrue(exception.getMessage().contains("Unsupported type"));
-            assertTrue(exception.getMessage().contains("java.lang.String"));
+            assertTrue(exception.getMessage().contains("java.util.List"));
         }
 
         @Test
