@@ -29,4 +29,6 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // Run tests sequentially to avoid DiSL server port conflicts
+    maxParallelForks = 1
 }
