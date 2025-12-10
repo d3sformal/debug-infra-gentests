@@ -8,7 +8,9 @@ import cz.cuni.mff.d3s.autodebugger.model.common.artifacts.InstrumentationResult
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -107,8 +109,12 @@ public class DiSLInstrumentor implements Instrumentor {
     }
 
     private Optional<Path> compileDiSLClass(Path instrumentationSource, Path targetJarPath) {
+        // Build classpath that includes the application JAR (needed for field owner class imports)
+        List<Path> fullClasspath = new ArrayList<>(runConfiguration.getClasspathEntries());
+        fullClasspath.add(runConfiguration.getApplicationPath());
+
         var compiler = new DiSLCompiler(targetJarPath, DiSLPathHelper.getDislClassPathRoot(runConfiguration),
-                runConfiguration.getClasspathEntries());
+                fullClasspath);
         return compiler.compileDiSLClass(instrumentationSource);
     }
 
