@@ -24,8 +24,9 @@ public class JavaMethodSignatureParser {
     // Pattern for parameter: "slot:type" or "type:name"
     private static final Pattern PARAMETER_PATTERN = Pattern.compile("^(\\d+):(.+)$|^([^:]+):([^:]+)$");
     
-    // Pattern for field: "type:name"
+    // Pattern for field: "type:name" or "static:type:name"
     private static final Pattern FIELD_PATTERN = Pattern.compile("^([^:]+):([^:]+)$");
+    private static final Pattern STATIC_FIELD_PATTERN = Pattern.compile("^static:([^:]+):([^:]+)$");
     
     public JavaMethodIdentifier parseMethodReference(String methodReference) {
         log.debug("Parsing Java method reference: {}", methodReference);
@@ -150,13 +151,30 @@ public class JavaMethodSignatureParser {
     
     /**
      * Parses a single field string into a FieldIdentifier.
+     * Supports formats: "type:name" for instance fields, "static:type:name" for static fields.
      */
     private JavaFieldIdentifier parseField(String fieldString, JavaClassIdentifier ownerClass) {
-        var matcher = FIELD_PATTERN.matcher(fieldString);
+        // First try static field pattern
+        var staticMatcher = STATIC_FIELD_PATTERN.matcher(fieldString);
+        if (staticMatcher.matches()) {
+            var type = normalizeType(staticMatcher.group(1));
+            var name = staticMatcher.group(2);
 
+            return new JavaFieldIdentifier(
+                FieldIdentifierParameters.builder()
+                    .variableType(type)
+                    .variableName(name)
+                    .ownerClassIdentifier(ownerClass)
+                    .isStatic(true)
+                    .build()
+            );
+        }
+
+        // Try regular field pattern
+        var matcher = FIELD_PATTERN.matcher(fieldString);
         if (!matcher.matches()) {
             throw new IllegalArgumentException(
-                "Invalid field format. Expected 'type:name'. Got: " + fieldString);
+                "Invalid field format. Expected 'type:name' or 'static:type:name'. Got: " + fieldString);
         }
 
         var type = normalizeType(matcher.group(1));
@@ -167,6 +185,7 @@ public class JavaMethodSignatureParser {
                 .variableType(type)
                 .variableName(name)
                 .ownerClassIdentifier(ownerClass)
+                .isStatic(false)
                 .build()
         );
     }
