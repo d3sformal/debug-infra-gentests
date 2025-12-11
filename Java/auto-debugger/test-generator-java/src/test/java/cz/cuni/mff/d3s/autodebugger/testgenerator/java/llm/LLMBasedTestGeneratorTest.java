@@ -309,7 +309,8 @@ class LLMBasedTestGeneratorTest {
         String[] claudeModels = {
             "claude-sonnet-4-20250514",
             "claude-3-5-sonnet-20241022",
-            "claude-3-5-haiku-20241022"
+            "claude-3-5-haiku-20241022",
+            "claude-3-haiku-20240307"
         };
 
         for (String model : claudeModels) {
