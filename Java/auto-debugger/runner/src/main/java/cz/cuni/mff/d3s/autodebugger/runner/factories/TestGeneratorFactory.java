@@ -20,8 +20,8 @@ import java.nio.file.Path;
 @Slf4j
 public class TestGeneratorFactory {
 
-    // Default model for production use
-    private static final String DEFAULT_LLM_MODEL = "claude-sonnet-4-20250514";
+    // Default model for production use - Claude Sonnet 4.5
+    private static final String DEFAULT_LLM_MODEL = "claude-sonnet-4-5-20250929";
 
     public static TestGenerator createTestGenerator(RunConfiguration runConfiguration, String strategyId) {
         return createTestGenerator(runConfiguration, strategyId, null);
