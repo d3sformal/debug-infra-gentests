@@ -57,18 +57,40 @@ The following dependencies are required only for specific functionalities:
    ./gradlew :runner:run --args="--help"
    ```
 
-### Basic Usage Example
+### Demo Examples
+
+Four demo apps are provided in `demo/apps/`. Build them first:
 
 ```bash
-# Generate tests for a Java application
-./gradlew :runner:run --args="
-  --jar /path/to/your/application.jar
-  --source /path/to/source/code
-  --output-dir /path/to/output
-  --method org.example.YourClass.yourMethod(int,String)
-  --disl-home /path/to/disl
-"
+./gradlew -PincludeDemo :demo:buildDemoApps
 ```
+
+Set your DiSL installation path:
+```bash
+export DISL_HOME=/path/to/disl
+```
+
+**1. Calculator (argument capture):**
+```bash
+./gradlew :runner:run --args="--jar $(pwd)/demo/apps/args/calc-app.jar --source $(pwd)/demo/apps/args/src --output-dir $(pwd)/demo/output/args --method com.example.Calculator.add(int,int) --parameters 0:int --parameters 1:int --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+```
+
+**2. Counter (instance field capture):**
+```bash
+./gradlew :runner:run --args="--jar $(pwd)/demo/apps/fields/fields-app.jar --source $(pwd)/demo/apps/fields/src --output-dir $(pwd)/demo/output/fields --method com.example.Counter.increment() --fields int:value --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+```
+
+**3. Globals (static field capture):**
+```bash
+./gradlew :runner:run --args="--jar $(pwd)/demo/apps/static/static-app.jar --source $(pwd)/demo/apps/static/src --output-dir $(pwd)/demo/output/static --method com.example.Globals.bump() --fields static:int:X --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+```
+
+**4. Person (object parameter capture):**
+```bash
+./gradlew :runner:run --args="--jar $(pwd)/demo/apps/objects/objects-app.jar --source $(pwd)/demo/apps/objects/src --output-dir $(pwd)/demo/output/objects --method com.example.PersonService.greet(com.example.Person) --parameters 0:com.example.Person --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+```
+
+See `demo/README.md` for detailed instructions and troubleshooting.
 
 ### IntelliJ Plugin Development
 
