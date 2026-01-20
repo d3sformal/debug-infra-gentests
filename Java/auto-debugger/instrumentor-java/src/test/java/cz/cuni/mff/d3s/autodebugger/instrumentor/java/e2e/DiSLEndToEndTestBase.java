@@ -195,6 +195,12 @@ public abstract class DiSLEndToEndTestBase {
     protected JavaMethodIdentifier createMethodIdentifier(
             String packageName, String className, String methodName,
             String returnType, List<String> parameterTypes) {
+        return createMethodIdentifier(packageName, className, methodName, returnType, parameterTypes, false);
+    }
+
+    protected JavaMethodIdentifier createMethodIdentifier(
+            String packageName, String className, String methodName,
+            String returnType, List<String> parameterTypes, boolean isStatic) {
         JavaPackageIdentifier packageId = packageName.isEmpty()
                 ? JavaPackageIdentifier.DEFAULT_PACKAGE
                 : new JavaPackageIdentifier(packageName);
@@ -211,6 +217,7 @@ public abstract class DiSLEndToEndTestBase {
                         .methodName(methodName)
                         .returnType(returnType)
                         .parameterTypes(parameterTypes)
+                        .isStatic(isStatic)
                         .build());
     }
 

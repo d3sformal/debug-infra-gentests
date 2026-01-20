@@ -91,7 +91,8 @@ class StaticFieldLLMEndToEndTest extends LLMEndToEndTestBase {
                 "Globals",       // class name
                 "bump",          // method name
                 "void",          // return type
-                List.of()        // no parameters
+                List.of(),       // no parameters
+                true             // static method
         );
     }
 
