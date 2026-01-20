@@ -7,6 +7,7 @@ import cz.cuni.mff.d3s.autodebugger.model.java.JavaRunConfiguration;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaArgumentIdentifier;
 import cz.cuni.mff.d3s.autodebugger.model.common.identifiers.ExportableValue;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaFieldIdentifier;
+import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaMethodIdentifier;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaValueIdentifier;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.common.*;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.java.JavaTestGenerationContextFactory;
@@ -355,15 +356,17 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         sb.append(" */\n");
         sb.append("public class ").append(testClassName).append(" {\n\n");
 
-        // Instance variable for the class under test
-        sb.append("    private ").append(targetClass).append(" ").append(instanceName).append(";\n\n");
+        // Instance variable for the class under test (skip for static methods)
+        if (!isStaticMethod()) {
+            sb.append("    private ").append(targetClass).append(" ").append(instanceName).append(";\n\n");
 
-        // Setup method
-        sb.append("    @BeforeEach\n");
-        sb.append("    void setUp() {\n");
-        sb.append("        // TODO: Initialize ").append(instanceName).append(" with appropriate constructor\n");
-        sb.append("        // ").append(instanceName).append(" = new ").append(targetClass).append("();\n");
-        sb.append("    }\n\n");
+            // Setup method
+            sb.append("    @BeforeEach\n");
+            sb.append("    void setUp() {\n");
+            sb.append("        // TODO: Initialize ").append(instanceName).append(" with appropriate constructor\n");
+            sb.append("        // ").append(instanceName).append(" = new ").append(targetClass).append("();\n");
+            sb.append("    }\n\n");
+        }
 
         // Add the pre-generated test methods
         sb.append(testMethods);
@@ -422,6 +425,20 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         // Unknown return types (null, empty) are treated as non-void for safety
         return "void".equals(returnType);
     }
+
+    private boolean isStaticMethod() {
+        if (context.getTargetMethod() instanceof JavaMethodIdentifier javaMethod) {
+            return javaMethod.isStatic();
+        }
+        return false;
+    }
+
+    private String getSimpleClassName() {
+        if (context.getTargetMethod() != null) {
+            return context.getTargetMethod().getClassName();
+        }
+        return "UnknownClass";
+    }
     
     private String generateTestMethodName(TestScenario scenario) {
         if (context.getNamingStrategy() == TestNamingStrategy.SIMPLE) {
@@ -454,7 +471,8 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         if (!isVoidMethod) {
             call.append("var result = ");
         }
-        call.append(instanceName).append(".").append(methodName).append("(");
+        String targetName = isStaticMethod() ? getSimpleClassName() : instanceName;
+        call.append(targetName).append(".").append(methodName).append("(");
 
         // Add arguments in order
         List<String> args = new ArrayList<>();
