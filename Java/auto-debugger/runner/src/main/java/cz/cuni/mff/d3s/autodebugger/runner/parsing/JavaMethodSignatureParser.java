@@ -29,20 +29,24 @@ public class JavaMethodSignatureParser {
     private static final Pattern STATIC_FIELD_PATTERN = Pattern.compile("^static:([^:]+):([^:]+)$");
     
     public JavaMethodIdentifier parseMethodReference(String methodReference) {
+        return parseMethodReference(methodReference, false);
+    }
+
+    public JavaMethodIdentifier parseMethodReference(String methodReference, boolean isStaticMethod) {
         log.debug("Parsing Java method reference: {}", methodReference);
-        
+
         MethodSignature signature = cz.cuni.mff.d3s.autodebugger.model.java.parsing.JavaMethodSignatureParser.parseMethodSignature(methodReference);
-        
+
         if (signature.getState() != SignatureState.FULL_METHOD) {
             throw new IllegalArgumentException(
                 "Invalid method reference format. Expected complete method signature like 'package.Class.method(param1,param2)'. Got: " + methodReference);
         }
-        
+
         // Create package identifier
         JavaPackageIdentifier packageIdentifier = signature.isInDefaultPackage() ?
             JavaPackageIdentifier.DEFAULT_PACKAGE :
             new JavaPackageIdentifier(signature.getPackageName());
-        
+
         // Create class identifier
         JavaClassIdentifier classIdentifier = new JavaClassIdentifier(
             ClassIdentifierParameters.builder()
@@ -50,7 +54,7 @@ public class JavaMethodSignatureParser {
                 .className(signature.getSimpleClassName())
                 .build()
         );
-        
+
         // Create method identifier
         JavaMethodIdentifier methodIdentifier = new JavaMethodIdentifier(
             MethodIdentifierParameters.builder()
@@ -58,13 +62,14 @@ public class JavaMethodSignatureParser {
                 .methodName(signature.getMethodName())
                 .returnType(null) // Unknown return type - cannot be determined from signature
                 .parameterTypes(signature.getParameterTypes())
+                .isStatic(isStaticMethod)
                 .build()
         );
-        
-        log.debug("Successfully parsed method: package={}, class={}, method={}, parameters={}", 
-                 signature.getPackageName(), signature.getSimpleClassName(), 
-                 signature.getMethodName(), signature.getParameterTypes());
-        
+
+        log.debug("Successfully parsed method: package={}, class={}, method={}, parameters={}, isStatic={}",
+                 signature.getPackageName(), signature.getSimpleClassName(),
+                 signature.getMethodName(), signature.getParameterTypes(), isStaticMethod);
+
         return methodIdentifier;
     }
     

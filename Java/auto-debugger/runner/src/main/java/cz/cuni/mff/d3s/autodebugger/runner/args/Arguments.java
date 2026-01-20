@@ -62,6 +62,10 @@ public class Arguments {
                         description = "API key for LLM services (can also be set via ANTHROPIC_API_KEY environment variable)")
     public String apiKey;
 
+    @CommandLine.Option(names = { "--static-method" },
+                        description = "Indicates the target method is a static method")
+    public boolean isStaticMethod = false;
+
     @CommandLine.Option(names = { "-h", "--help" }, usageHelp = true, description = "display a help message")
     private boolean helpRequested = false;
 
