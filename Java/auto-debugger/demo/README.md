@@ -16,10 +16,10 @@ Build the demo apps and run (all commands from `Java/auto-debugger` directory):
 ./gradlew :runner:run --args="--jar $(pwd)/demo/calc-app.jar --source $(pwd)/demo/apps/args/src --output-dir $(pwd)/demo/output/args --method com.example.Calculator.add(int,int) --parameters 0:int --parameters 1:int --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
 
 # 3. Run Counter example (captures instance fields)
-./gradlew :runner:run --args="--jar $(pwd)/demo/fields-app.jar --source $(pwd)/demo/apps/fields/src --output-dir $(pwd)/demo/output/fields --method com.example.Counter.increment() --fields int:value --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+./gradlew :runner:run --args="--jar $(pwd)/demo/fields-app.jar --source $(pwd)/demo/apps/fields/src --output-dir $(pwd)/demo/output/fields --method com.example.Counter.increment() --void-method --fields int:value --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
 
 # 4. Run Globals example (captures static fields)
-./gradlew :runner:run --args="--jar $(pwd)/demo/static-app.jar --source $(pwd)/demo/apps/static/src --output-dir $(pwd)/demo/output/static --method com.example.Globals.bump() --static-method --fields static:int:X --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+./gradlew :runner:run --args="--jar $(pwd)/demo/static-app.jar --source $(pwd)/demo/apps/static/src --output-dir $(pwd)/demo/output/static --method com.example.Globals.bump() --static-method --void-method --fields static:int:X --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
 
 # 5. Run Person example (captures object parameters)
 ./gradlew :runner:run --args="--jar $(pwd)/demo/apps/objects/objects-app.jar --source $(pwd)/demo/apps/objects/src --output-dir $(pwd)/demo/output/objects --method com.example.PersonService.greet(com.example.Person) --parameters 0:com.example.Person --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
@@ -218,6 +218,7 @@ Examples:
   --source $(pwd)/demo/apps/fields/src \
   --output-dir $(pwd)/demo/output/fields-naive \
   --method com.example.Counter.increment() \
+  --void-method \
   --fields int:value \
   --disl-home /Users/leskovde/repos/disl \
   --trace-mode naive \
@@ -238,6 +239,7 @@ Examples:
   --output-dir $(pwd)/demo/output/static-temporal \
   --method com.example.Globals.bump() \
   --static-method \
+  --void-method \
   --fields static:int:X \
   --disl-home /Users/leskovde/repos/disl \
   --trace-mode temporal \
