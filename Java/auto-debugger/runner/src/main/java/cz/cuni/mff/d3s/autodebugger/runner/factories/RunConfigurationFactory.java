@@ -54,7 +54,11 @@ public class RunConfigurationFactory {
             var parser = new JavaMethodSignatureParser();
 
             // Parse the method reference
-            var methodIdentifier = parser.parseMethodReference(arguments.targetMethodReference, arguments.isStaticMethod);
+            var methodIdentifier = parser.parseMethodReference(
+                arguments.targetMethodReference,
+                arguments.isStaticMethod,
+                arguments.isVoidMethod
+            );
 
             // Convert target parameters and fields to ExportableValues
             var parameterValues = parser.parseTargetParameters(arguments.targetParameters, methodIdentifier);

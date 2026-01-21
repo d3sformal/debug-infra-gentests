@@ -66,6 +66,10 @@ public class Arguments {
                         description = "Indicates the target method is a static method")
     public boolean isStaticMethod = false;
 
+    @CommandLine.Option(names = { "--void-method" },
+                        description = "Indicates the target method returns void")
+    public boolean isVoidMethod = false;
+
     @CommandLine.Option(names = { "-h", "--help" }, usageHelp = true, description = "display a help message")
     private boolean helpRequested = false;
 

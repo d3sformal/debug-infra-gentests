@@ -29,10 +29,14 @@ public class JavaMethodSignatureParser {
     private static final Pattern STATIC_FIELD_PATTERN = Pattern.compile("^static:([^:]+):([^:]+)$");
     
     public JavaMethodIdentifier parseMethodReference(String methodReference) {
-        return parseMethodReference(methodReference, false);
+        return parseMethodReference(methodReference, false, false);
     }
 
     public JavaMethodIdentifier parseMethodReference(String methodReference, boolean isStaticMethod) {
+        return parseMethodReference(methodReference, isStaticMethod, false);
+    }
+
+    public JavaMethodIdentifier parseMethodReference(String methodReference, boolean isStaticMethod, boolean isVoidMethod) {
         log.debug("Parsing Java method reference: {}", methodReference);
 
         MethodSignature signature = cz.cuni.mff.d3s.autodebugger.model.java.parsing.JavaMethodSignatureParser.parseMethodSignature(methodReference);
@@ -60,15 +64,15 @@ public class JavaMethodSignatureParser {
             MethodIdentifierParameters.builder()
                 .ownerClassIdentifier(classIdentifier)
                 .methodName(signature.getMethodName())
-                .returnType(null) // Unknown return type - cannot be determined from signature
+                .returnType(isVoidMethod ? "void" : null) // Set to "void" if explicitly marked, otherwise unknown
                 .parameterTypes(signature.getParameterTypes())
                 .isStatic(isStaticMethod)
                 .build()
         );
 
-        log.debug("Successfully parsed method: package={}, class={}, method={}, parameters={}, isStatic={}",
+        log.debug("Successfully parsed method: package={}, class={}, method={}, parameters={}, isStatic={}, isVoid={}",
                  signature.getPackageName(), signature.getSimpleClassName(),
-                 signature.getMethodName(), signature.getParameterTypes(), isStaticMethod);
+                 signature.getMethodName(), signature.getParameterTypes(), isStaticMethod, isVoidMethod);
 
         return methodIdentifier;
     }
