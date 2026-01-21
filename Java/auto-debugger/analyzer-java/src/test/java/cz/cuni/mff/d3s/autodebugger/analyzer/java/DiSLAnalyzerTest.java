@@ -178,6 +178,66 @@ class DiSLAnalyzerTest {
     }
 
     @Test
+    void givenClasspathEntries_whenBuildExecutionCommand_thenIncludesClasspathOptions() {
+        // Given
+        JavaClassIdentifier classIdentifier = new JavaClassIdentifier(
+                ClassIdentifierParameters.builder()
+                        .className("TestClass")
+                        .packageIdentifier(new JavaPackageIdentifier("com.example"))
+                        .build()
+        );
+
+        JavaMethodIdentifier methodIdentifier = new JavaMethodIdentifier(
+                MethodIdentifierParameters.builder()
+                        .ownerClassIdentifier(classIdentifier)
+                        .methodName("testMethod")
+                        .returnType("void")
+                        .parameterTypes(Arrays.asList("int", "String"))
+                        .build()
+        );
+
+        JavaRunConfiguration configWithClasspath = JavaRunConfiguration.builder()
+                .applicationPath(Path.of("/path/to/my-app.jar"))
+                .sourceCodePath(tempDir.resolve("src"))
+                .dislHomePath(Path.of("/opt/disl"))
+                .outputDirectory(tempDir.resolve("output"))
+                .targetMethod(methodIdentifier)
+                .classpathEntry(Path.of("/path/to/lib1.jar"))
+                .classpathEntry(Path.of("/path/to/lib2.jar"))
+                .build();
+
+        DiSLAnalyzer analyzer = new DiSLAnalyzer(configWithClasspath);
+
+        // When
+        List<String> command = analyzer.buildExecutionCommand(instrumentation.getPrimaryArtifact());
+
+        // Then
+        assertNotNull(command);
+        // Command: python3, disl.py, -d, disl-home, -cse, -c_opts=-cp, -c_opts=classpath, --, instr.jar, -jar, app.jar = 11
+        assertEquals(11, command.size());
+
+        // Verify core command structure
+        assertEquals("python3", command.get(0));
+        assertEquals("/opt/disl/bin/disl.py", command.get(1));
+        assertEquals("-d", command.get(2));
+        assertEquals("/opt/disl/output", command.get(3));
+        assertEquals("-cse", command.get(4));
+
+        // Verify classpath options (uses = sign format for disl.py argparse compatibility)
+        assertEquals("-c_opts=-cp", command.get(5));
+        String expectedClasspath = Path.of("/path/to/lib1.jar").toAbsolutePath().toString() +
+                                   java.io.File.pathSeparator +
+                                   Path.of("/path/to/lib2.jar").toAbsolutePath().toString();
+        assertEquals("-c_opts=" + expectedClasspath, command.get(6));
+
+        // Verify remaining command structure
+        assertEquals("--", command.get(7));
+        assertEquals("/tmp/instrumentation.jar", command.get(8));
+        assertEquals("-jar", command.get(9));
+        assertEquals("/path/to/my-app.jar", command.get(10));
+    }
+
+    @Test
     void givenInvalidInstrumentationPath_whenExecuteAnalysis_thenThrows() {
         // Given
         DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);

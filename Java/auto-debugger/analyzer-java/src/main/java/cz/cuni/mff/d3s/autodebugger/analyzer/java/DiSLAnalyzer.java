@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -113,14 +114,42 @@ public class DiSLAnalyzer implements Analyzer {
         // Run with the client (target app), server (DiSL instrumentation server), and evaluation (ShadowVM)
         command.add("-cse");
 
+        // Build classpath: include application path if it's a directory, plus any additional entries
+        Path applicationPath = runConfiguration.getApplicationPath();
+        boolean isDirectory = Files.isDirectory(applicationPath);
+        List<Path> classpathEntries = runConfiguration.getClasspathEntries();
+
+        // Collect all classpath entries
+        List<String> allClasspathEntries = new ArrayList<>();
+        if (isDirectory) {
+            // Application is a directory of classes, add it to classpath
+            allClasspathEntries.add(applicationPath.toAbsolutePath().toString());
+        }
+        if (classpathEntries != null && !classpathEntries.isEmpty()) {
+            classpathEntries.stream()
+                    .map(Path::toAbsolutePath)
+                    .map(Path::toString)
+                    .forEach(allClasspathEntries::add);
+        }
+
+        // Add client classpath if we have any entries
+        // Note: disl.py requires using = sign for args starting with dash to avoid argparse confusion
+        if (!allClasspathEntries.isEmpty()) {
+            String classpathString = String.join(File.pathSeparator, allClasspathEntries);
+            command.add("-c_opts=-cp");
+            command.add("-c_opts=" + classpathString);
+        }
+
         command.add("--");
 
         // Add the generated DiSL instrumentation JAR (use absolute path)
         command.add(instrumentationJarPath.toAbsolutePath().toString());
 
-        // Add the target application JAR
-        command.add("-jar");
-        command.add(runConfiguration.getApplicationPath().toString());
+        // Add the target application: JAR file uses -jar, directory uses main class from runtime args
+        if (!isDirectory) {
+            command.add("-jar");
+            command.add(applicationPath.toString());
+        }
 
         // Add runtime arguments for the target application
         if (!runConfiguration.getRuntimeArguments().isEmpty()) {
