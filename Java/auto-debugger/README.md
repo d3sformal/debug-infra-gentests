@@ -125,7 +125,27 @@ Run the complete test suite:
   - ${TARGET_PACKAGE}, ${TARGET_CLASS}, ${TARGET_METHOD}, ${TARGET_RETURN}
   - Construction is done via TestGenerationContextFactory.createFromStrings(...), ensuring consistent metadata for generators.
 
+### Test Generation Limits
 
+By default, the auto-debugger generates tests for **all captured argument combinations** to ensure no important test cases are missed (e.g., bug-triggering inputs).
+
+If you have a large number of captured values and want to limit test generation, use:
+
+```bash
+--max-argument-combinations COUNT
+```
+
+**Examples:**
+
+```bash
+# Generate tests for ALL captured values (default behavior)
+./gradlew :runner:run --args="--jar app.jar --source src --method com.example.Method(String)"
+
+# Limit to 50 argument combinations (useful for large traces)
+./gradlew :runner:run --args="--jar app.jar --source src --method com.example.Method(String) --max-argument-combinations 50"
+```
+
+**Note:** When working with Defects4J or similar benchmarks, keeping the default (no limit) ensures that bug-triggering inputs at any position in the trace are included in the generated tests.
 
 ## Output artifacts and directories
 

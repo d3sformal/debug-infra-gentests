@@ -91,6 +91,7 @@ public class RunConfigurationFactory {
                     .outputDirectory(outputDir)
                     .traceMode(traceMode)
                     .testGenerationStrategy(arguments.testGenerationStrategy)
+                    .maxArgumentCombinations(arguments.maxArgumentCombinations)
                     .build();
 
             // Validate the configuration

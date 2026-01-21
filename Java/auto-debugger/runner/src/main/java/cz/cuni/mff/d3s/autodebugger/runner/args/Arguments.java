@@ -70,6 +70,12 @@ public class Arguments {
                         description = "Indicates the target method returns void")
     public boolean isVoidMethod = false;
 
+    @CommandLine.Option(names = { "--max-argument-combinations" }, paramLabel = "COUNT",
+                        description = "Maximum number of argument value combinations to generate. " +
+                                      "Default: no limit (all captured combinations). " +
+                                      "Use this to limit test generation if you have many captured values.")
+    public Integer maxArgumentCombinations;
+
     @CommandLine.Option(names = { "-h", "--help" }, usageHelp = true, description = "display a help message")
     private boolean helpRequested = false;
 

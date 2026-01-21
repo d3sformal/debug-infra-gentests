@@ -58,6 +58,13 @@ public class JavaRunConfiguration implements RunConfiguration {
     @Builder.Default
     private final String testGenerationStrategy = "trace-based-basic";
 
+    /**
+     * Maximum number of argument value combinations to generate in tests.
+     * Default: null (uses TestGenerationContext default of Integer.MAX_VALUE - no limit).
+     * When set, limits the number of test scenarios generated from argument values.
+     */
+    private final Integer maxArgumentCombinations;
+
     // No default - must be explicitly set via CLI argument or DISL_HOME env var
     private final Path dislHomePath;
 
