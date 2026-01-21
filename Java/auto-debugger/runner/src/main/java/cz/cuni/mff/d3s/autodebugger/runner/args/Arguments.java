@@ -92,13 +92,13 @@ public class Arguments {
     public List<String> validate() {
         List<String> errors = new ArrayList<>();
 
-        // Validate required paths exist
+        // Validate required paths exist (JAR file or directory with classes)
         if (applicationJarPath != null) {
             Path jarPath = Path.of(applicationJarPath);
             if (!Files.exists(jarPath)) {
-                errors.add("Application JAR not found: " + applicationJarPath);
-            } else if (!applicationJarPath.endsWith(".jar")) {
-                errors.add("Application path must be a .jar file: " + applicationJarPath);
+                errors.add("Application path not found: " + applicationJarPath);
+            } else if (!applicationJarPath.endsWith(".jar") && !Files.isDirectory(jarPath)) {
+                errors.add("Application path must be a .jar file or directory: " + applicationJarPath);
             }
         }
 

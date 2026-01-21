@@ -56,7 +56,7 @@ class ArgumentsValidationTest {
 
         List<String> errors = args.validate();
 
-        assertTrue(errors.stream().anyMatch(e -> e.contains("Application JAR not found")));
+        assertTrue(errors.stream().anyMatch(e -> e.contains("Application path not found")));
     }
 
     @Test
@@ -182,7 +182,7 @@ class ArgumentsValidationTest {
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, args::validateOrThrow);
         assertTrue(ex.getMessage().contains("Invalid arguments"));
-        assertTrue(ex.getMessage().contains("Application JAR not found"));
+        assertTrue(ex.getMessage().contains("Application path not found"));
     }
 }
 
