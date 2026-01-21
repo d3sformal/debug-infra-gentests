@@ -128,8 +128,9 @@ public class JavaRunConfiguration implements RunConfiguration {
     }
 
     /**
-     * Validates the application path is an existing, readable file.
-     * Issues a warning if the file does not have a .jar extension.
+     * Validates the application path is an existing, readable file or directory.
+     * For JAR files, issues a warning if the file does not have a .jar extension.
+     * For directories, assumes it contains compiled class files.
      */
     private void validateApplicationPath() {
         if (applicationPath == null) {
@@ -137,21 +138,24 @@ public class JavaRunConfiguration implements RunConfiguration {
         }
 
         if (!Files.exists(applicationPath)) {
-            throw new IllegalStateException("Application file does not exist: " + applicationPath);
+            throw new IllegalStateException("Application path does not exist: " + applicationPath);
         }
 
         if (!Files.isReadable(applicationPath)) {
-            throw new IllegalStateException("Application file is not readable: " + applicationPath);
+            throw new IllegalStateException("Application path is not readable: " + applicationPath);
         }
 
-        if (!Files.isRegularFile(applicationPath)) {
-            throw new IllegalStateException("Application path must point to a file, not a directory: " + applicationPath);
+        // Allow both regular files (JARs) and directories (compiled classes)
+        if (!Files.isRegularFile(applicationPath) && !Files.isDirectory(applicationPath)) {
+            throw new IllegalStateException("Application path must be a file or directory: " + applicationPath);
         }
 
-        // Validate that application is a JAR file for Java
-        String fileName = applicationPath.getFileName().toString().toLowerCase();
-        if (!fileName.endsWith(".jar")) {
-            log.warn("Application file does not appear to be a JAR file: {}", fileName);
+        // Validate that application is a JAR file for Java (only warn for files)
+        if (Files.isRegularFile(applicationPath)) {
+            String fileName = applicationPath.getFileName().toString().toLowerCase();
+            if (!fileName.endsWith(".jar")) {
+                log.warn("Application file does not appear to be a JAR file: {}", fileName);
+            }
         }
     }
 
