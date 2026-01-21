@@ -232,10 +232,11 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
             fieldValues.put(slot, new ArrayList<>(values));
         }
 
-        // Generate combinations (limit to avoid explosion)
+        // Generate combinations (limit configurable via context to avoid explosion)
         if (!fieldValues.isEmpty()) {
             List<Integer> slots = new ArrayList<>(fieldValues.keySet());
-            generateCombinationsRecursive(slots, 0, new HashMap<>(), fieldValues, combinations, 20);
+            int maxCombinations = context != null ? context.getMaxFieldCombinations() : 20;
+            generateCombinationsRecursive(slots, 0, new HashMap<>(), fieldValues, combinations, maxCombinations);
         }
 
         return combinations;
@@ -253,10 +254,11 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
             argumentValues.put(slot, new ArrayList<>(values));
         }
         
-        // Generate combinations (for now, just take first few unique combinations)
+        // Generate combinations (limit configurable via context)
         if (!argumentValues.isEmpty()) {
             List<Integer> slots = new ArrayList<>(argumentValues.keySet());
-            generateCombinationsRecursive(slots, 0, new HashMap<>(), argumentValues, combinations, 10);
+            int maxCombinations = context != null ? context.getMaxArgumentCombinations() : 10;
+            generateCombinationsRecursive(slots, 0, new HashMap<>(), argumentValues, combinations, maxCombinations);
         }
         
         return combinations;

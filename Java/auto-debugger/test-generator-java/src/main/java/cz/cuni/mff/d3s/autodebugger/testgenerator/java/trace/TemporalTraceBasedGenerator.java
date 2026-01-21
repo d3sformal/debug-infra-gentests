@@ -272,7 +272,9 @@ public class TemporalTraceBasedGenerator implements TestGenerator {
         List<TestScenario> scenarios = new ArrayList<>();
         
         // Sample the trace at different points to capture state evolution
-        int sampleCount = Math.min(context.getMaxTestCount(), 5);
+        // Use configurable maxStateChangeSamples instead of hardcoded 5
+        int maxSamples = context.getMaxStateChangeSamples();
+        int sampleCount = Math.min(context.getMaxTestCount(), maxSamples);
         int interval = Math.max(1, (eventRange[1] - eventRange[0]) / sampleCount);
         
         for (int i = 0; i < sampleCount; i++) {
