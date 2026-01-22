@@ -178,9 +178,12 @@ public class JavaRunConfiguration implements RunConfiguration {
             throw new IllegalStateException("Source code directory does not exist: " + sourceCodePath);
         }
 
+        // PP: disabled this check because source code path refers to a single file when tests are generated using LLM
+        /*
         if (!Files.isDirectory(sourceCodePath)) {
             throw new IllegalStateException("Source code path must point to a directory: " + sourceCodePath);
         }
+        */
 
         if (!Files.isReadable(sourceCodePath)) {
             throw new IllegalStateException("Source code directory is not readable: " + sourceCodePath);

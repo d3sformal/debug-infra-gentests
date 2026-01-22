@@ -172,7 +172,9 @@ class JavaRunConfigurationValidationTest {
         assertTrue(exception.getMessage().contains("Source code directory does not exist"));
     }
 
+    // PP: disabled test case because also the validation check is disabled now
     @Test
+    @Disabled
     void givenFileAsSourceCodePath_whenValidating_thenThrows() throws IOException {
         Path file = tempDir.resolve("src-file.txt");
         Files.createFile(file);
