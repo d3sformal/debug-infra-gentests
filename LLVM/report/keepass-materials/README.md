@@ -4,12 +4,29 @@ Assumes
 * built `keepassxc` at least once
 * built the repo (`llvm-project`, `llvm-pass`, `ipc-hooklib`)
 
+**assuming pwd is this file's parent**
+**assuming keepassxc is at the relative path ../../../../keepassxc**
 
-## How to run
+## How to run (cli version with example captured data)
+
+```shell
+./e2e-cli.sh ./tmp-tracing ../../../../keepassxc
+```
+
+## How to run (GUI available)
 
 In this directory:
 
-**assuming pwd is this file's parent keepassxc is at the relative path ../../../../keepassx**
+```shell
+mkdir -p ./tmp-tracing && ./make-diffs.sh ./tmp-tracing ../../../../keepassxc
+
+rm -rf ./tmp-tracing/modmaps
+
+./cli-calltrace.sh ./tmp-tracing ../../../../keepassxc
+
+./cli-test.sh ./tmp-tracing ../../../../keepassxc
+```
+
 
 make sure to click the password generator and play around with it
 * note: too much input data will cause the testing phase to take too long
