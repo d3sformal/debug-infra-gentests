@@ -33,6 +33,8 @@ The following dependencies are required only for specific functionalities:
 - **DiSL Framework**: Required for instrumentation and dynamic analysis features
     - Without DiSL: Test generation from pre-existing traces still functions
     - Mock instrumentation can be used for development and testing
+    - Patches for DiSL, available in the [patches/disl](./patches/disl) directory, need to be applied especially on the **macOS** platform (see the [README](./patches/disl/README.md) for details)
+
 - **Anthropic API Key**: Required for LLM-based test generation
     - Without API key: Trace-based and naive generation strategies remain fully functional
     - Set via `ANTHROPIC_API_KEY` environment variable or `--api-key` command line option
