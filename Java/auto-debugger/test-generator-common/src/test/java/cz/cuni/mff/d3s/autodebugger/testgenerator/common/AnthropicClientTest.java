@@ -166,7 +166,7 @@ class AnthropicClientTest {
         assertEquals("claude-sonnet-4-6", config.getModelName());
 
         // Default max tokens should be reasonable for test generation
-        assertEquals(4000, config.getMaxTokens());
+        assertEquals(64000, config.getMaxTokens());
 
         // Code generation features should be enabled by default
         assertTrue(config.isEnableIterativeRefinement());
