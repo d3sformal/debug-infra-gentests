@@ -20,7 +20,6 @@ class QuickAnthropicTest {
         LLMConfiguration config = LLMConfiguration.builder()
                 .modelName("mock")
                 .maxTokens(1000)
-                .temperature(0.7)
                 .build();
 
         // Test client creation and configuration
@@ -75,19 +74,9 @@ class QuickAnthropicTest {
                 .modelName("claude-sonnet-4-20250514")
                 .apiKey("test-key")
                 .maxTokens(1000)
-                .temperature(0.7)
                 .build();
 
         assertDoesNotThrow(validConfig::validate);
-
-        // Test invalid configuration (invalid temperature)
-        LLMConfiguration invalidConfig = LLMConfiguration.builder()
-                .modelName("claude-sonnet-4-20250514")
-                .apiKey("test-key")
-                .temperature(2.0) // Invalid temperature
-                .build();
-
-        assertThrows(LLMConfigurationException.class, invalidConfig::validate);
 
         System.out.println("✅ Configuration validation works correctly!");
     }

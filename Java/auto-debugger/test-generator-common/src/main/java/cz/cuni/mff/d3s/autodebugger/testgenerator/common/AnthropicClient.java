@@ -113,7 +113,6 @@ public class AnthropicClient {
             MessageCreateParams params = MessageCreateParams.builder()
                     .model(getClaudeModel())
                     .maxTokens(config.getMaxTokens())
-                    .temperature(config.getTemperature())
                     .system("You are an expert software developer who specializes in writing robust, well-structured test code. " +
                             "Generate clean, comprehensive test code without explanations or markdown formatting.")
                     .addUserMessage(promptText)
@@ -166,23 +165,24 @@ public class AnthropicClient {
 
     /**
      * Maps the configured model name to the appropriate Claude model.
-     * Defaults to Claude Sonnet 4.5 if not specified.
+     * Defaults to Claude Sonnet 4.6 if not specified.
      */
     private Model getClaudeModel() {
         if (config.getModelName() == null) {
-            return Model.CLAUDE_SONNET_4_5_20250929;
+            return Model.CLAUDE_SONNET_4_6;
         }
 
         return switch (config.getModelName().toLowerCase()) {
+            case "claude-sonnet-4-6", "claude-sonnet-4.6", "sonnet-4.6" -> Model.CLAUDE_SONNET_4_6;
             case "claude-sonnet-4-5-20250929", "claude-sonnet-4-5", "claude-sonnet-4.5", "sonnet-4.5" -> Model.CLAUDE_SONNET_4_5_20250929;
             case "claude-sonnet-4-20250514", "claude-sonnet-4", "sonnet-4" -> Model.CLAUDE_SONNET_4_20250514;
-            case "claude-3-7-sonnet-20250219", "claude-3-7-sonnet", "sonnet-3.7" -> Model.CLAUDE_3_7_SONNET_20250219;
-            case "claude-3-5-haiku-20241022", "claude-3-5-haiku", "haiku-3.5" -> Model.CLAUDE_3_5_HAIKU_20241022;
+            //case "claude-3-7-sonnet-20250219", "claude-3-7-sonnet", "sonnet-3.7" -> Model.CLAUDE_3_7_SONNET_20250219;
+            //case "claude-3-5-haiku-20241022", "claude-3-5-haiku", "haiku-3.5" -> Model.CLAUDE_3_5_HAIKU_20241022;
             case "claude-3-haiku-20240307", "claude-3-haiku", "haiku-3" -> Model.CLAUDE_3_HAIKU_20240307;
             case "mock" -> Model.CLAUDE_SONNET_4_5_20250929; // Doesn't matter for mock
             default -> {
-                log.warn("Unknown model '{}', defaulting to Claude Sonnet 4.5", config.getModelName());
-                yield Model.CLAUDE_SONNET_4_5_20250929;
+                log.warn("Unknown model '{}', defaulting to Claude Sonnet 4.6", config.getModelName());
+                yield Model.CLAUDE_SONNET_4_6;
             }
         };
     }
