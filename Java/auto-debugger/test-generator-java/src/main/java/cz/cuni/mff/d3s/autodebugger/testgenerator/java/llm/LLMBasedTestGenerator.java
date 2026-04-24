@@ -354,6 +354,18 @@ public class LLMBasedTestGenerator implements TestGenerator {
         trace.getBooleanValues(0).forEach(value ->
             sb.append("// Boolean value observed: ").append(value).append("\n"));
 
+        // Add double values
+        trace.getDoubleValues(0).forEach(value ->
+            sb.append("// Double value observed: ").append(value).append("\n"));
+
+        // Add String values
+        trace.getStringValues(0).forEach(value ->
+            sb.append("// String value observed: ").append(value).append("\n"));
+
+        // Add Object values
+        trace.getObjectValues(0).forEach(value ->
+            sb.append("// Object value observed: ").append(value.toString()).append("\n"));
+
         // TODO: Add more comprehensive trace formatting based on identifier mapping
 
         return sb.toString();
