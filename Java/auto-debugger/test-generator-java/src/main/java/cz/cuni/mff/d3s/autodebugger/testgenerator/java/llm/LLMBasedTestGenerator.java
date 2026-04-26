@@ -17,6 +17,13 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.*;
 
+import com.github.javaparser.StaticJavaParser;
+import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
+import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.Modifier;
+import com.github.javaparser.ast.Modifier.Keyword;
+
 /**
  * LLM-based test generator that uses Large Language Models to generate
  * semantically rich and comprehensive test suites based on runtime traces
@@ -110,11 +117,11 @@ public class LLMBasedTestGenerator implements TestGenerator {
         validateParameters(trace, sourceCodePath, context);
 
         try {
-            // Read source code
-            String sourceCode = Files.readString(sourceCodePath);
+            // Read source code and extract the necessary information (list of method signatures)
+            String sourceCodeInfo = extractInformationFromSource(sourceCodePath);
 
             // Build context for LLM prompt (handles both regular and temporal traces)
-            LLMPromptContext promptContext = buildPromptContext(trace, sourceCode, context);
+            LLMPromptContext promptContext = buildPromptContext(trace, sourceCodeInfo, context);
 
             // Generate and refine test code
             String generatedCode = generateAndRefineCode(promptContext);
@@ -227,11 +234,11 @@ public class LLMBasedTestGenerator implements TestGenerator {
         validateTemporalTraceParameters(enhancedTrace, sourceCodePath, context);
 
         try {
-            // Read source code
-            String sourceCode = Files.readString(sourceCodePath);
+            // Read source code and extract the necessary information (list of method signatures)
+            String sourceCodeInfo = extractInformationFromSource(sourceCodePath);
 
             // Build context for LLM prompt with temporal data
-            LLMPromptContext promptContext = buildTemporalPromptContext(enhancedTrace, sourceCode, context);
+            LLMPromptContext promptContext = buildTemporalPromptContext(enhancedTrace, sourceCodeInfo, context);
 
             // Generate and refine test code
             String generatedCode = generateAndRefineCode(promptContext);
@@ -288,12 +295,12 @@ public class LLMBasedTestGenerator implements TestGenerator {
     /**
      * Builds prompt context specifically for TemporalTrace data.
      */
-    private LLMPromptContext buildTemporalPromptContext(TemporalTrace trace, String sourceCode, TestGenerationContext context) {
+    private LLMPromptContext buildTemporalPromptContext(TemporalTrace trace, String sourceCodeInfo, TestGenerationContext context) {
         var methodSig = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : "UnknownClass.unknownMethod()";
         var classFqcn = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
         var pkg = context.getTargetMethod() != null ? context.getTargetMethod().getPackageName() : "";
         return LLMPromptContext.builder()
-                .sourceCode(sourceCode)
+                .sourceCodeInfo(sourceCodeInfo)
                 .targetMethodSignature(methodSig)
                 .targetClassName(classFqcn)
                 .packageName(pkg)
@@ -312,17 +319,17 @@ public class LLMBasedTestGenerator implements TestGenerator {
      * Builds prompt context for LLM with regular Trace data.
      *
      * @param trace The runtime trace data
-     * @param sourceCode The source code content
+     * @param sourceCodeInfo Relevant information about the source code
      * @param context The test generation context
      * @return LLM prompt context with trace formatting
      */
-    private LLMPromptContext buildPromptContext(Trace trace, String sourceCode, TestGenerationContext context) {
+    private LLMPromptContext buildPromptContext(Trace trace, String sourceCodeInfo, TestGenerationContext context) {
         log.debug("Using basic trace formatting for LLM prompt");
         var methodSig = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : "UnknownClass.unknownMethod()";
         var classFqcn = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
         var pkg = context.getTargetMethod() != null ? context.getTargetMethod().getPackageName() : "";
         return LLMPromptContext.builder()
-                .sourceCode(sourceCode)
+                .sourceCodeInfo(sourceCodeInfo)
                 .targetMethodSignature(methodSig)
                 .targetClassName(classFqcn)
                 .packageName(pkg)
@@ -333,6 +340,39 @@ public class LLMBasedTestGenerator implements TestGenerator {
                 .generateNegativeTests(context.isGenerateNegativeTests())
                 .namingStrategy(context.getNamingStrategy())
                 .build();
+    }
+
+    /**
+      * Extacts just necessary information (e.g., list of method signatures) from the given source code file.
+      */
+    private String extractInformationFromSource(Path sourceCodePath) {
+        StringBuilder sb = new StringBuilder();
+
+        try {
+            CompilationUnit sourceCU = StaticJavaParser.parse(sourceCodePath);
+
+            for (ClassOrInterfaceDeclaration clsDecl : sourceCU.findAll(ClassOrInterfaceDeclaration.class))
+            {
+                // process few basic modifiers (just those relevant for generating LLM prompt)
+                if (clsDecl.getModifiers().contains(Modifier.Keyword.PUBLIC)) sb.append("public ");
+                if (clsDecl.getModifiers().contains(Modifier.Keyword.STATIC)) sb.append("static ");
+
+                sb.append(clsDecl.getName() + " {\n");
+
+                clsDecl.findAll(MethodDeclaration.class).stream().filter(MethodDeclaration::isPublic).forEach(mthDecl ->
+                    // include modifiers and parameter names
+                    sb.append("  " + mthDecl.getDeclarationAsString(true, false, true) + "\n"));
+
+                sb.append("}");
+            }
+        } catch (Exception e) {
+            throw new TestGenerationWorkflowException("Cannot parse the source code file " + sourceCodePath + ": " + e.getMessage());
+        }
+
+        return sb.toString();
+
+        // original implementation (just returning the whole content of the source code file)
+        //return Files.readString(sourceCodePath);
     }
 
     private String formatTraceData(Trace trace) {

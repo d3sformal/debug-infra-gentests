@@ -46,7 +46,7 @@ class QuickAnthropicTest {
         PromptBuilder promptBuilder = new PromptBuilder();
         
         LLMPromptContext context = LLMPromptContext.builder()
-                .sourceCode("public class Calculator { public int add(int a, int b) { return a + b; } }")
+                .sourceCodeInfo("public class Calculator { public int add(int a, int b) }")
                 .targetMethodSignature("add(int, int)")
                 .testFramework("junit5")
                 .generateEdgeCases(true)

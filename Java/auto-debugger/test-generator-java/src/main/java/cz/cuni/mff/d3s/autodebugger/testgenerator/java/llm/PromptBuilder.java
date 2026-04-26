@@ -25,26 +25,34 @@ public class PromptBuilder {
 
         // Requirements section - Claude works well with structured requirements
         prompt.append("## Requirements\n");
+        prompt.append("- Create test cases that cover all possible valid combinations of argument values based on provided runtime data\n");
         prompt.append("- Use the provided runtime data to create assertions that verify observed outcomes\n");
         prompt.append("- Generate test methods with descriptive, meaningful names\n");
         prompt.append("- Follow ").append(context.getTestFramework()).append(" best practices and conventions\n");
         prompt.append("- Include proper imports and package declaration\n");
 
         if (context.isGenerateEdgeCases()) {
-            prompt.append("- Include tests for edge cases and boundary conditions not present in runtime data\n");
+            prompt.append("- Include also additional tests for edge cases and boundary conditions not present in runtime data\n");
         }
 
         if (context.isGenerateNegativeTests()) {
             prompt.append("- Include negative test cases for error conditions and invalid inputs\n");
         }
 
-        prompt.append("- Return only the complete Java test class without explanations or markdown\n\n");
+        prompt.append("- Create the source code of a public Java class that contains ").append(context.getTestFramework()).append(" test methods");
+
+        prompt.append("- Return only the complete Java test class without explanations and markdown\n\n");
 
         // Context sections with clear structure that Claude can parse well
-        prompt.append("## Source Code to Test\n");
-        prompt.append("```java\n");
-        prompt.append(context.getSourceCode());
-        prompt.append("\n```\n\n");
+
+        // Relevant information about source code of the Java class that contains target method
+        // The full source code is typically too long ("eats tokens/credit for LLM"), so we put there just signatures of public methods (including constructors)
+        // We have removed (omitted) the opening code block marker "```java" (and the closing marker "```") to see if it helps
+        prompt.append("## Java Source Code to Test (signatures of pubiic methods and constructors)\n");
+        //prompt.append("```java\n");
+        prompt.append(context.getSourceCodeInfo());
+        //prompt.append("\n```\n\n");
+        prompt.append("\n\n");
 
         // Runtime trace data if available - Claude is good at analyzing execution patterns
         if (context.getTraceData() != null && !context.getTraceData().isEmpty()) {
@@ -150,10 +158,12 @@ public class PromptBuilder {
               .append("`. Focus on boundary conditions, null values, empty collections, ");
         prompt.append("extreme values, and other edge cases that might cause unexpected behavior.\n\n");
         
-        prompt.append("## Source Code\n");
-        prompt.append("```java\n");
-        prompt.append(context.getSourceCode());
-        prompt.append("\n```\n\n");
+        // Relevant information about source code of the Java class that contains target method
+        // We have removed (omitted) the opening code block marker "```java" (and the closing marker "```") to see if it helps
+        prompt.append("## Source Code (signatures of public methods and constructors\n");
+        //prompt.append("```java\n");
+        prompt.append(context.getSourceCodeInfo());
+        //prompt.append("\n```\n\n");
         
         prompt.append("Generate 5-10 additional test methods that cover edge cases not typically ");
         prompt.append("encountered during normal execution. Use ").append(context.getTestFramework());
