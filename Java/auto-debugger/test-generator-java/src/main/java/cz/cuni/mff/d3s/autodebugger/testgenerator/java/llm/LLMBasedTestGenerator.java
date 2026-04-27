@@ -354,10 +354,13 @@ public class LLMBasedTestGenerator implements TestGenerator {
             for (ClassOrInterfaceDeclaration clsDecl : sourceCU.findAll(ClassOrInterfaceDeclaration.class))
             {
                 // process few basic modifiers (just those relevant for generating LLM prompt)
-                if (clsDecl.getModifiers().contains(Modifier.Keyword.PUBLIC)) sb.append("public ");
-                if (clsDecl.getModifiers().contains(Modifier.Keyword.STATIC)) sb.append("static ");
+                for (Modifier clsMdf : clsDecl.getModifiers())
+                {
+                    if (clsMdf.getKeyword() == Modifier.Keyword.PUBLIC) sb.append("public ");
+                    if (clsMdf.getKeyword() == Modifier.Keyword.STATIC) sb.append("static ");
+                }
 
-                sb.append(clsDecl.getName() + " {\n");
+                sb.append("class ").append(clsDecl.getName()).append(" {\n");
 
                 clsDecl.findAll(MethodDeclaration.class).stream().filter(MethodDeclaration::isPublic).forEach(mthDecl ->
                     // include modifiers and parameter names

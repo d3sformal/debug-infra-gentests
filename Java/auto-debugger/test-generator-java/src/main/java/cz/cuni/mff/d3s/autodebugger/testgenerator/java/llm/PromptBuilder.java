@@ -39,7 +39,7 @@ public class PromptBuilder {
             prompt.append("- Include negative test cases for error conditions and invalid inputs\n");
         }
 
-        prompt.append("- Create the source code of a public Java class that contains ").append(context.getTestFramework()).append(" test methods");
+        prompt.append("- Create the source code of a public Java class that contains ").append(context.getTestFramework()).append(" test methods\n");
 
         prompt.append("- Return only the complete Java test class without explanations and markdown\n\n");
 
