@@ -136,6 +136,26 @@ public class Trace implements Serializable {
     return objectValues.getOrDefault(slotId, Collections.emptySet());
   }
 
+  public Set<Integer> getAllSlotIDs() {
+    Set<Integer> allSlotIDs = new HashSet<>();
+
+    // Clearly it would be more efficient to create the set of all slot IDs gradually, add new element when some value is to be recorded
+      // However, performance is not really an issue for us now
+
+    allSlotIDs.addAll(byteValues.keySet());
+    allSlotIDs.addAll(charValues.keySet());
+    allSlotIDs.addAll(shortValues.keySet());
+    allSlotIDs.addAll(intValues.keySet());
+    allSlotIDs.addAll(longValues.keySet());
+    allSlotIDs.addAll(floatValues.keySet());
+    allSlotIDs.addAll(doubleValues.keySet());
+    allSlotIDs.addAll(booleanValues.keySet());
+    allSlotIDs.addAll(stringValues.keySet());
+    allSlotIDs.addAll(objectValues.keySet());
+
+    return allSlotIDs;
+  }
+
   public void printSlotValues() {
     printSlotValues(byteValues);
     printSlotValues(charValues);

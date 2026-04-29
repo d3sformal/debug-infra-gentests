@@ -385,29 +385,33 @@ public class LLMBasedTestGenerator implements TestGenerator {
         // Format trace data for LLM consumption
         sb.append("// Observed runtime values during execution:\n");
 
-        // Add byte values
-        trace.getByteValues(0).forEach(value ->
-            sb.append("// Byte value observed: ").append(value).append("\n"));
+        for (Integer slotId : trace.getAllSlotIDs()) {
+            // Some of the values for some types will be empty
 
-        // Add int values
-        trace.getIntValues(0).forEach(value ->
-            sb.append("// Int value observed: ").append(value).append("\n"));
+            // Add byte values
+            trace.getByteValues(slotId).forEach(value ->
+                sb.append("// Byte value observed: ").append(value).append("\n"));
 
-        // Add boolean values
-        trace.getBooleanValues(0).forEach(value ->
-            sb.append("// Boolean value observed: ").append(value).append("\n"));
+            // Add int values
+            trace.getIntValues(slotId).forEach(value ->
+                sb.append("// Int value observed: ").append(value).append("\n"));
 
-        // Add double values
-        trace.getDoubleValues(0).forEach(value ->
-            sb.append("// Double value observed: ").append(value).append("\n"));
+            // Add boolean values
+            trace.getBooleanValues(slotId).forEach(value ->
+                sb.append("// Boolean value observed: ").append(value).append("\n"));
 
-        // Add String values
-        trace.getStringValues(0).forEach(value ->
-            sb.append("// String value observed: ").append(value).append("\n"));
+            // Add double values
+            trace.getDoubleValues(slotId).forEach(value ->
+                sb.append("// Double value observed: ").append(value).append("\n"));
 
-        // Add Object values
-        trace.getObjectValues(0).forEach(value ->
-            sb.append("// Object value observed: ").append(value.toString()).append("\n"));
+            // Add String values
+            trace.getStringValues(slotId).forEach(value ->
+                sb.append("// String value observed: ").append(value).append("\n"));
+
+            // Add Object values
+            trace.getObjectValues(slotId).forEach(value ->
+                sb.append("// Object value observed: ").append(value.toString()).append("\n"));
+        }
 
         // TODO: Add more comprehensive trace formatting based on identifier mapping
 
