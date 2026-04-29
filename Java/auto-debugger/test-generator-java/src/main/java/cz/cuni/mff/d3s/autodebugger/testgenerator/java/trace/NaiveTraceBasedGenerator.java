@@ -155,17 +155,17 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         // Check if trace has any values in any slot
         // We need to check all possible slots, but for practical purposes,
         // we'll check a reasonable range of slots (0-100)
-        for (int slot = 0; slot < 100; slot++) {
-            if (!trace.getIntValues(slot).isEmpty() ||
-                !trace.getLongValues(slot).isEmpty() ||
-                !trace.getBooleanValues(slot).isEmpty() ||
-                !trace.getFloatValues(slot).isEmpty() ||
-                !trace.getDoubleValues(slot).isEmpty() ||
-                !trace.getCharValues(slot).isEmpty() ||
-                !trace.getByteValues(slot).isEmpty() ||
-                !trace.getShortValues(slot).isEmpty() ||
-                !trace.getStringValues(slot).isEmpty() ||
-                !trace.getObjectValues(slot).isEmpty()) {
+        for (int slotId = 0; slotId < 100; slotId++) {
+            if (!trace.getIntValues(slotId).isEmpty() ||
+                !trace.getLongValues(slotId).isEmpty() ||
+                !trace.getBooleanValues(slotId).isEmpty() ||
+                !trace.getFloatValues(slotId).isEmpty() ||
+                !trace.getDoubleValues(slotId).isEmpty() ||
+                !trace.getCharValues(slotId).isEmpty() ||
+                !trace.getByteValues(slotId).isEmpty() ||
+                !trace.getShortValues(slotId).isEmpty() ||
+                !trace.getStringValues(slotId).isEmpty() ||
+                !trace.getObjectValues(slotId).isEmpty()) {
                 return false; // Found at least one value
             }
         }
@@ -179,12 +179,12 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         Map<Integer, JavaArgumentIdentifier> arguments = new HashMap<>();
         Map<Integer, JavaFieldIdentifier> fields = new HashMap<>();
 
-        for (Integer slot : mapper.getSlots()) {
-            ExportableValue value = mapper.getExportableValue(slot);
+        for (Integer slotId : mapper.getSlotIDs()) {
+            ExportableValue value = mapper.getExportableValue(slotId);
             if (value instanceof JavaArgumentIdentifier arg) {
-                arguments.put(slot, arg);
+                arguments.put(slotId, arg);
             } else if (value instanceof JavaFieldIdentifier field) {
-                fields.put(slot, field);
+                fields.put(slotId, field);
             }
         }
 
@@ -227,16 +227,16 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         // Get all possible values for each field
         Map<Integer, List<Object>> fieldValues = new HashMap<>();
         for (Map.Entry<Integer, JavaFieldIdentifier> entry : fields.entrySet()) {
-            Integer slot = entry.getKey();
-            Set<?> values = mapper.getSlotValues(slot);
-            fieldValues.put(slot, new ArrayList<>(values));
+            Integer slotId = entry.getKey();
+            Set<?> values = mapper.getSlotValues(slotId);
+            fieldValues.put(slotId, new ArrayList<>(values));
         }
 
         // Generate combinations (limit configurable via context to avoid explosion)
         if (!fieldValues.isEmpty()) {
-            List<Integer> slots = new ArrayList<>(fieldValues.keySet());
+            List<Integer> slotIDs = new ArrayList<>(fieldValues.keySet());
             int maxCombinations = context != null ? context.getMaxFieldCombinations() : 20;
-            generateCombinationsRecursive(slots, 0, new HashMap<>(), fieldValues, combinations, maxCombinations);
+            generateCombinationsRecursive(slotIDs, 0, new HashMap<>(), fieldValues, combinations, maxCombinations);
         }
 
         return combinations;
@@ -249,22 +249,22 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         // Get all possible values for each argument
         Map<Integer, List<Object>> argumentValues = new HashMap<>();
         for (Map.Entry<Integer, JavaArgumentIdentifier> entry : arguments.entrySet()) {
-            Integer slot = entry.getKey();
-            Set<?> values = mapper.getSlotValues(slot);
-            argumentValues.put(slot, new ArrayList<>(values));
+            Integer slotId = entry.getKey();
+            Set<?> values = mapper.getSlotValues(slotId);
+            argumentValues.put(slotId, new ArrayList<>(values));
         }
         
         // Generate combinations (limit configurable via context)
         if (!argumentValues.isEmpty()) {
-            List<Integer> slots = new ArrayList<>(argumentValues.keySet());
+            List<Integer> slotIDs = new ArrayList<>(argumentValues.keySet());
             int maxCombinations = context != null ? context.getMaxArgumentCombinations() : 10;
-            generateCombinationsRecursive(slots, 0, new HashMap<>(), argumentValues, combinations, maxCombinations);
+            generateCombinationsRecursive(slotIDs, 0, new HashMap<>(), argumentValues, combinations, maxCombinations);
         }
         
         return combinations;
     }
     
-    private void generateCombinationsRecursive(List<Integer> slots, int index, 
+    private void generateCombinationsRecursive(List<Integer> slotIDs, int index, 
                                              Map<Integer, Object> current,
                                              Map<Integer, List<Object>> allValues,
                                              List<Map<Integer, Object>> combinations,
@@ -273,18 +273,18 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
             return;
         }
         
-        if (index >= slots.size()) {
+        if (index >= slotIDs.size()) {
             combinations.add(new HashMap<>(current));
             return;
         }
         
-        Integer slot = slots.get(index);
-        List<Object> values = allValues.get(slot);
+        Integer slotId = slotIDs.get(index);
+        List<Object> values = allValues.get(slotId);
         
         for (Object value : values) {
-            current.put(slot, value);
-            generateCombinationsRecursive(slots, index + 1, current, allValues, combinations, maxCombinations);
-            current.remove(slot);
+            current.put(slotId, value);
+            generateCombinationsRecursive(slotIDs, index + 1, current, allValues, combinations, maxCombinations);
+            current.remove(slotId);
             
             if (combinations.size() >= maxCombinations) {
                 break;
@@ -297,10 +297,10 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         Map<Integer, Object> fieldValues = new HashMap<>();
         
         for (Map.Entry<Integer, JavaFieldIdentifier> entry : fields.entrySet()) {
-            Integer slot = entry.getKey();
-            Set<?> values = mapper.getSlotValues(slot);
+            Integer slotId = entry.getKey();
+            Set<?> values = mapper.getSlotValues(slotId);
             if (!values.isEmpty()) {
-                fieldValues.put(slot, values.iterator().next()); // Take first value
+                fieldValues.put(slotId, values.iterator().next()); // Take first value
             }
         }
         

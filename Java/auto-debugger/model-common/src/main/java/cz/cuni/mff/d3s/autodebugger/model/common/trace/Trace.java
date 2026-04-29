@@ -16,124 +16,124 @@ public class Trace implements Serializable {
   private final Map<Integer, Set<String>> stringValues = new HashMap<>();
   private final Map<Integer, Set<ObjectSnapshot>> objectValues = new HashMap<>();
 
-  public void addByteValue(int slot, byte value) {
-    if (byteValues.containsKey(slot)) {
-      byteValues.get(slot).add(value);
+  public void addByteValue(int slotId, byte value) {
+    if (byteValues.containsKey(slotId)) {
+      byteValues.get(slotId).add(value);
     } else {
-      byteValues.put(slot, new HashSet<>(List.of(value)));
+      byteValues.put(slotId, new HashSet<>(List.of(value)));
     }
   }
 
-  public void addCharValue(int slot, char value) {
-    if (charValues.containsKey(slot)) {
-      charValues.get(slot).add(value);
+  public void addCharValue(int slotId, char value) {
+    if (charValues.containsKey(slotId)) {
+      charValues.get(slotId).add(value);
     } else {
-      charValues.put(slot, new HashSet<>(List.of(value)));
+      charValues.put(slotId, new HashSet<>(List.of(value)));
     }
   }
 
-  public void addShortValue(int slot, short value) {
-    if (shortValues.containsKey(slot)) {
-      shortValues.get(slot).add(value);
+  public void addShortValue(int slotId, short value) {
+    if (shortValues.containsKey(slotId)) {
+      shortValues.get(slotId).add(value);
     } else {
-      shortValues.put(slot, new HashSet<>(List.of(value)));
+      shortValues.put(slotId, new HashSet<>(List.of(value)));
     }
   }
 
-  public void addIntValue(int slot, int value) {
-    if (intValues.containsKey(slot)) {
-      intValues.get(slot).add(value);
+  public void addIntValue(int slotId, int value) {
+    if (intValues.containsKey(slotId)) {
+      intValues.get(slotId).add(value);
     } else {
-      intValues.put(slot, new HashSet<>(List.of(value)));
+      intValues.put(slotId, new HashSet<>(List.of(value)));
     }
   }
 
-  public void addLongValue(int slot, long value) {
-    if (longValues.containsKey(slot)) {
-      longValues.get(slot).add(value);
+  public void addLongValue(int slotId, long value) {
+    if (longValues.containsKey(slotId)) {
+      longValues.get(slotId).add(value);
     } else {
-      longValues.put(slot, new HashSet<>(List.of(value)));
+      longValues.put(slotId, new HashSet<>(List.of(value)));
     }
   }
 
-  public void addFloatValue(int slot, float value) {
-    if (floatValues.containsKey(slot)) {
-      floatValues.get(slot).add(value);
+  public void addFloatValue(int slotId, float value) {
+    if (floatValues.containsKey(slotId)) {
+      floatValues.get(slotId).add(value);
     } else {
-      floatValues.put(slot, new HashSet<>(List.of(value)));
+      floatValues.put(slotId, new HashSet<>(List.of(value)));
     }
   }
 
-  public void addDoubleValue(int slot, double value) {
-    if (doubleValues.containsKey(slot)) {
-      doubleValues.get(slot).add(value);
+  public void addDoubleValue(int slotId, double value) {
+    if (doubleValues.containsKey(slotId)) {
+      doubleValues.get(slotId).add(value);
     } else {
-      doubleValues.put(slot, new HashSet<>(List.of(value)));
+      doubleValues.put(slotId, new HashSet<>(List.of(value)));
     }
   }
 
-  public void addBooleanValue(int slot, boolean value) {
-    if (booleanValues.containsKey(slot)) {
-      booleanValues.get(slot).add(value);
+  public void addBooleanValue(int slotId, boolean value) {
+    if (booleanValues.containsKey(slotId)) {
+      booleanValues.get(slotId).add(value);
     } else {
-      booleanValues.put(slot, new HashSet<>(List.of(value)));
+      booleanValues.put(slotId, new HashSet<>(List.of(value)));
     }
   }
 
-  public void addStringValue(int slot, String value) {
-    if (stringValues.containsKey(slot)) {
-      stringValues.get(slot).add(value);
+  public void addStringValue(int slotId, String value) {
+    if (stringValues.containsKey(slotId)) {
+      stringValues.get(slotId).add(value);
     } else {
-      stringValues.put(slot, new HashSet<>(List.of(value)));
+      stringValues.put(slotId, new HashSet<>(List.of(value)));
     }
   }
 
-  public void addObjectValue(int slot, ObjectSnapshot value) {
-    if (objectValues.containsKey(slot)) {
-      objectValues.get(slot).add(value);
+  public void addObjectValue(int slotId, ObjectSnapshot value) {
+    if (objectValues.containsKey(slotId)) {
+      objectValues.get(slotId).add(value);
     } else {
-      objectValues.put(slot, new HashSet<>(List.of(value)));
+      objectValues.put(slotId, new HashSet<>(List.of(value)));
     }
   }
 
-  public Set<Byte> getByteValues(int slot) {
-    return byteValues.getOrDefault(slot, Collections.emptySet());
+  public Set<Byte> getByteValues(int slotId) {
+    return byteValues.getOrDefault(slotId, Collections.emptySet());
   }
 
-  public Set<Character> getCharValues(int slot) {
-    return charValues.getOrDefault(slot, Collections.emptySet());
+  public Set<Character> getCharValues(int slotId) {
+    return charValues.getOrDefault(slotId, Collections.emptySet());
   }
 
-  public Set<Short> getShortValues(int slot) {
-    return shortValues.getOrDefault(slot, Collections.emptySet());
+  public Set<Short> getShortValues(int slotId) {
+    return shortValues.getOrDefault(slotId, Collections.emptySet());
   }
 
-  public Set<Integer> getIntValues(int slot) {
-    return intValues.getOrDefault(slot, Collections.emptySet());
+  public Set<Integer> getIntValues(int slotId) {
+    return intValues.getOrDefault(slotId, Collections.emptySet());
   }
 
-  public Set<Long> getLongValues(int slot) {
-    return longValues.getOrDefault(slot, Collections.emptySet());
+  public Set<Long> getLongValues(int slotId) {
+    return longValues.getOrDefault(slotId, Collections.emptySet());
   }
 
-  public Set<Float> getFloatValues(int slot) {
-    return floatValues.getOrDefault(slot, Collections.emptySet());
+  public Set<Float> getFloatValues(int slotId) {
+    return floatValues.getOrDefault(slotId, Collections.emptySet());
   }
 
-  public Set<Double> getDoubleValues(int slot) {
-    return doubleValues.getOrDefault(slot, Collections.emptySet());
+  public Set<Double> getDoubleValues(int slotId) {
+    return doubleValues.getOrDefault(slotId, Collections.emptySet());
   }
 
-  public Set<Boolean> getBooleanValues(int slot) {
-    return booleanValues.getOrDefault(slot, Collections.emptySet());
+  public Set<Boolean> getBooleanValues(int slotId) {
+    return booleanValues.getOrDefault(slotId, Collections.emptySet());
   }
 
-  public Set<String> getStringValues(int slot) {
-    return stringValues.getOrDefault(slot, Collections.emptySet());
+  public Set<String> getStringValues(int slotId) {
+    return stringValues.getOrDefault(slotId, Collections.emptySet());
   }
 
-  public Set<ObjectSnapshot> getObjectValues(int slot) {
-    return objectValues.getOrDefault(slot, Collections.emptySet());
+  public Set<ObjectSnapshot> getObjectValues(int slotId) {
+    return objectValues.getOrDefault(slotId, Collections.emptySet());
   }
 
   public void printSlotValues() {
@@ -151,7 +151,7 @@ public class Trace implements Serializable {
 
   private <T> void printSlotValues(final Map<Integer, Set<T>> slotValues) {
     for (Map.Entry<Integer, Set<T>> entry : slotValues.entrySet()) {
-      System.out.println("Slot: " + entry.getKey() + " values: " + entry.getValue());
+      System.out.println("Slot ID: " + entry.getKey() + " values: " + entry.getValue());
     }
   }
 }
