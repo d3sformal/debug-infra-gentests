@@ -480,7 +480,7 @@ public class Collector extends RemoteAnalysis {
     }
 
     System.out.println(String.format(messageFormat, processName,
-        "Built IndexedTrace with " + indexedTrace.getAllSlots().size() + " slots and " +
+        "Built IndexedTrace with " + indexedTrace.getAllSlotIDs().size() + " slots and " +
         indexedTrace.getTotalEventCount() + " events"));
 
     return indexedTrace;
