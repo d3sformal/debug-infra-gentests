@@ -114,7 +114,7 @@ public class AnthropicClient {
                     .model(getClaudeModel())
                     .maxTokens(config.getMaxTokens())
                     .system("You are an expert software developer who specializes in writing robust, well-structured test code. " +
-                            "Generate clean, comprehensive test code without explanations or markdown formatting.")
+                            "Generate clean, comprehensive test code without explanations and markdown formatting.")
                     .addUserMessage(promptText)
                     .build();
 

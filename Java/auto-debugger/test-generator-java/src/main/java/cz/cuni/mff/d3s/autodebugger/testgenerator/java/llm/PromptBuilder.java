@@ -20,12 +20,12 @@ public class PromptBuilder {
         StringBuilder prompt = new StringBuilder();
 
         // Task definition - clear and direct for Claude
-        prompt.append("Generate a comprehensive suite of ").append(context.getTestFramework())
+        prompt.append("Generate a suite of ").append(context.getTestFramework())
               .append(" tests for the method `").append(context.getTargetMethodSignature()).append("`.\n\n");
 
         // Requirements section - Claude works well with structured requirements
         prompt.append("## Requirements\n");
-        prompt.append("- Create test cases that cover all possible valid combinations of argument values based on provided runtime data\n");
+        prompt.append("- Create test cases that cover all possible valid combinations of argument values based on provided runtime data, and nothing else\n");
         prompt.append("- Use the provided runtime data to create assertions that verify observed outcomes\n");
         prompt.append("- Generate test methods with descriptive, meaningful names\n");
         prompt.append("- Follow ").append(context.getTestFramework()).append(" best practices and conventions\n");

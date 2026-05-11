@@ -111,7 +111,7 @@ public class JavaTestGenerationContextFactory extends TestGenerationContextFacto
                 .testFramework("junit5")
                 .maxTestCount(10)
                 .generateEdgeCases(true)
-                .generateNegativeTests(true)
+                .generateNegativeTests(false)
                 .namingStrategy(cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestNamingStrategy.DESCRIPTIVE)
                 .generateParameterizedTests(true)
                 .includePerformanceAssertions(false)

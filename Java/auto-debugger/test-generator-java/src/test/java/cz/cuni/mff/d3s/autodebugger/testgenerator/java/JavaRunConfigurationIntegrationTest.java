@@ -76,7 +76,7 @@ class JavaRunConfigurationIntegrationTest {
         assertEquals("junit5", context.getTestFramework());
         assertEquals(50, context.getMaxTestCount());
         assertTrue(context.isGenerateEdgeCases());
-        assertTrue(context.isGenerateNegativeTests());
+        assertFalse(context.isGenerateNegativeTests());
         assertEquals(TestNamingStrategy.DESCRIPTIVE, context.getNamingStrategy());
     }
 

@@ -34,7 +34,7 @@ public class TestGenerationSettings {
      * Whether to generate negative test cases (testing error conditions).
      */
     @Builder.Default
-    private final boolean generateNegativeTests = true;
+    private final boolean generateNegativeTests = false;
     
     /**
      * Test naming strategy to use.

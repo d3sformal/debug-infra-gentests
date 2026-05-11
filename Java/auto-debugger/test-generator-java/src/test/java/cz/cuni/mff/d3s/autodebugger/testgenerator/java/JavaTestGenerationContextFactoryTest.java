@@ -70,7 +70,7 @@ class JavaTestGenerationContextFactoryTest {
         assertEquals("junit5", context.getTestFramework());
         assertEquals(50, context.getMaxTestCount());
         assertTrue(context.isGenerateEdgeCases());
-        assertTrue(context.isGenerateNegativeTests());
+        assertFalse(context.isGenerateNegativeTests());
         assertEquals(TestNamingStrategy.DESCRIPTIVE, context.getNamingStrategy());
     }
 
@@ -136,7 +136,7 @@ class JavaTestGenerationContextFactoryTest {
         assertEquals("junit5", context.getTestFramework());
         assertEquals(10, context.getMaxTestCount());
         assertTrue(context.isGenerateEdgeCases());
-        assertTrue(context.isGenerateNegativeTests());
+        assertFalse(context.isGenerateNegativeTests());
         assertEquals(TestNamingStrategy.DESCRIPTIVE, context.getNamingStrategy());
         assertTrue(context.isGenerateParameterizedTests());
         assertFalse(context.isIncludePerformanceAssertions());
