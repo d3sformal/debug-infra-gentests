@@ -86,6 +86,17 @@ public class AnthropicClient {
 
             String response = callClaude(prompt);
             log.debug("Received response from Claude (length: {} chars)", response.length());
+
+            // eliminate opening and closing markers (starting with triple backticks ```) for code snippets in markdown produced by Claude LLM
+            // we remove the first line (e.g. ```java) and the last line (without \n)
+            if (response.startsWith("```")) {
+                int firstNewLinePos = response.indexOf(System.lineSeparator());
+                if (firstNewLinePos != -1) response = response.substring(firstNewLinePos + System.lineSeparator().length());
+            }
+            if (response.endsWith("```")) {
+                response = response.substring(0, response.length()-3);
+            }
+
             return response;
 
         } catch (LLMResponseException | AnthropicApiException e) {
