@@ -56,7 +56,7 @@ public class LLMConfiguration {
      * Maximum number of refinement iterations.
      */
     @Builder.Default
-    private final int maxRefinementIterations = 3;
+    private final int maxRefinementIterations = 1;
 
     /**
      * Whether to validate generated code before returning.

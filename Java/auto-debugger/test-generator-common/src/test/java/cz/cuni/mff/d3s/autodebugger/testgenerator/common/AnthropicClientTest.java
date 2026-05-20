@@ -171,7 +171,7 @@ class AnthropicClientTest {
         // Code generation features should be enabled by default
         assertTrue(config.isEnableIterativeRefinement());
         assertTrue(config.isValidateGeneratedCode());
-        assertEquals(3, config.getMaxRefinementIterations());
+        assertEquals(1, config.getMaxRefinementIterations());
     }
 
     @Test
