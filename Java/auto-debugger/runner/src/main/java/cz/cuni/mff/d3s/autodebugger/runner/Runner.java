@@ -83,6 +83,6 @@ public class Runner {
     log.info("Test generation completed. {} test files: {}", testSuite.getTestFiles().size(), testSuite.getTestFiles());
 
     var testResults = orchestrator.runTests(testSuite);
-    log.info("Test execution completed. Results: {}", testResults);
+    log.info("Test execution completed. Overall results: {}. Details:\n{}", testResults, testResults.printFailedTestsNames());
   }
 }
