@@ -7,6 +7,21 @@ Assumes
 **assuming pwd is this file's parent**
 **assuming keepassxc is at the relative path ../../../../keepassxc**
 
+
+## How to run ("no modifications" to the build system)
+
+```shell
+cd ./run-without-modifications
+mkdir -p tmp-tracing
+./e2e-nodiff-cli-run.sh ./tmp-tracing ../../../../../../keepassxc "src/core/Pass"
+```
+
+Note that the discriminating pattern `"src/core/Pass"` is required (otherwise you will only encounter a limitation - file path hash collisions). This pattern matches against all the arguments passed to the build system. Thus, if you're tinkering, ensure it is concrete enough.
+
+This was added as a workaround since proper hash collision checking runs into issues due to compile process parallelization.
+
+The process creates 2 scripts that instrument files (selected by the pattern above) for call tracing and argument capture/testing by adding compile flags and executing `clang++` with the extended arguments. The scripts are then used (via cmake) in the place of the "C++ compiler".
+
 ## How to run (cli version with example captured data)
 
 ```shell
