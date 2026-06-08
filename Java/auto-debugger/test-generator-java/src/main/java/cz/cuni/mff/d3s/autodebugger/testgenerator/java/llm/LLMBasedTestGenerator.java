@@ -18,6 +18,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.*;
 
 import com.github.javaparser.StaticJavaParser;
+import com.github.javaparser.ParserConfiguration;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
@@ -349,6 +350,8 @@ public class LLMBasedTestGenerator implements TestGenerator {
         StringBuilder sb = new StringBuilder();
 
         try {
+            StaticJavaParser.getParserConfiguration().setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_21);
+
             CompilationUnit sourceCU = StaticJavaParser.parse(sourceCodePath);
 
             for (ClassOrInterfaceDeclaration clsDecl : sourceCU.findAll(ClassOrInterfaceDeclaration.class))

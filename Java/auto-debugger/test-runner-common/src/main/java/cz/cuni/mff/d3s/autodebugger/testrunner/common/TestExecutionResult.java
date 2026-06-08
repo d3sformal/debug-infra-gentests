@@ -117,7 +117,7 @@ public class TestExecutionResult {
         StringBuilder sb = new StringBuilder();
 
         for (String ftn : failedTestsNames) {
-            sb.append("Failed test: ").append(ftn).append("\n");
+            sb.append("\tFailed test ").append(ftn).append("\n");
         }
 
         return sb.toString();
