@@ -399,9 +399,20 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
 
         sb.append("\n        // Act\n");
 
+        /// We gemerate a try-catch block around the method call (execution of the tested method)
+        // This is mainly for the methods that declare a checked exception possibly thrown during their execution
+        sb.append("\n        try {\n");
+
         // Generate method call
         String methodCall = generateMethodCall(scenario, instanceName, isVoidMethod);
         sb.append("        ").append(methodCall).append("\n");
+
+        // An exception causes a test failure
+        sb.append("\n        } catch (Exception ex) {\n");
+        sb.append("\n            // No exception should be thrown during method execution\n");
+        sb.append("\n            // Here we check and enforce this property, effectively\n");
+        sb.append("\n            fail(\"Exception: \" + ex.getMessage());\n");
+        sb.append("\n        }\n");
 
         sb.append("\n        // Assert\n");
         if (isVoidMethod) {
