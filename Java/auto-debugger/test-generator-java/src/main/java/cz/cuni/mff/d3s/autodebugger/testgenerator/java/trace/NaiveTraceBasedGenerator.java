@@ -403,7 +403,7 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         // Create the object instance (that means, instance variable for the class under test)
         // Set up field values if any (through arguments of the constructor with the right signature)
         sb.append("        // Initialize ").append(instanceName).append(" with appropriate constructor (factory method, etc)\n");
-        sb.append("        ").append(instanceName).append(" = new ").append(instanceCreatingStatement).append("(");
+        sb.append("        ").append(instanceName).append(" = ").append(instanceCreatingStatement).append("(");
         boolean first = true;
         for (Map.Entry<Integer, Object> field : scenario.fieldValues.entrySet()) {
             if (!first) sb.append(", ");
@@ -418,13 +418,23 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
 
         sb.append("\n        // Act\n");
 
-        /// We gemerate a try-catch block around the method call (execution of the tested method)
+        /// We gemerate a try-catch block around the method call (execution of the tested method) and checks (asserts) performed over the result
         // This is mainly for the methods that declare a checked exception possibly thrown during their execution
         sb.append("\n        try {\n");
 
         // Generate method call
         String methodCall = generateMethodCall(scenario, instanceName, isVoidMethod);
-        sb.append("        ").append(methodCall).append("\n");
+        sb.append("            ").append(methodCall).append("\n");
+
+        sb.append("\n            // Assert\n");
+        if (isVoidMethod) {
+            sb.append("            // Method returns void - test verifies execution completes without exception\n");
+            sb.append("            // Note: Add assertions to verify side effects (e.g., field changes)\n");
+        } else {
+            sb.append("            // Basic assertion to verify method execution completed without exception\n");
+            sb.append("            assertNotNull(result, \"Method should return a non-null result\");\n");
+            sb.append("            // Note: Add more specific assertions based on expected behavior\n");
+        }
 
         // An exception causes a test failure
         sb.append("\n        } catch (Exception ex) {\n");
@@ -432,16 +442,6 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         sb.append("\n            // Here we check and enforce this property, effectively\n");
         sb.append("\n            fail(\"Exception: \" + ex.getMessage());\n");
         sb.append("\n        }\n");
-
-        sb.append("\n        // Assert\n");
-        if (isVoidMethod) {
-            sb.append("        // Method returns void - test verifies execution completes without exception\n");
-            sb.append("        // Note: Add assertions to verify side effects (e.g., field changes)\n");
-        } else {
-            sb.append("        // Basic assertion to verify method execution completed without exception\n");
-            sb.append("        assertNotNull(result, \"Method should return a non-null result\");\n");
-            sb.append("        // Note: Add more specific assertions based on expected behavior\n");
-        }
 
         sb.append("    }\n");
 
@@ -458,7 +458,7 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
             CompilationUnit sourceCU = StaticJavaParser.parse(targetClassSourceFilePath);
 
             ClassOrInterfaceDeclaration targetClsDecl = sourceCU.findAll(ClassOrInterfaceDeclaration.class).stream()
-                    .filter(cls -> cls.getFullyQualifiedName().equals(targetClass)).findFirst()
+                    .filter(cls -> cls.getFullyQualifiedName().get().equals(targetClass)).findFirst()
                     .orElseThrow(() -> new TestGenerationWorkflowException("Cannot find the class " + targetClass + " in source file " + targetClassSourceFilePath));
 
             // Having the right class, we are looking for (in this order):
@@ -470,10 +470,10 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
                 boolean isFactoryMth = false;
 
                 // constructor with the same name as the class
-                if (mthDecl.getName().equals(targetClassSimpleName)) isConstructor = true;
+                if (mthDecl.getName().asString().equals(targetClassSimpleName)) isConstructor = true;
 
                 // factory method that returns objects of the class
-                if (mthDecl.getType().asString().equals(targetClass)) isFactoryMth = true;
+                if (mthDecl.getType().asString().equals(targetClassSimpleName)) isFactoryMth = true;
 
                 if (isConstructor || isFactoryMth) {
                     boolean matchingParamSignature = true;
@@ -488,9 +488,9 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
                     if (isFactoryMth && matchingParamSignature) return targetClassSimpleName + "." + mthDecl.getName();
                 }
             }
-        } catch (Exception e) {
-            // We just log the error and return the fallback result in this case
-            log.error("Cannot parse the source code file " + targetClassSourceFilePath + " when looking for constructors and factory methods in a target class");
+        } catch (Exception ex) {
+            // We just log the error and return the fallback result in this case (otherwise many tests depending on temporary files/directories would crash)
+            log.error("Cannot parse the source code file " + targetClassSourceFilePath + " when looking for constructors and factory methods in a target class: " + ex.getMessage());
         }
 
         // fallback: call of the default non-parametric constructor
@@ -595,7 +595,16 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         } else if (value instanceof Double) {
             String doubleStr = value.toString();
             // Ensure double literals have decimal point
-            if (!doubleStr.contains(".") && !doubleStr.contains("E") && !doubleStr.contains("e")) {
+            if (doubleStr.equals("NaN")) {
+                doubleStr = "Double.NaN";
+            }
+            else if (doubleStr.equals("Infinity")) {
+                doubleStr = "Double.POSITIVE_INFINITY";
+            }
+            else if (doubleStr.equals("-Infinity")) {
+                doubleStr = "Double.NEGATIVE_INFINITY";
+            }
+            else if (!doubleStr.contains(".") && !doubleStr.contains("E") && !doubleStr.contains("e")) {
                 doubleStr += ".0";
             }
             return doubleStr;
