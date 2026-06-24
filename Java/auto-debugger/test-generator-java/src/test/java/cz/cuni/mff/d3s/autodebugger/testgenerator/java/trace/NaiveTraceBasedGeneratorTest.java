@@ -357,7 +357,7 @@ class NaiveTraceBasedGeneratorTest {
                 .namingStrategy(TestNamingStrategy.SIMPLE)
                 .build();
 
-        List<Path> generatedFiles = generator.generateTests(trace, context);
+        List<Path> generatedFiles = generator.generateTests(trace, tempDir, context);
 
         assertNotNull(generatedFiles);
         assertEquals(1, generatedFiles.size(), "Should generate exactly one test file");

@@ -11,8 +11,17 @@ import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaMethodIdentifier;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaValueIdentifier;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.common.*;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.java.JavaTestGenerationContextFactory;
+import cz.cuni.mff.d3s.autodebugger.testgenerator.java.trace.exceptions.TestGenerationWorkflowException;
+
 import lombok.extern.slf4j.Slf4j;
 
+import com.github.javaparser.StaticJavaParser;
+import com.github.javaparser.ParserConfiguration;
+import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
+import com.github.javaparser.ast.body.MethodDeclaration;
+
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -57,14 +66,8 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
 
     @Override
     public List<Path> generateTests(Trace trace) {
-        return generateTests(trace, createDefaultContext());
-    }
-
-    @Override
-    public List<Path> generateTests(Trace trace, Path sourceCodePath, TestGenerationContext context) {
-        log.info("Generating naive trace-based tests with source code path: {}", sourceCodePath);
-        // Source code path is not used by naive generator, delegate to context-based method
-        return generateTests(trace, context);
+        log.info("Generating naive trace-based tests without additional context");
+        throw new TestGenerationWorkflowException("Naive trace-based test generation requires source code path and context. Use generateTests(Trace, Path, TestGenerationContext) instead.");
     }
 
     /**
@@ -77,7 +80,7 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
             // Use Java-specific factory for better information extraction
             TestGenerationContext context = JavaTestGenerationContextFactory
                     .createFromJavaRunConfiguration(javaRunConfiguration);
-            return generateTests(trace, context);
+            return generateTests(trace, configuration.getSourceCodePath(), context);
         } else {
             // Fallback to default implementation
             return TestGenerator.super.generateTests(trace, configuration);
@@ -108,10 +111,14 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
      * This method provides the core functionality for test generation.
      *
      * @param trace The runtime trace data
+     * @param sourceCodeDirectory The source code directory containing the target class
      * @param context The test generation context
      * @return List of generated test file paths
      */
-    public List<Path> generateTests(Trace trace, TestGenerationContext context) {
+    @Override
+    public List<Path> generateTests(Trace trace, Path sourceCodeDirectory, TestGenerationContext context) {
+        log.info("Generating naive trace-based tests with source code path: {}", sourceCodeDirectory);
+
         this.context = context;
         this.objectImports = new HashSet<>();  // Reset object imports for each test generation
         String methodSig = context.getTargetMethod() != null
@@ -137,7 +144,7 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
             }
 
             // Generate test class
-            String testClassContent = generateTestClass(scenarios);
+            String testClassContent = generateTestClass(scenarios, sourceCodeDirectory);
 
             // Write test file
             Path testFile = writeTestFile(testClassContent);
@@ -314,14 +321,24 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         return key.toString();
     }
     
-    private String generateTestClass(List<TestScenario> scenarios) {
+    private String generateTestClass(List<TestScenario> scenarios, Path sourceCodeDirectory) {
         // First, generate all test methods to collect object imports
         String targetClass = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
         String instanceName = targetClass.substring(targetClass.lastIndexOf('.') + 1).toLowerCase();
 
+        // look for the appropriate constructor (factory method, etc) based on field types and signature
+        List<String> fieldTypes = new ArrayList<>();
+        for (Integer slotId : identifierMapping.keySet()) {
+            ExportableValue value = identifierMapping.get(slotId);
+            if (value instanceof JavaFieldIdentifier field) {
+                fieldTypes.add(field.getType());
+            }
+        }
+		String instanceCreatingStatement = buildMatchingInstanceCreationStatement(targetClass, sourceCodeDirectory, fieldTypes);
+
         StringBuilder testMethodsBuilder = new StringBuilder();
         for (TestScenario scenario : scenarios) {
-            testMethodsBuilder.append(generateTestMethod(scenario, instanceName));
+            testMethodsBuilder.append(generateTestMethod(scenario, instanceCreatingStatement, instanceName));
             testMethodsBuilder.append("\n");
         }
         String testMethods = testMethodsBuilder.toString();
@@ -362,12 +379,7 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         if (!isStaticMethod()) {
             sb.append("    private ").append(targetClass).append(" ").append(instanceName).append(";\n\n");
 
-            // Setup method
-            sb.append("    @BeforeEach\n");
-            sb.append("    void setUp() {\n");
-            sb.append("        // TODO: Initialize ").append(instanceName).append(" with appropriate constructor\n");
-            sb.append("        // ").append(instanceName).append(" = new ").append(targetClass).append("();\n");
-            sb.append("    }\n\n");
+            // We are doing setup of the object instance in each test method, and not here via common setUp method, because we need to consider field values in the respective test scenario
         }
 
         // Add the pre-generated test methods
@@ -378,7 +390,7 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         return sb.toString();
     }
     
-    private String generateTestMethod(TestScenario scenario, String instanceName) {
+    private String generateTestMethod(TestScenario scenario, String instanceCreatingStatement, String instanceName) {
         StringBuilder sb = new StringBuilder();
 
         String methodName = generateTestMethodName(scenario);
@@ -388,14 +400,21 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         sb.append("    void ").append(methodName).append("() {\n");
         sb.append("        // Arrange\n");
 
-        // Set up field values if any
+        // Create the object instance (that means, instance variable for the class under test)
+        // Set up field values if any (through arguments of the constructor with the right signature)
+        sb.append("        // Initialize ").append(instanceName).append(" with appropriate constructor (factory method, etc)\n");
+        sb.append("        ").append(instanceName).append(" = new ").append(instanceCreatingStatement).append("(");
+        boolean first = true;
         for (Map.Entry<Integer, Object> field : scenario.fieldValues.entrySet()) {
+            if (!first) sb.append(", ");
             ExportableValue fieldId = identifierMapping.get(field.getKey());
             if (fieldId instanceof JavaFieldIdentifier fieldIdentifier) {
-                sb.append("        // TODO: Set field ").append(fieldIdentifier.getFieldName())
-                  .append(" to ").append(field.getValue()).append("\n");
+                // Setting the field value (field name is not important here)
+                sb.append(formatValueForCode(field.getValue()));
             }
+            first = false;
         }
+        sb.append(");\n");
 
         sb.append("\n        // Act\n");
 
@@ -427,6 +446,54 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         sb.append("    }\n");
 
         return sb.toString();
+    }
+
+    private String buildMatchingInstanceCreationStatement(String targetClass, Path sourceCodeDirectory, List<String> fieldTypes) {
+        Path targetClassSourceFilePath = sourceCodeDirectory.resolve(targetClass.replace('.', File.separatorChar) + ".java");
+        String targetClassSimpleName = targetClass.substring(targetClass.lastIndexOf('.') + 1);
+
+        try {
+            StaticJavaParser.getParserConfiguration().setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_21);
+
+            CompilationUnit sourceCU = StaticJavaParser.parse(targetClassSourceFilePath);
+
+            ClassOrInterfaceDeclaration targetClsDecl = sourceCU.findAll(ClassOrInterfaceDeclaration.class).stream()
+                    .filter(cls -> cls.getFullyQualifiedName().equals(targetClass)).findFirst()
+                    .orElseThrow(() -> new TestGenerationWorkflowException("Cannot find the class " + targetClass + " in source file " + targetClassSourceFilePath));
+
+            // Having the right class, we are looking for (in this order):
+            //   1) Public insstance constructor with a signature of parameters that matches given field types
+            //   2) Static factory method that returns an object of the given type and its signature of parameters matches field types
+
+            for (MethodDeclaration mthDecl : targetClsDecl.findAll(MethodDeclaration.class).stream().filter(MethodDeclaration::isPublic).toList()) {
+                boolean isConstructor = false;
+                boolean isFactoryMth = false;
+
+                // constructor with the same name as the class
+                if (mthDecl.getName().equals(targetClassSimpleName)) isConstructor = true;
+
+                // factory method that returns objects of the class
+                if (mthDecl.getType().asString().equals(targetClass)) isFactoryMth = true;
+
+                if (isConstructor || isFactoryMth) {
+                    boolean matchingParamSignature = true;
+                    if (fieldTypes.size() == mthDecl.getParameters().size()) {
+                        for (int i = 0; i < fieldTypes.size(); i++) {
+                            if ( ! fieldTypes.get(i).equals(mthDecl.getParameters().get(i).getType().asString()) ) matchingParamSignature = false;
+                        }
+                    }
+                    else matchingParamSignature = false;
+
+                    if (isConstructor && matchingParamSignature) return "new " + mthDecl.getName();
+                    if (isFactoryMth && matchingParamSignature) return targetClassSimpleName + "." + mthDecl.getName();
+                }
+            }
+        } catch (Exception e) {
+            throw new TestGenerationWorkflowException("Cannot parse the source code file " + sourceCodeDirectory + ": " + e.getMessage());
+        }
+
+        // fallback: call of the default non-parametric constructor
+        return "new " + targetClassSimpleName;
     }
 
     private boolean isVoidReturnType() {

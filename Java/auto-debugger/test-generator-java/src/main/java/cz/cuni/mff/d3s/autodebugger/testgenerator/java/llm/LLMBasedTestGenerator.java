@@ -354,11 +354,9 @@ public class LLMBasedTestGenerator implements TestGenerator {
 
             CompilationUnit sourceCU = StaticJavaParser.parse(sourceCodePath);
 
-            for (ClassOrInterfaceDeclaration clsDecl : sourceCU.findAll(ClassOrInterfaceDeclaration.class))
-            {
+            for (ClassOrInterfaceDeclaration clsDecl : sourceCU.findAll(ClassOrInterfaceDeclaration.class)) {
                 // process few basic modifiers (just those relevant for generating LLM prompt)
-                for (Modifier clsMdf : clsDecl.getModifiers())
-                {
+                for (Modifier clsMdf : clsDecl.getModifiers()) {
                     if (clsMdf.getKeyword() == Modifier.Keyword.PUBLIC) sb.append("public ");
                     if (clsMdf.getKeyword() == Modifier.Keyword.STATIC) sb.append("static ");
                 }

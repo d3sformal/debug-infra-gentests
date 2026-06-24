@@ -134,7 +134,7 @@ class NaiveTraceBasedGeneratorRunConfigurationTest {
 
         // When - generate tests both ways
         List<Path> configBasedFiles = generator.generateTests(trace, runConfiguration);
-        List<Path> contextBasedFiles = generator.generateTests(trace, manualContext);
+        List<Path> contextBasedFiles = generator.generateTests(trace, tempDir, manualContext);
 
         // Then - both should succeed and produce similar results
         assertEquals(1, configBasedFiles.size());
