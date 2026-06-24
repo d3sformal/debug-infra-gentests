@@ -28,6 +28,7 @@ public class PromptBuilder {
         prompt.append("- Create test cases that cover all possible valid combinations of argument values based on provided runtime data, and nothing else\n");
         prompt.append("- Use the provided runtime data to create assertions that verify observed outcomes\n");
         prompt.append("- Generate test methods with descriptive, meaningful names\n");
+        prompt.append("- Do not add the annotation @DisplayName to test methods\n");
         prompt.append("- Follow ").append(context.getTestFramework()).append(" best practices and conventions\n");
         prompt.append("- Include proper imports and package declaration\n");
 
@@ -142,7 +143,7 @@ public class PromptBuilder {
         prompt.append("- Ensure all required imports are included\n");
         prompt.append("- Use ").append(context.getTestFramework()).append(" framework correctly\n\n");
         
-        prompt.append("Return only the corrected Java code:\n");
+        prompt.append("Return only the corrected Java code without explanations and markdown\n");
         
         return prompt.toString();
     }
