@@ -489,7 +489,8 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
                 }
             }
         } catch (Exception e) {
-            throw new TestGenerationWorkflowException("Cannot parse the source code file " + sourceCodeDirectory + ": " + e.getMessage());
+            // We just log the error and return the fallback result in this case
+            log.error("Cannot parse the source code file " + targetClassSourceFilePath + " when looking for constructors and factory methods in a target class");
         }
 
         // fallback: call of the default non-parametric constructor

@@ -114,7 +114,7 @@ class JavaTestGenerationContextFactoryTest {
         
         // Verify trace-based settings
         assertEquals("junit5", context.getTestFramework());
-        assertEquals(20, context.getMaxTestCount());
+        assertEquals(Integer.MAX_VALUE, context.getMaxTestCount());
         assertTrue(context.isGenerateEdgeCases());
         assertFalse(context.isGenerateNegativeTests()); // Trace data typically doesn't include error cases
         assertEquals(TestNamingStrategy.DESCRIPTIVE, context.getNamingStrategy());
@@ -134,7 +134,7 @@ class JavaTestGenerationContextFactoryTest {
         
         // Verify LLM-based settings
         assertEquals("junit5", context.getTestFramework());
-        assertEquals(10, context.getMaxTestCount());
+        assertEquals(Integer.MAX_VALUE, context.getMaxTestCount());
         assertTrue(context.isGenerateEdgeCases());
         assertFalse(context.isGenerateNegativeTests());
         assertEquals(TestNamingStrategy.DESCRIPTIVE, context.getNamingStrategy());
