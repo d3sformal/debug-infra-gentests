@@ -400,21 +400,23 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         sb.append("    void ").append(methodName).append("() {\n");
         sb.append("        // Arrange\n");
 
-        // Create the object instance (that means, instance variable for the class under test)
-        // Set up field values if any (through arguments of the constructor with the right signature)
-        sb.append("        // Initialize ").append(instanceName).append(" with appropriate constructor (factory method, etc)\n");
-        sb.append("        ").append(instanceName).append(" = ").append(instanceCreatingStatement).append("(");
-        boolean first = true;
-        for (Map.Entry<Integer, Object> field : scenario.fieldValues.entrySet()) {
-            if (!first) sb.append(", ");
-            ExportableValue fieldId = identifierMapping.get(field.getKey());
-            if (fieldId instanceof JavaFieldIdentifier fieldIdentifier) {
-                // Setting the field value (field name is not important here)
-                sb.append(formatValueForCode(field.getValue()));
+        if ( ! isStaticMethod() ) {
+            // Create the object instance (that means, instance variable for the class under test)
+            // Set up field values if any (through arguments of the constructor with the right signature)
+            sb.append("        // Initialize ").append(instanceName).append(" with appropriate constructor (factory method, etc)\n");
+            sb.append("        ").append(instanceName).append(" = ").append(instanceCreatingStatement).append("(");
+            boolean first = true;
+            for (Map.Entry<Integer, Object> field : scenario.fieldValues.entrySet()) {
+                if (!first) sb.append(", ");
+                ExportableValue fieldId = identifierMapping.get(field.getKey());
+                if (fieldId instanceof JavaFieldIdentifier fieldIdentifier) {
+                    // Setting the field value (field name is not important here)
+                    sb.append(formatValueForCode(field.getValue()));
+                }
+                first = false;
             }
-            first = false;
+            sb.append(");\n");
         }
-        sb.append(");\n");
 
         sb.append("\n        // Act\n");
 
