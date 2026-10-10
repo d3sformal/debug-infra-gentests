@@ -25,10 +25,10 @@ impl FunctionPacketDumper {
     let name = function_id.hex_string();
     let path = root.join(name);
     let f = File::create_new(&path).map_err(|e| {
-      anyhow!(e).context(format!(
-        "New function capture file creation failed: {:?}",
+      anyhow!(
+        "New function capture file creation failed: path: {:?} error: {e}",
         &path
-      ))
+      )
     })?;
     let b = BufWriter::with_capacity(buffer_capacity_hint, f);
 
@@ -41,11 +41,11 @@ impl FunctionPacketDumper {
   /// Dumps the raw packet
   ///
   /// Ok variant contains the total number of bytes written
-  pub fn dump(&mut self, packet_payload: &mut [u8]) -> Result<usize> {
+  pub fn dump(&mut self, packet_payload: &[u8]) -> Result<usize> {
     let n = self
       .underlying_file
       .write(&(packet_payload.len() as u32).to_le_bytes())
-      .map_err(|e| anyhow!(e).context("Packet length dump failed"))?;
+      .map_err(|e| anyhow!("Packet length dump failed: {e}"))?;
     self
       .underlying_file
       .write(packet_payload)
@@ -77,7 +77,7 @@ impl ModulePacketDumper {
     let dir_name = module_id.hex_string();
     let module_root = packet_root.join(dir_name.clone());
     std::fs::create_dir_all(&module_root)
-      .map_err(|e| anyhow!(e).context(format!("Folder creation: {dir_name}")))?;
+      .map_err(|e| anyhow!("Folder creation: {dir_name} failed: {e}"))?;
 
     let mut func_dumpers = HashMap::new();
 
@@ -110,24 +110,20 @@ impl ModulePacketDumper {
 /// dumps argument packet data to a persistent (filesystem) structure
 pub struct ArgPacketDumper {
   dumpers: HashMap<IntegralModId, ModulePacketDumper>,
-  _root: PathBuf,
+  root: PathBuf,
 }
 
 impl ArgPacketDumper {
-  /// creates a dumper that writes data into the root_out_dir directory
+  /// creates a dumper that writes data into the `root_out_dir` directory
   pub fn new(root_out_dir: &Path, module_maps: &ExtModuleMap, mem_limit: usize) -> Result<Self> {
     let mut result_map = HashMap::new();
 
     let capacity = (mem_limit / module_maps.modules().count().max(1)).max(4096 * 2);
 
     for module in module_maps.modules() {
-      let functions = module_maps.functions(*module);
-      ensure!(
-        functions.is_some(),
-        "Module {} did not map to any function set!",
-        **module
-      );
-      let mut functions = functions.unwrap();
+      let Some(mut functions) = module_maps.functions(*module) else {
+        bail!("Module {} did not map to any function set!", **module);
+      };
 
       result_map.insert(
         *module,
@@ -137,16 +133,19 @@ impl ArgPacketDumper {
 
     Ok(Self {
       dumpers: result_map,
-      _root: root_out_dir.to_owned(),
+      root: root_out_dir.to_owned(),
     })
   }
 
   pub fn get_packet_dumper(&mut self, id: NumFunUid) -> Option<&mut FunctionPacketDumper> {
-    if let Some(md) = self.dumpers.get_mut(&id.module_id) {
-      md.get_function_dumper(id.function_id)
-    } else {
-      None
-    }
+    self
+      .dumpers
+      .get_mut(&id.module_id)
+      .and_then(|md| md.get_function_dumper(id.function_id))
+  }
+
+  pub fn dump_root(&self) -> PathBuf {
+    self.root.clone()
   }
 }
 
@@ -164,7 +163,6 @@ struct CaptureReader {
   path: PathBuf,
   file: BufReader<File>,
   packets: usize,
-  args_per_packet: usize,
   // the index of the argument packet that will be read
   // also, the number of packets read so far (if not reset)
   idx: usize,
@@ -184,7 +182,6 @@ impl PacketReader {
       path: path.to_path_buf(),
       file: BufReader::with_capacity(capacity_hint, File::open(path)?),
       packets: 0,
-      args_per_packet: 0,
       idx: 0,
     };
     let mut tests = 0;
@@ -202,21 +199,17 @@ impl PacketReader {
     let capacity = (buff_limit / module_maps.modules().count()).max(4096 * 2);
     let mut captures: HashMap<NumFunUid, Arc<Mutex<dyn PacketIterator + Send>>> = HashMap::new();
     for module in module_maps.modules() {
-      let functions = module_maps.functions(*module);
-      ensure!(
-        functions.is_some(),
-        "Module {} did not map to any function set!",
-        **module
-      );
-      let functions = functions.unwrap();
+      let Some(functions) = module_maps.functions(*module) else {
+        bail!("Module {} did not map to any function set!", **module);
+      };
 
       for function in functions {
         let path = dir.join(module.hex_string()).join(function.hex_string());
         let key = (*module, *function).into();
         if !path.exists() {
           lg.warn(format!(
-            "Inserting dummy packet iterator for {:?} - missing capture file\n\tFunction name: {:?} \n\tModule name: {:?}",
-            path,
+            "Inserting dummy packet iterator for {} - missing capture file\n\tFunction name: {:?} \n\tModule name: {:?}",
+            path.display(),
             module_maps.get_function_name(key),
             module_maps.get_module_string_id(*module)
           ));
@@ -239,7 +232,7 @@ impl PacketReader {
         // get the number of non-zero-sized arguments (the number of actual arguments we will read)
         let args = args
           .iter()
-          .filter(|x| !matches!(x, crate::sizetype_handlers::ArgSizeTypeRef::Fixed(0)))
+          .filter(|x| !matches!(x, crate::sizetype_handlers::ArgSizeTypeRef::Empty))
           .count();
         lg.trace(format!("\targs {args} "));
 
@@ -249,7 +242,6 @@ impl PacketReader {
             path: path.clone(),
             file: BufReader::with_capacity(capacity, File::open(path)?),
             packets: packet_count,
-            args_per_packet: args,
             idx: 0,
           })),
         );
@@ -260,50 +252,74 @@ impl PacketReader {
   }
 
   /// a helper that performs a locking extraction of the desired packet iterator
-  fn get_locked_capture_iterator(
-    &mut self,
+  fn get_locked_capture_iterator_mut(
+    &self,
     id: NumFunUid,
   ) -> Result<MutexGuard<'_, dyn PacketIterator + Send + 'static>> {
-    if let Some(v) = self.captures.get_mut(&id) {
-      Ok(v.lock().unwrap())
-    } else {
-      bail!("Not found in packet reader m/f {id:?}")
-    }
+    self.get_locked_capture_iterator(id)
   }
 
-  pub fn read_next_packet(&mut self, id: NumFunUid) -> Result<Option<Vec<u8>>> {
+  // the above, just not mut
+  fn get_locked_capture_iterator(
+    &self,
+    id: NumFunUid,
+  ) -> Result<MutexGuard<'_, dyn PacketIterator + Send + 'static>> {
+    self
+      .captures
+      .get(&id)
+      .ok_or(anyhow!("Not found in packet reader m/f {id:?}"))
+      .and_then(|v| v.try_lock().map_err(|e| anyhow!("{e}")))
+  }
+
+  pub fn read_next_packet(&self, id: NumFunUid) -> Result<Option<Vec<u8>>> {
     let mut it = self
-      .get_locked_capture_iterator(id)
-      .map_err(|e| e.context("read_next_packet"))?;
+      .get_locked_capture_iterator_mut(id)
+      .map_err(|e| anyhow!("read_next_packet failed: {e}"))?;
     it.read_next_packet()
   }
 
-  pub fn try_reset(&mut self, id: NumFunUid) -> Result<()> {
+  pub fn try_reset(&self, id: NumFunUid) -> Result<()> {
     let mut it = self
-      .get_locked_capture_iterator(id)
-      .map_err(|e| e.context("try_reset"))?;
+      .get_locked_capture_iterator_mut(id)
+      .map_err(|e| anyhow!("try_reset failed: {e}"))?;
     it.try_reset()
   }
 
   pub fn get_packet_count(&self, id: NumFunUid) -> Option<u32> {
-    self
-      .captures
-      .get(&id)
-      .map(|v| v.lock().unwrap().packet_count())
-  }
-
-  pub fn get_arg_count(&self, id: NumFunUid) -> Option<u32> {
-    self
-      .captures
-      .get(&id)
-      .map(|v| v.lock().unwrap().arg_count())
+    match self.get_locked_capture_iterator(id) {
+      Ok(v) => Some(v.packet_count()),
+      Err(e) => {
+        Log::get("get_packet_count").crit(e.to_string());
+        None
+      }
+    }
   }
 
   pub fn get_upcoming_pkt_idx(&self, id: NumFunUid) -> Option<usize> {
+    match self.get_locked_capture_iterator(id) {
+      Ok(v) => Some(v.upcoming_packet_idx()),
+      Err(e) => {
+        Log::get("get_upcoming_pkt_idx").crit(e.to_string());
+        None
+      }
+    }
+  }
+
+  pub fn try_read_packet(&self, id: NumFunUid, idx: usize) -> Option<Vec<u8>> {
+    let mx = self.get_packet_count(id)?;
+    if mx <= idx as u32 {
+      return None;
+    }
     self
-      .captures
-      .get(&id)
-      .map(|v| v.lock().unwrap().upcoming_packet_idx())
+      .try_reset(id)
+      .inspect_err(|e| Log::get("try_read_packet").warn(e.to_string()))
+      .ok()?;
+
+    let mut v = None;
+    for _ in 0..=idx {
+      v = self.read_next_packet(id).ok()?;
+    }
+    v
   }
 }
 
@@ -311,9 +327,8 @@ impl PacketReader {
 trait PacketIterator {
   fn read_next_packet(&mut self) -> Result<Option<Vec<u8>>>;
   fn packet_count(&self) -> u32;
-  fn arg_count(&self) -> u32;
   fn try_reset(&mut self) -> Result<()>;
-  fn upcoming_packet_idx(&mut self) -> usize;
+  fn upcoming_packet_idx(&self) -> usize;
 }
 
 /// see [`FunctionPacketDumper::dump`]
@@ -328,9 +343,9 @@ impl PacketIterator for CaptureReader {
           self.idx += 1;
           return Ok(None);
         }
-        bail!("Failed to read packet len: {}", e)
+        bail!("Failed to read packet len: {e}")
       }
-    };
+    }
     let len = u32::from_le_bytes(buf);
     if len == 0 {
       self.idx += 1;
@@ -340,20 +355,16 @@ impl PacketIterator for CaptureReader {
     // reads the packet payload
     let mut result = vec![0; len as usize];
     match self.file.read_exact(&mut result) {
-      Ok(_) => {
+      Ok(()) => {
         self.idx += 1;
         Ok(Some(result))
       }
-      Err(e) => Err(anyhow!("Error when reading {} packet len, err {}", len, e)),
+      Err(e) => Err(anyhow!("Error when reading {len} packet len, err {e}")),
     }
   }
 
   fn packet_count(&self) -> u32 {
     self.packets as u32
-  }
-
-  fn arg_count(&self) -> u32 {
-    self.args_per_packet as u32
   }
 
   fn try_reset(&mut self) -> Result<()> {
@@ -362,7 +373,7 @@ impl PacketIterator for CaptureReader {
     Ok(())
   }
 
-  fn upcoming_packet_idx(&mut self) -> usize {
+  fn upcoming_packet_idx(&self) -> usize {
     self.idx
   }
 }
@@ -378,15 +389,11 @@ impl PacketIterator for EmptyPacketIter {
     0
   }
 
-  fn arg_count(&self) -> u32 {
-    0
-  }
-
   fn try_reset(&mut self) -> Result<()> {
     Ok(())
   }
 
-  fn upcoming_packet_idx(&mut self) -> usize {
+  fn upcoming_packet_idx(&self) -> usize {
     0
   }
 }

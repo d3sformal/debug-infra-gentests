@@ -7,7 +7,7 @@ use crate::{
   stages::call_tracing::Message,
 };
 
-use anyhow::{Result, ensure};
+use anyhow::{Result, anyhow, bail, ensure};
 
 use super::TracingInfra;
 
@@ -23,7 +23,7 @@ struct CallTraceMessageState {
 }
 
 impl CallTraceMessageState {
-  pub fn extract_messages(&mut self) -> Vec<Message> {
+  pub const fn extract_messages(&mut self) -> Vec<Message> {
     let mut msgs = vec![];
     std::mem::swap(&mut msgs, &mut self.messages);
     msgs
@@ -50,7 +50,7 @@ fn receive_module_id(
     );
     let mod_id: u32 = raw_buff
       .unaligned_shift_num_read()
-      .map_err(|e| e.context("module ID"))?;
+      .map_err(|e| anyhow::anyhow!("module ID reception error: {e}"))?;
     IntegralModId(mod_id)
   })
 }
@@ -83,10 +83,10 @@ impl CaptureLoopState for CallTraceMessageState {
 impl CaptureLoop for CallTracing {
   type State = CallTraceMessageState;
 
-  fn update_from_buffer<'b>(
+  fn update_from_buffer(
     &mut self,
     mut state: Self::State,
-    mut buffer: BorrowedReadBuffer<'b>,
+    mut buffer: BorrowedReadBuffer<'_>,
     modules: &ExtModuleMap,
   ) -> Result<Self::State> {
     assert!(
@@ -96,13 +96,9 @@ impl CaptureLoop for CallTracing {
     let lg = Log::get("update_from_buffer");
     let buff = &mut buffer.buffer;
     if buff.empty() {
-      ensure!(
-        state.mod_id_wip.is_none(),
-        format!(
-          "Comms corruption - partial state with empty message following it! Module id {}",
-          *state.mod_id_wip.unwrap()
-        )
-      );
+      if let Some(v) = state.mod_id_wip {
+        bail!("Comms corruption - partial state with empty message following it! Module id {v:?}")
+      }
       lg.trace("End msg");
       state.end_message_counter += 1;
       return Ok(state);
@@ -124,7 +120,7 @@ impl CaptureLoop for CallTracing {
       // during call tracing, only moduleID-functionID messages are sent to us
       let fn_id: u32 = buff
         .unaligned_shift_num_read()
-        .map_err(|e| e.context("funciton id"))?;
+        .map_err(|e| anyhow!("funciton id reception error: {e}"))?;
       lg.trace(format!("M {:02X}", *mod_id));
       lg.trace(format!("F {fn_id:02X}"));
 

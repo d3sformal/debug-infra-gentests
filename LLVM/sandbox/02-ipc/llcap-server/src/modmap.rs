@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::iter;
 use std::ops::Deref;
 use std::{collections::HashMap, fs, path::PathBuf};
 
@@ -20,7 +21,7 @@ fn u32_to_hex_string(num: u32) -> String {
 /// for the hooking library, LLVM plugins as well as internal data structures of
 /// llcap-server
 ///
-/// It is usually used along with the IntegralModuleId as a unique function idefntifier
+/// It is usually used along with the `IntegralModuleId` as a unique function idefntifier
 pub struct IntegralFnId(pub u32);
 
 impl From<u32> for IntegralFnId {
@@ -30,11 +31,11 @@ impl From<u32> for IntegralFnId {
 }
 
 impl IntegralFnId {
-  pub fn hex_string(&self) -> String {
+  pub fn hex_string(self) -> String {
     u32_to_hex_string(self.0)
   }
 
-  /// a compile check for the size, if this one fails, also see Self::size
+  /// a compile check for the size, if this one fails, also see `Self::size`
   fn _helper_fn(x: Self) -> u32 {
     x.0
   }
@@ -49,7 +50,7 @@ impl IntegralFnId {
 /// for the hooking library, LLVM plugins as well as internal data structures of
 /// llcap-server
 ///
-/// It is usually used along with the IntegralFnId as a unique function idefntifier
+/// It is usually used along with the `IntegralFnId` as a unique function idefntifier
 pub struct IntegralModId(pub u32);
 
 impl From<u32> for IntegralModId {
@@ -59,11 +60,11 @@ impl From<u32> for IntegralModId {
 }
 
 impl IntegralModId {
-  pub fn hex_string(&self) -> String {
+  pub fn hex_string(self) -> String {
     u32_to_hex_string(self.0)
   }
 
-  /// a compile check for the size, if this one fails, also see Self::size
+  /// a compile check for the size, if this one fails, also see `Self::size`
   fn _helper_fn(x: Self) -> u32 {
     x.0
   }
@@ -189,7 +190,7 @@ impl FunctionMap {
   ) -> Self {
     Self {
       fnid_to_argument_sizes: readers,
-      demangled_name_to_fnid: HashMap::from_iter(values.iter().map(|(x, y)| (y.clone(), *x))),
+      demangled_name_to_fnid: values.iter().map(|(x, y)| (y.clone(), *x)).collect(),
       fnid_to_demangled_name: HashMap::from_iter(values.to_owned()),
     }
   }
@@ -216,30 +217,31 @@ impl FunctionMap {
     self.demangled_name_to_fnid.get(name)
   }
 
-  /// masks (removes) function IDs in this object that are NOT present in fn_ids
+  /// masks (removes) function IDs in this object that are NOT present in `fn_ids`
   pub fn mask_include(&mut self, fn_ids: &HashSet<IntegralFnId>) -> Result<()> {
     let counter_ids = self
       .fnid_to_argument_sizes
       .keys()
       .filter(|k| !fn_ids.contains(k))
-      .cloned()
+      .copied()
       .collect::<Vec<_>>();
     let lg = Log::get("mask_include");
     for counter_id in counter_ids {
-      let expected_name = match self.fnid_to_demangled_name.remove(&counter_id) {
-        Some(x) => Ok(x),
-        None => Err(anyhow!("Could not find function {}", counter_id.0)),
-      }?;
+      let expected_name = self
+        .fnid_to_demangled_name
+        .remove(&counter_id)
+        .map_or_else(
+          || Err(anyhow!("Could not find function {}", counter_id.0)),
+          Ok,
+        )?;
       ensure!(
         self.demangled_name_to_fnid.remove(&expected_name).is_some(),
-        "Inconsistent structures: demangled -> id missing {}",
-        expected_name
+        "Inconsistent structures: demangled -> id missing {expected_name}"
       );
       ensure!(
         self.fnid_to_argument_sizes.remove(&counter_id).is_some(),
-        "Inconsistent structures: id -> argsizes missing {} {}",
-        counter_id.0,
-        expected_name
+        "Inconsistent structures: id -> argsizes missing {} {expected_name}",
+        counter_id.0
       );
       lg.trace(format!("Masked out function {}", counter_id.hex_string()));
     }
@@ -324,7 +326,14 @@ impl TryFrom<&[&[u8]]> for FunctionMap {
 
           for sz_type in &specifiers {
             let spec = ArgSizeTypeRef::try_from(*sz_type)?;
-            size_types.push(spec);
+            // FIXME: temporary workaround to allow for protobuf packet
+            if matches!(spec, ArgSizeTypeRef::Custom) {
+              size_types.push(spec);
+              break;
+            }
+          }
+          if size_types.is_empty() {
+            lg.warn(format!("No dumpable args detected in fn {name}"));
           }
 
           lg.trace(format!(
@@ -394,25 +403,23 @@ impl ExtModuleMap {
     let mut allowlist_fn: HashMap<IntegralModId, HashSet<IntegralFnId>> = HashMap::new();
     for id in targets {
       let (m, f) = (&id.fn_module, &id.fn_name);
-      let mod_id = match self.get_module_hash_by_name(m) {
-        Some(x) => x,
-        None => {
-          lg.warn(format!("Module hash for name {m} not found"));
-          continue;
-        }
+      let Some(mod_id) = self.get_module_hash_by_name(m) else {
+        lg.warn(format!("Module hash for name {m} not found"));
+        continue;
       };
 
-      if let Some(fn_id) = self.get_function_id(mod_id, f).cloned() {
+      if let Some(fn_id) = self.get_function_id(mod_id, f).copied() {
         allowlist_fn
           .entry(mod_id)
           .and_modify(|set| {
             set.insert(fn_id);
           })
-          .or_insert(HashSet::from_iter([fn_id].into_iter()));
+          .or_insert_with(|| iter::once(fn_id).collect());
       } else {
         lg.warn(format!("Function {f} not found in module {:02X}", mod_id.0));
       }
     }
+    let unknown = "unknown".to_owned();
 
     // perform filtering for each module in targets
     for modid in self
@@ -420,18 +427,24 @@ impl ExtModuleMap {
       .keys()
       .filter(|m| allowlist_fn.contains_key(*m))
     {
-      let functions = self.function_ids.get_mut(modid).unwrap();
+      let allowed = allowlist_fn
+        .get(modid)
+        .ok_or(anyhow!("Unknown module ID {modid:?}"))?;
+      let functions = self
+        .function_ids
+        .get_mut(modid)
+        .ok_or(anyhow!("Functions not found for {modid:?}"))?;
       lg.info(format!("Module {}:", modid.hex_string()));
-      functions.mask_include(allowlist_fn.get(modid).unwrap())?;
+      functions.mask_include(allowed)?;
       lg.info(format!(
         "Functions {:?} remain in module {}",
-        allowlist_fn
-          .get(modid)
-          .unwrap()
+        allowed
           .iter()
           .map(|x| (
             x.hex_string(),
-            self.get_function_name((*modid, *x).into()).unwrap()
+            self
+              .get_function_name((*modid, *x).into())
+              .unwrap_or(&unknown)
           ))
           .collect::<Vec<_>>(),
         modid.hex_string()
@@ -439,7 +452,7 @@ impl ExtModuleMap {
     }
 
     // remove modules NOT included in targets
-    let mods = self.function_ids.keys().cloned().collect::<Vec<_>>();
+    let mods = self.function_ids.keys().copied().collect::<Vec<_>>();
     for md in mods {
       let fun = &self.function_ids[&md];
       if fun.is_empty() || !allowlist_fn.contains_key(&md) {
@@ -462,15 +475,14 @@ impl ExtModuleMap {
   /// all other lines are function metadata lines (for futher format info,
   /// see [`FunctionMap`])
   pub fn add_module(&mut self, path_to_modfile: &PathBuf) -> Result<()> {
-    let modhash = if let Some(hash_res) = path_to_modfile
+    let modhash = path_to_modfile
       .file_name()
       .and_then(|v| v.to_str())
       .and_then(|v| IntegralModId::try_from(v).into())
-    {
-      hash_res
-    } else {
-      Err(anyhow!("Invalid path {:?}", path_to_modfile))
-    }?;
+      .map_or_else(
+        || Err(anyhow!("Invalid path {path_to_modfile:?}")),
+        |hash_res| hash_res,
+      )?;
 
     ensure!(
       !self.function_ids.contains_key(&modhash),
@@ -479,20 +491,16 @@ impl ExtModuleMap {
     );
 
     let contents = fs::read(path_to_modfile).map_err(|e| {
-      anyhow!(e).context(format!(
-        "add_module file read {}",
+      anyhow!(
+        "add_module file read {} error: {e}",
         path_to_modfile.to_string_lossy()
-      ))
+      )
     })?;
     let lines: Vec<&[u8]> = contents.split(|x| x == &0xa).collect();
 
     let (module_str_id, fn_map) = if let Some((head, tail)) = lines.split_first() {
       String::from_utf8(head.to_vec())
-        .map_err(|e| {
-          anyhow!(e).context(format!(
-            "add_module cannot not parse string id of a module: {head:?}",
-          ))
-        })
+        .map_err(|e| anyhow!("add_module cannot not parse string id of a module: {head:?}\n{e}",))
         .map(|v| (v, tail))
     } else {
       Err(anyhow!("Empty module file"))
@@ -504,7 +512,7 @@ impl ExtModuleMap {
     Ok(())
   }
 
-  /// module path (LLVM) -> IntegralModId
+  /// module path (LLVM) -> `IntegralModId`
   pub fn get_module_hash_by_name(&self, name: &String) -> Option<IntegralModId> {
     self
       .module_paths
@@ -559,18 +567,17 @@ impl TryFrom<&PathBuf> for ExtModuleMap {
       "{} is not a directory",
       path.to_string_lossy()
     );
-    let mut target = ExtModuleMap::new();
+    let mut target = Self::new();
 
-    let dir = std::fs::read_dir(path).map_err(|e| {
-      anyhow!(e).context(format!("Cannot open directory {}", path.to_string_lossy()))
-    })?;
+    let dir = std::fs::read_dir(path)
+      .map_err(|e| anyhow!("Cannot open directory {} ({e})", path.to_string_lossy()))?;
 
     for file in dir {
       let res = match file {
-        Err(e) => Err(anyhow!(e).context(format!(
-          "Module file {} could not be listed",
+        Err(e) => Err(anyhow!(
+          "Module file {} could not be listed: {e}",
           path.to_string_lossy()
-        ))),
+        )),
         Ok(entry) => target.add_module(&entry.path()),
       };
 
@@ -602,12 +609,15 @@ mod tests {
     let data = underlying.as_bytes();
     let split = data.split(|x| *x == b'\0').collect::<Vec<&[u8]>>();
     let parsed = parse_fn_id_tuple(&split);
-    if parsed.is_err() {
-      println!("{}", parsed.unwrap_err());
-      assert!(false);
-      unreachable!()
-    }
-    let (pfid, pname, pargs) = parsed.unwrap();
+    let parsed = match parsed {
+      Err(e) => {
+        println!("{}", e);
+        assert!(false);
+        unreachable!()
+      }
+      Ok(v) => v,
+    };
+    let (pfid, pname, pargs) = parsed;
     assert!(*pfid == fn_id);
     assert!(pname == fn_name);
     assert!(pargs.len() == arg_list.len());

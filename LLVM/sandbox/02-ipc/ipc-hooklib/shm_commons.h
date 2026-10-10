@@ -3,19 +3,32 @@
 #define LLCAP_SHM_COMMONS
 
 #ifdef __cplusplus
+static_assert(sizeof(unsigned long long) == 8, "expected size of u64");
 static_assert(sizeof(unsigned int) == 4, "expected size of u32");
 static_assert(sizeof(unsigned short) == 2, "expected size of u16");
 #endif
 
-typedef struct {
+// NOLINTBEGIN(modernize-use-using)
+static const unsigned int MODE_CALL_TRACE = 0;
+static const unsigned int MODE_ARG_CAPTURE = 1;
+static const unsigned int MODE_TESTING = 2;
+// test_count is used as the packet index to be requested
+static const unsigned int MODE_MT_TESTING = 3;
+static const unsigned int MODE_CHECKPOINT_TESTING_NOCHECKPOINT = 4;
+// performs checkpoint in the next call of the instrumented function at the target thread LID
+static const unsigned int MODE_CHECKPOINT_TESTING_DO_CHECKPOINT = 5;
+
+// maximum length of the path to the criu dump, with zero byte
+static const unsigned CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO = 512;
+
+typedef struct ShmMeta {
   unsigned int buff_count;
   unsigned int buff_len;
   unsigned int total_len;
   // the above required for call tracing and argument capture
   
   // false if zero, indicates whether we are in capture mode or not
-  unsigned int mode; // required for argument capture and testing, 0 for call
-                     // tracing, 1 for capture, 2 for testing
+  unsigned int mode; // see MODE_* constants
   // the below is required for only the testing phase
   // identifier of function under test
   unsigned int target_fnid;
@@ -24,10 +37,8 @@ typedef struct {
   // should prevent further forking when instrumented code (preamble) is reached
   // multiple times
   unsigned int forked;
-  // number of arguments to read, should prevent argument hijacking when
-  // instrumented code is reached multiple times (decrement & check if zero)
-  unsigned int arg_count;
   // number of tests to be performed (number of forks to perform)
+  // or (if mode == 3/4/5 - MT support/checkpointing), the index of the packet to be requested from the llcap-server
   unsigned int test_count;
   // the number of the call of the target function to instrument
   // utitlized by decrementing this value on each call -> equality to 1
@@ -35,7 +46,19 @@ typedef struct {
   // the number passed here should be "intended call 0-based index" + 2!
   unsigned int target_call_number;
   unsigned short test_timeout_seconds;
+  // number of items in the thread-counting list
+  unsigned int thread_count;
+  // logical ID of the thread to be tested
+  unsigned int target_thread_lid;
+  char checkpoint_dump_dir[CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO];
+  unsigned long long checkpoint_id;
+  // 0 - false
+  // nonzero - true
+  int shell_job;
 } ShmMeta;
+// NOLINTEND(modernize-use-using)
+
+static const unsigned long CLI_MSG_SIZE = 24;
 
 // message types the test coordinator sends to the llcap-server
 static const unsigned short TAG_START = 0;
@@ -58,6 +81,8 @@ static const unsigned short TAG_FATAL   = 18; // fatal test failure, indicates a
 static const char *const META_SEM_DATA = "/llcap-meta-sem-data";
 static const char *const META_SEM_ACK = "/llcap-meta-sem-ack";
 static const char *const META_MEM_NAME = "/llcap-meta-shmem";
+static const char *const META_MEM_SIZE_NAME = "/llcap-meta-shmem-size";
 static const char *const TEST_SERVER_SOCKET_NAME = "/tmp/llcap-test-server";
+static const char* const CRIU_SOCKET_PATH = "/tmp/llcap-criu-socket.service";
 
 #endif // LLCAP_SHM_COMMONS

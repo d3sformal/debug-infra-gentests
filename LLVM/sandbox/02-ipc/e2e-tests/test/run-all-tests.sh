@@ -1,26 +1,35 @@
 #!/bin/bash
+set -x
 
 function run-test {
+  set +e
   TestDir=$1; shift;
   OutTestScript="$(pwd)"/"$1"; shift;
   TestedFnName=$1;shift;
   Timeout=$1; shift;
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
+  MTMode=$1; shift
   ExtraArgs=$*; shift;
+  set -e
 
   IRTestScript="$OutTestScript"/ir;
   cd ../
+
+  if [[ "$MTMode" == "" ]]
+  then
+    MTMode="basic"
+  fi
   
   ./llcap-cleanup.sh
-  ./test.sh ./"$TestDir" "$TestedFnName" "$Timeout" "$OutTestScript" "$IRTestScript" "$LlcapBufSz" "$LlcapBufCnt" $ExtraArgs
+  ./test.sh ./"$TestDir" "$TestedFnName" "$Timeout" "$OutTestScript" "$IRTestScript" "$LlcapBufSz" "$LlcapBufCnt" "--mode $MTMode" $ExtraArgs
 
   if [[ "$?" != "0" ]]
   then
     echo "Failed test $TestDir with test scripts $OutTestScript and $IRTestScript with cmd ./test.sh ./$TestDir $TestedFnName $Timeout"
     cd ./test
     echo "Cmd:"
-    echo "./test.sh ./"$TestDir" "$TestedFnName" "$Timeout" "$OutTestScript" "$IRTestScript" "$LlcapBufSz" "$LlcapBufCnt" \"\" \"$ExtraArgs\""
+    echo "./test.sh ./"$TestDir" "$TestedFnName" "$Timeout" "$OutTestScript" "$IRTestScript" "$LlcapBufSz" "$LlcapBufCnt" "--mode $MTMode" $ExtraArgs"
     exit 1
   fi
   cd ./test
@@ -28,37 +37,113 @@ function run-test {
 }
 
 function run-test-in-directory-custom-buffers {
+  set +e
   TestDir=$1; shift;
   TestedFnName=$1;shift;
   Timeout=$1; shift;
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
-  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt"
+  set -e
+
+  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" ""
+  run-test-in-directory-custom-buffers-mt "$TestDir" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt"
+}
+
+function run-test-in-directory-custom-buffers-mt {
+  set +e
+  TestDir=$1; shift;
+  TestedFnName=$1;shift;
+  Timeout=$1; shift;
+  LlcapBufSz=$1; shift
+  LlcapBufCnt=$1; shift
+  set -e
+  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" mt-support
+}
+
+
+function run-test-in-dir-fnend-instr-criu {
+  set +e
+  TestDir=$1; shift;
+  TestedFnName=$1;shift;
+  Timeout=$1; shift;
+  LlcapBufSz=$1; shift
+  LlcapBufCnt=$1; shift
+  set -e
+  
+  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" "criu" -mllvm -llcap-instrument-fn-exit
 }
 
 
 function run-test-in-directory-fn-end-instr {
+  set +e
   TestDir=$1; shift;
   TestedFnName=$1;shift;
   Timeout=$1; shift;
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
+  set -e
   
-  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" -mllvm -llcap-instrument-fn-exit
+  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" "" -mllvm -llcap-instrument-fn-exit
+  run-test-in-directory-fn-end-instr-mt "$TestDir" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt"
 }
 
-function run-tests-with-buffers {
+function run-test-in-directory-fn-end-instr-mt {
+  set +e
+  TestDir=$1; shift;
+  TestedFnName=$1;shift;
+  Timeout=$1; shift;
+  LlcapBufSz=$1; shift
+  LlcapBufCnt=$1; shift
+  set -e
+  
+  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" mt-support -mllvm -llcap-instrument-fn-exit
+}
+
+function run-smoke-tests-with-buffers {
+  Size=$1; shift
+  Count=$1; shift
+  # basic smokes consist of simple replacement instrumentation and timeouts (with C examples)
+
+  run-test-in-directory-custom-buffers "testbin-arg-replacement-simple" "test_target" 5 "$Size" "$Count"
+
+  # quick mt test with simple replacement and exceptions
+  run-test-in-directory-custom-buffers-mt "testbin-mt-exc-nohandle-norace" "test_target" 5 "$Size" "$Count"
+  run-test-in-directory-fn-end-instr-mt "testbin-mt-exc-norace" "test_target" 5 "$Size" "$Count"
+
+  # timeout tests
+  run-test "testbin-arg-replacement-simple" "timeout-all.sh" "test_target" 0 "$Size" "$Count"
+  run-test "testbin-arg-replacement-simple" "timeout-all.sh" "test_target" 0 "$Size" "$Count" mt-support
+  
+  # larger replacement
+  run-test-in-directory-custom-buffers "testbin-arg-replacement-large" "test_target" 5 "$Size" "$Count"
+
+  # pure C examples
+  run-test-in-directory-custom-buffers "testbin-c-example" "test_target" 5 "$Size" "$Count"
+  
+  run-test "testbin-c-example" "timeout-all.sh" "test_target" 0 "$Size" "$Count"
+  run-test "testbin-c-example" "timeout-all.sh" "test_target" 0 "$Size" "$Count" mt-support
+
+  # vector<string> (nested protobuf)
+  run-test-in-directory-custom-buffers "testbin-arg-replacement-vec-str" "test_target" 5 "$Size" "$Count"
+  # vector<int> (protobuf vec)
+  run-test-in-directory-custom-buffers "testbin-arg-replacement-vec-i32" "test_target" 5 "$Size" "$Count"
+  # nested protobuf * 2
+  run-test-in-directory-custom-buffers "testbin-arg-replacement-vec-str-multiple" "test_target" 5 "$Size" "$Count"
+  # exceptions with auto-generated cleanup calls, wraps without return values
+  run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc" "test_target" 5 "$Size" "$Count"
+
+  # exceptions without cleanup calls, inner (exception-throwing) calls without a return value
+  run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc-call" "test_target" 5 "$Size" "$Count"
+
+  # multithreading support - no data races
+  run-test-in-directory-custom-buffers-mt "testbin-mt-simple-norace" "test_target" 5 "$Size" "$Count"
+}
+
+function run-detail-tests-with-buffers {
 
   Size=$1; shift
   Count=$1; shift
 
-  # testbin-* are directories where tests are run
-  # the numeric literal is the test timeout
-  run-test "testbin-arg-replacement-simple" "timeout-all.sh" "test_target" 0 "$Size" "$Count"
-  
-  # test_target - the name of the tested function (see the sources of the tests)
-  run-test-in-directory-custom-buffers "testbin-arg-replacement-large" "test_target" 5 "$Size" "$Count"
-  run-test-in-directory-custom-buffers "testbin-arg-replacement-simple" "test_target" 5 "$Size" "$Count"
   run-test-in-directory-custom-buffers "testbin-arg-replacement-structret-simple" "test_target" "2" "$Size" "$Count"
   run-test-in-directory-custom-buffers "testbin-arg-replacement-thisptr" "test_target" 2 "$Size" "$Count"
   run-test-in-directory-custom-buffers "testbin-arg-replacement-lambda-thisptr" "operator()" 2 "$Size" "$Count"
@@ -66,25 +151,62 @@ function run-tests-with-buffers {
   run-test-in-directory-custom-buffers "testbin-arg-replacement-sret-structarg" "test_target" 2 "$Size" "$Count"
   run-test-in-directory-custom-buffers "testbin-arg-replacement-sret-this" "test_target" 2 "$Size" "$Count"
   run-test-in-directory-custom-buffers "testbin-arg-replacement-sret-this-structarg" "test_target" 2 "$Size" "$Count"
-  run-test-in-directory-custom-buffers "testbin-c-example" "test_target" 5 "$Size" "$Count"
-  run-test "testbin-c-example" "timeout-all.sh" "test_target" 0 "$Size" "$Count"
-  run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc" "test_target" 5 "$Size" "$Count"
+  # exceptions with auto-generated cleanup calls, wraps with return values
+  run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc-rv" "test_target" 5 "$Size" "$Count"
+  # exceptions without cleanup calls, inner (exception-throwing) calls with a return value
+  run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc-call-rv" "test_target" 5 "$Size" "$Count"
+}
+
+function run-criu-with-buffers {
+  Size=$1; shift
+  Count=$1; shift
+  
+  # CRIU support - basic
+  # these are first as the CRIU support sometimes makes tokio panic when waiting for a processs
+  run-test-in-dir-fnend-instr-criu "testbin-checkpoint-simple" "test_target" 10 "$Size" "$Count"
+  run-test-in-dir-fnend-instr-criu "testbin-checkpoint-fails"  "test_target" 10 "$Size" "$Count"
+  
+  # overhead demonstration - + 33% (3s) of runtime with CRIU, but 32% reduction with CRIU (17s vs 25s) if there is a 1s sleep before 3rd and 4th call
+  # run-test-in-directory-fn-end-instr-mt "testbin-checkpoint-fails"  "test_target" 10 "$Size" "$Count"
+}
+
+criu_cleanup() {
+    screen -S LCT-CR-SOCK -X quit
+    rm /tmp/llcap-criu-socket.service
 }
 
 # the defaults of the llcap-server
 DefaultLlcapBufSz="4194304" 
 DefaultLlcapBufCnt="10"
+SmallLlcapBufSz="24"
 
-run-tests-with-buffers $DefaultLlcapBufSz $DefaultLlcapBufCnt
+if [ "$1" == "criu" ]; then
+  set -e
+  if [[ $EUID -ne 0 ]]; then
+    echo "CRIU-supported testing must be run as root" 
+    exit 1
+  fi
+  echo "Set up criu socket"
+  chmod 777 /run/screen
+  trap 'criu_cleanup' EXIT
+  screen -dmS LCT-CR-SOCK bash -c "./criu-socket.sh"
+  
+  run-criu-with-buffers $DefaultLlcapBufSz $DefaultLlcapBufCnt
+  echo "All done"
+  rm -r /tmp/llcap-testbin-*
+  exit 0
+fi
 
-echo "Forcing small buffers and 2-buffer recycling"
+set -e
+run-smoke-tests-with-buffers $DefaultLlcapBufSz $DefaultLlcapBufCnt
+run-smoke-tests-with-buffers $SmallLlcapBufSz 2
+run-smoke-tests-with-buffers $SmallLlcapBufSz 1
 
-# 8 is the minimum buffer size
-
-run-tests-with-buffers 8 2
-
-echo "Forcing small buffers and buffer recycling on a single buffer"
-
-run-tests-with-buffers 8 1
+run-detail-tests-with-buffers $DefaultLlcapBufSz $DefaultLlcapBufCnt
+run-detail-tests-with-buffers $SmallLlcapBufSz 2
+run-detail-tests-with-buffers $SmallLlcapBufSz 1
 
 echo "All done"
+# allow failure here
+set +e
+rm -r /tmp/llcap-testbin-*

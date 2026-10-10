@@ -4,8 +4,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // reads data of the specified size from a oneshot "channel" into the target
 // address
 bool oneshot_shm_read(const char *data_sem_name, const char *ack_sem_name,
-                      const char *shm_name, void *target, size_t size);
+                      const char *shm_name, const char *shm_size_name, bool (handler)(const void* source, uint32_t size, void* extra), uint32_t max_size, void* extra_data);
+
+
+#ifdef __cplusplus
+}
+#endif
 #endif // LLCAP_ONESHOT_CHNL

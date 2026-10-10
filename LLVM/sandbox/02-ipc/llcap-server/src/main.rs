@@ -1,9 +1,10 @@
 use std::{
+  path::Path,
   sync::{Arc, Mutex},
   time::Duration,
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use args::Cli;
 use clap::Parser;
 use log::Log;
@@ -13,41 +14,42 @@ mod constants;
 mod libc_wrappers;
 mod log;
 mod modmap;
+mod phase;
 mod shmem_capture;
 mod sizetype_handlers;
 mod stages;
-use shmem_capture::{
-  MetadataPublisher, arg_capture::perform_arg_capture, call_tracing::perform_call_tracing, cleanup,
-  send_arg_capture_metadata,
-};
+use shmem_capture::{MetadataPublisher, cleanup};
 use stages::{
-  arg_capture::{ArgPacketDumper, PacketReader},
+  arg_capture::PacketReader,
   call_tracing::{
-    export_call_trace_data, export_tracing_selection, import_call_trace_data,
-    import_tracing_selection, obtain_function_id_selection, print_call_tracing_summary,
+    export_call_trace_data, export_tracing_selection, obtain_function_id_selection,
+    print_call_tracing_summary,
   },
   testing::test_server_job,
 };
 
 use crate::{
+  log::LogStrategy,
   modmap::NumFunUid,
-  shmem_capture::{TracingInfra, send_call_tracing_metadata},
+  phase::{arg_capture_phase, calltrace_phase, mask_fn_selection, testing_phase},
   stages::{
-    common::{CommonStageParams, cmd_from_args, drive_instrumented_application},
-    testing::{CallIndexT, PacketIndexT, TestJobParams, TestOutputPathGen, TestStatus, test_job},
+    common::{CommonStageParams, read_thread_counts},
+    testing::{LogResult, TestJobFailure, TestStatus},
   },
 };
 
 // shorthands for the creation of the MetadataPublisher
 
 fn create_meta_svr(params: &CommonStageParams) -> Result<Arc<Mutex<MetadataPublisher>>> {
+  let (data_name, size_name) = params.shmem_path_cstr()?;
   Ok(Arc::new(Mutex::new(
     MetadataPublisher::new(
-      params.shmem_path_cstr()?,
+      data_name,
+      size_name,
       &params.data_semaphore_name,
       &params.ack_semaphore_name,
     )
-    .context("cleanup required")?,
+    .map_err(|e| anyhow!("{e}\ncleanup required..."))?,
   )))
 }
 
@@ -58,11 +60,16 @@ fn try_meta_svr_arc_deinit(metadata_svr: Arc<Mutex<MetadataPublisher>>) -> Resul
   )
 }
 
+fn skip_tracing_selection(selection_arg: &Path) -> bool {
+  format!("{}", selection_arg.display()) == "skip"
+}
+
+#[allow(clippy::too_many_lines)]
 #[tokio::main()]
 async fn main() -> Result<()> {
-  let lg = Log::get("main");
   let cli = Cli::try_parse()?;
   Log::set_verbosity(cli.verbose);
+  let lg = Log::get("main");
   lg.progress(format!("Verbosity: {}", cli.verbose));
 
   if cli.cleanup {
@@ -70,9 +77,9 @@ async fn main() -> Result<()> {
     return cleanup(&cli.fd_prefix);
   }
 
-  let mut common_params =
+  let (common_params, modules) =
     CommonStageParams::try_initialize(cli.buff_count, cli.buff_size, &cli.modmap)?;
-  let mut modules = common_params.extract_module_maps()?;
+  let common_params = Arc::new(common_params);
   match cli.stage {
     args::Stage::TraceCalls {
       mut out_file,
@@ -83,65 +90,33 @@ async fn main() -> Result<()> {
       if import_path.is_some() {
         out_file = None;
       }
+      let mut fn_freqs = calltrace_phase(
+        import_path,
+        command,
+        &modules,
+        common_params,
+        &cli.fd_prefix,
+      )
+      .await?;
 
-      let mut pairs = if let Some(in_path) = import_path {
-        lg.trace("Importing");
-        let result = import_call_trace_data(in_path, &modules)?;
-        lg.progress("Import done");
-        result
-      } else {
-        let command = command.ok_or(anyhow!(
-          "command must be present if import_path is not specified"
-        ))?;
-
-        lg.progress("Initializing tracing infrastructure");
-        let infra_params = common_params.infra;
-        let (mut tracing_infra, finalizer_info) =
-          TracingInfra::try_new(&cli.fd_prefix, infra_params)?;
-        let metadata_svr = create_meta_svr(&common_params)?;
-
-        let result = drive_instrumented_application(
-          cmd_from_args(&command)?,
-          finalizer_info,
-          metadata_svr.clone(),
-          send_call_tracing_metadata,
-          || perform_call_tracing(&mut tracing_infra, &modules),
-          infra_params,
-        )
-        .await
-        .map(|freqs| freqs.into_iter().collect::<Vec<(_, _)>>());
-
-        lg.progress("Shutting down tracing infrastructure...");
-        // we simply chain Results together to perform cleanup, in edge cases, even despite this effort, --cleanup is still requried
-        let real_result = tracing_infra
-          .deinit()
-          .inspect_err(|e| lg.crit(format!("You might need to perform cleanup: {e}")))
-          .map(|_| result)?;
-
-        // this should not really fail unless metadata_svr is cloned and persisted somewhere it should not be (i.e we should be the sole owners of metadata_svr here)
-        try_meta_svr_arc_deinit(metadata_svr)?;
-        real_result?
-      };
-
-      pairs.sort_by(|a, b| b.1.cmp(&a.1));
-      print_call_tracing_summary(&mut pairs, &modules);
+      fn_freqs.sort_by(|a, b| b.1.cmp(&a.1));
+      print_call_tracing_summary(&mut fn_freqs, &modules);
 
       if let Some(out_path) = out_file {
         lg.trace("Exporting");
 
-        let _ = export_call_trace_data(&pairs, out_path)
+        let _ = export_call_trace_data(&fn_freqs, &out_path)
           .inspect_err(|e| lg.crit(format!("Export failed: {e}")));
 
         lg.progress("Export done");
       }
 
-      let traces = pairs.iter().map(|x| x.0).collect::<Vec<NumFunUid>>();
+      let traces = fn_freqs.iter().map(|x| x.0).collect::<Vec<NumFunUid>>();
       let selected_fns = loop {
         let sel = obtain_function_id_selection(&traces, &modules);
-        if let Ok(selection) = sel {
-          break selection;
-        } else {
-          lg.crit(sel.unwrap_err().to_string());
+        match sel {
+          Ok(selection) => break selection,
+          Err(e) => lg.crit(e.to_string()),
         }
       };
       export_tracing_selection(&selected_fns, &modules, selection_path)?;
@@ -152,38 +127,17 @@ async fn main() -> Result<()> {
       mem_limit,
       command,
     } => {
-      lg.progress("Reading function selection");
-      let selection = import_tracing_selection(&selection_file)?;
+      let modules = mask_fn_selection(&selection_file, modules)?;
 
-      lg.progress("Masking");
-      modules.mask_include(&selection)?;
-
-      lg.progress("Setting up function packet dumping");
-      let mut dumper = ArgPacketDumper::new(&out_dir, &modules, mem_limit as usize)?;
-      lg.progress("Initializing tracing infrastructure");
-      let infra_params = common_params.infra;
-      let (mut tracing_infra, finalizer_info) =
-        TracingInfra::try_new(&cli.fd_prefix, infra_params)?;
-      let metadata_svr = create_meta_svr(&common_params)?;
-
-      // for comments, see the match arm for the TraceCalls subcommand
-      let result = drive_instrumented_application(
-        cmd_from_args(&command)?,
-        finalizer_info,
-        metadata_svr.clone(),
-        send_arg_capture_metadata,
-        || perform_arg_capture(&mut tracing_infra, &modules, &mut dumper),
-        infra_params,
+      arg_capture_phase(
+        out_dir,
+        &modules,
+        mem_limit as usize,
+        common_params,
+        &cli.fd_prefix,
+        &command,
       )
-      .await;
-
-      lg.progress("Shutting down tracing infrastructure...");
-      let real_result = tracing_infra
-        .deinit()
-        .inspect_err(|e| lg.crit(format!("You might need to perform cleanup: {e}")))
-        .map(|_| result);
-      try_meta_svr_arc_deinit(metadata_svr)?;
-      let _ = real_result?;
+      .await?;
     }
     args::Stage::Test {
       selection_file,
@@ -194,27 +148,24 @@ async fn main() -> Result<()> {
       global_timeout,
       command,
       inspect_packets: inspect_packet,
+      report,
+      detailed_report,
+      testing_mode,
     } => {
+      let modules = Arc::new(mask_fn_selection(&selection_file, modules)?);
       let command = Arc::new(command);
-      lg.progress("Reading function selection");
-      let selection = import_tracing_selection(&selection_file)?;
-      lg.progress("Masking");
-      modules.mask_include(&selection)?;
-
-      let modules = Arc::new(modules);
       lg.progress("Setting up function packet reader");
 
-      let mut packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
-        .map_err(|e| anyhow!(e).context("Packet reader setup failed"))?;
-
+      let packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
+        .map_err(|e| anyhow!("Packet reader setup failed: {e}"))?;
+      let thread_counts = Arc::new(
+        read_thread_counts(&capture_dir)
+          .map_err(|e| anyhow!("Thread counter parsing failed: path: {e}"))?,
+      );
       if let Some(inspection_spec) = inspect_packet {
-        return crate::stages::testing::inspect_packet(
-          &inspection_spec,
-          &modules,
-          &mut packet_reader,
-        );
+        return crate::stages::testing::inspect_packet(&inspection_spec, &modules, &packet_reader);
       }
-      // redeclare as immutable since mutability is not needed further
+      // redeclare as immutable
       let packet_reader = packet_reader;
 
       lg.progress("Setting up function packet server");
@@ -228,119 +179,141 @@ async fn main() -> Result<()> {
         (ready_tx, end_rx),
         results.clone(),
       ));
-      let output_gen = Arc::new(TestOutputPathGen::new(test_output));
       // wait for server to be ready
       match tokio::time::timeout(Duration::from_secs(10), ready_rx).await {
         Ok(Ok(())) => lg.trace("Server ready"),
         Err(_) => bail!("server ready timeout"),
-        Ok(Err(e)) => bail!("server ready error: {}", e),
+        Ok(Err(e)) => bail!("server ready error: {e}"),
       }
-
-      let mut futs = vec![];
       let metadata_svr = create_meta_svr(&common_params)?;
 
-      for module in modules.modules() {
-        for function in modules.functions(*module).unwrap() {
-          let uid = (*module, *function).into();
-          let test_count = packet_reader.get_packet_count(uid).ok_or(anyhow!(
-            "Not found tests: {} {}",
-            module.hex_string(),
-            function.hex_string()
-          ))?;
-          let arg_count = packet_reader.get_arg_count(uid).ok_or(anyhow!(
-            "Not found args: {} {}",
-            module.hex_string(),
-            function.hex_string()
-          ))?;
-
-          if test_count == 0 || arg_count == 0 {
-            Log::get("send_test_metadata").warn(format!(
-              "Skipping M: {} F: {} due to zero arg/test count a: {}, t:{}",
-              module.hex_string(),
-              function.hex_string(),
-              arg_count,
-              test_count
-            ));
-            continue;
-          }
-
-          lg.progress(format!(
-            "Run program for fn m: {} f: {}",
-            module.hex_string(),
-            function.hex_string()
-          ));
-
-          let test_job = tokio::spawn(test_job(
-            metadata_svr.clone(),
-            common_params.infra,
-            TestJobParams {
-              fn_uid: NumFunUid {
-                function_id: *function,
-                module_id: *module,
-              },
-              arg_count,
-              test_count,
-              test_case_timeout: Duration::from_secs(timeout as u64),
-              job_timeout: global_timeout.map(|v| Duration::from_secs(v as u64)),
-              command: command.clone(),
-            },
-            output_gen.clone(),
-          ));
-
-          futs.push(test_job);
-        }
-      }
-      lg.progress("Waiting for jobs to finish...");
-      let mut errors = vec![];
-      for fut in futs {
-        if let Err(e) = fut.await? {
-          errors.push(e);
-        }
-      }
+      let result = testing_phase(
+        testing_mode,
+        common_params,
+        global_timeout.map(|v| Duration::from_secs(v.into())),
+        Duration::from_secs(timeout.into()),
+        &modules,
+        &packet_reader,
+        command,
+        test_output.as_ref(),
+        thread_counts,
+        results.clone(),
+        metadata_svr.clone(),
+      )
+      .await;
 
       lg.progress("Waiting for server to exit...");
-      let defer_res_end_svr = end_tx.send(()).map_err(|_| anyhow!("failed to end server"));
-      let defer_res_joins = svr.await.map_err(|e| anyhow!(e).context("joins"));
+      let defer_res_end_svr = end_tx
+        .send(())
+        .map_err(|()| anyhow!("failed to end server"));
+      let defer_res_joins = svr.await.map_err(|e| anyhow!("joins: {e}"));
+      let errors = result?;
 
-      lg.progress("---------------------------------------------------------------");
-      let mut results = results.lock().unwrap();
-      lg.progress(format!("Test results ({}): ", results.len()));
-      lg.progress("Module ID | Function ID |  Call  | Packet | Result");
-      results.sort_by(|a, b| a.2.0.cmp(&b.2.0));
-      results.sort_by(|a, b| a.1.0.cmp(&b.1.0));
-      results.sort_by(|a, b| a.0.function_id.cmp(&b.0.function_id));
-      results.sort_by(|a, b| a.0.module_id.cmp(&b.0.module_id));
-      let line_fmter = |fn_uid: NumFunUid,
-                        call_num: stages::testing::CallIndexT,
-                        pkt_idx: stages::testing::PacketIndexT,
-                        result: &TestStatus| {
-        format!(
-          "{:^10}|{:^13}|{:^8}|{:^8}| {result:?}",
-          fn_uid.module_id.hex_string(),
-          fn_uid.function_id.hex_string(),
-          call_num.0,
-          pkt_idx.0
-        )
+      lg.progress("reporting results");
+      let delayed_err = {
+        let rmx: Result<Mutex<Vec<LogResult>>, Arc<Mutex<Vec<LogResult>>>> =
+          Arc::try_unwrap(results);
+        match rmx {
+          Ok(val) => {
+            let unwrapped_res = val.into_inner()?;
+            let log_out = match report {
+              None => LogStrategy::StdOut,
+              Some(x) => {
+                LogStrategy::create(
+                  &x,
+                  if detailed_report {
+                    log::Detail::Detailed(modules, packet_reader)
+                  } else {
+                    log::Detail::Normal
+                  },
+                )
+                .await?
+              }
+            };
+            let mut merged_results = merge_results(unwrapped_res);
+            report_results(log_out, &mut merged_results, errors).await
+          }
+          Err(_) => Err(anyhow!("Failed to synchronize with the server")),
+        }
       };
 
-      for result in results.iter() {
-        lg.progress(line_fmter(result.0, result.1, result.2, &result.3));
-      }
-      for error in errors {
-        lg.progress(line_fmter(
-          error.params.fn_uid,
-          CallIndexT(error.call_number),
-          PacketIndexT(0),
-          &TestStatus::Fatal(error.message),
-        ));
-      }
-      lg.progress("---------------------------------------------------------------");
       lg.trace("Cleaning up");
       defer_res_end_svr?;
       defer_res_joins??;
       try_meta_svr_arc_deinit(metadata_svr)?;
+      delayed_err.map_err(|e| anyhow!("When logging results: {e}"))?;
     }
   }
   lg.progress("Exiting...");
+  Ok(())
+}
+
+// handles cases where 2 results are produced (one local, one asynchronous, especially in the MT-support mode)
+// we create a precedence of statuses, where the priority is thus:
+// Pass/Exception
+// Timeout
+// GlobalTimeout
+// Exit/Signal
+// Fatal
+// Spurious
+fn merge_results(results: Vec<LogResult>) -> Vec<LogResult> {
+  let status_prio = |st: &TestStatus| -> u8 {
+    match st {
+      TestStatus::Pass | TestStatus::Exception => 100,
+      TestStatus::Timeout => 95,
+      TestStatus::GlobalTimeout => 90,
+      TestStatus::Exit(_) => 85,
+      TestStatus::Signal(_) => 80,
+      TestStatus::Fatal(_) => 75,
+      TestStatus::Spurious(_) => 70,
+    }
+  };
+  let mut results = results
+    .into_iter()
+    .map(|v| (v, true))
+    .collect::<Vec<(LogResult, bool)>>();
+
+  let mut merged = vec![];
+  loop {
+    // remove all "marked as trash"
+    results.retain(|v| v.1);
+    let res = if let Some(s) = results.first().cloned() {
+      s.0
+    } else {
+      return merged;
+    };
+    let mut same_refs = results
+      .iter_mut()
+      .filter(|(v, _)| {
+        v.call == res.call && v.pkt == res.pkt && v.thread_lid == res.thread_lid && v.uid == res.uid
+      })
+      .collect::<Vec<&mut (LogResult, bool)>>();
+
+    same_refs.sort_by(|v1, v2| status_prio(&v1.0.status).cmp(&status_prio(&v2.0.status)));
+    same_refs.iter_mut().for_each(|x| x.1 = false);
+    if let Some(last) = same_refs.last() {
+      merged.push(last.0.clone());
+    }
+  }
+}
+
+async fn report_results(
+  strategy: LogStrategy,
+  results: &mut [LogResult],
+  errors: Vec<TestJobFailure>,
+) -> Result<()> {
+  let mut lg = Log::result_logger(strategy).await?;
+  results.sort_by(|a, b| a.pkt.0.cmp(&b.pkt.0));
+  results.sort_by(|a, b| a.call.0.cmp(&b.call.0));
+  results.sort_by(|a, b| a.uid.function_id.cmp(&b.uid.function_id));
+  results.sort_by(|a, b| a.uid.module_id.cmp(&b.uid.module_id));
+  for result in results.iter() {
+    // skip I/O errors - prefer outputs
+    let _ = lg.result(result).await;
+  }
+  for error in errors {
+    let _ = lg.result(&error.log_res).await;
+  }
+  lg.finish().await?;
   Ok(())
 }

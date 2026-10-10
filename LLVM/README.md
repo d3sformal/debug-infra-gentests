@@ -29,13 +29,11 @@ We provide a complete demo in the form of a small C++ program inside the [exampl
 
 ## Containers
 
-Demo container is available on [Docker Hub](https://hub.docker.com/r/vasutro/llcap-demo-env) (est. 1GB download):
+Demo container is available on [Docker Hub](https://hub.docker.com/r/vasutro/llcap-demo-env) (est. 1.1GB download):
 
-        podman run -it docker.io/vasutro/llcap-demo-env:2.0.0
+        podman run -it docker.io/vasutro/llcap-demo-env:3.0.0
 
-Last commit of this repository used to build the container and test the demo: 
-
-`113d2b0da8b6d42e179cc28a431de7d3b1035100`
+Relevant repository commits are captured in the [Containerfile](./podman/Containerfile).
 
 For usage, refer to the [example-arg-replacement](./sandbox/02-ipc/example-arg-replacement) directory.
 
@@ -154,6 +152,39 @@ The `llcap-server` is designed to be the central point: it launches and monitors
 
 ![High-level concept diagram](./notes/images/diags/root-high-level.png)
 
+```plantuml
+@startuml
+artifact Sources
+artifact hooklib
+artifact "Instrumented binary" as IB
+
+rectangle Runtime {
+    cloud "llcap-server" as Server
+    component "Binary runtime" as BR
+    component "calls to hooklib" as HookCall
+    circle End
+}
+
+Sources --> IB : compiles into
+hooklib --> IB
+
+IB <- Server : executes
+IB ..> BR
+
+Server -> BR : monitors
+BR --> HookCall : call
+BR -> End : exit
+
+HookCall <..> Server : communicates
+
+HookCall --> BR
+
+HookCall -> End : exit
+@enduml
+```
+
+
+
 ### Phases
 
 The workflow we will present consists of 3 phases. Each phase requires slightly different instrumentation. Two instrumentation passes on the tested program are required (1 for the first phase, the other for the rest). Here, we list the phases and describe their purpose. We also **emphasize** important concepts:
@@ -166,12 +197,56 @@ Runtime diagram:
 
 ![Call tracing high-level runtime diagram](./notes/images/diags/root-high-ctracing.png)
 
+```plantuml
+@startuml
+file "Binary runtime" as BR
+circle " " as ExitCircle
+component "calls to hooklib" as HookLib
+cloud "llcap-server" as Server
+
+BR -left-> ExitCircle : exit
+
+BR -down-> HookLib : 1 entered function\n"fooBar"
+HookLib .right.> Server : 2 send "fooBar" ID
+
+Server -up-> BR : monitors
+
+HookLib -up-> BR : 3 continue fooBar execution
+@enduml
+```
+
 2. **Argument capture** - collects raw copies of arguments of the *target functions* and stores them for the subsequent phases
     * we call the set of all arguments of the `n`-th call to function `foo` the **foo's n-th argument packet**
 
 Runtime diagram (the binary running is the binary created by instrumenting *target functions*):
 
 ![Argument capture high-level runtime diagram](./notes/images/diags/root-high-acapture.png)
+
+```plantuml
+@startuml
+skinparam linestyle ortho
+
+file "Binary runtime" as BR
+circle " " as ExitCircle
+component "calls to hooklib\n(capture mode)" as HookLib
+cloud "llcap-server" as Server
+database "filesystem" as FS
+
+BR -left-> ExitCircle : exit
+
+BR -down-> HookLib : 1 enter function\n"selectedFoo"
+
+HookLib .right.> Server : 2 send function ID,\nall call arguments
+
+
+Server -up-> BR : monitor
+
+HookLib -up-> BR : 3 continue selectedFoo\nexecution
+
+Server -down-> FS : store arguments
+
+@enduml
+```
 
 3. **Testing** - performs an exhaustive replacement of arguments of a target function with all its *argument packets* recorded in the previous (*argument capture*) phase
     * our implementation performs a `fork`-based testing - the *instrumented binary* is launched in testing mode and monitored by the `llcap-server`. We call this instance of the instrumented program the **test coordinator** and its functionality is implemented inside `hooklib`
@@ -180,6 +255,51 @@ Runtime diagram (the binary running is the binary created by instrumenting *targ
 Runtime diagram:
 
 ![Testing high-level runtime diagram](./notes/images/diags/root-high-testing.png)
+
+```plantuml
+@startuml
+' ==== Nodes ====
+
+rectangle "Binary runtime" as BR
+
+component "calls to hooklib\n(testing mode)" as DEC
+
+rectangle "hooklib - fork" as HOOK
+
+rectangle "replace arguments" as REPL
+cloud "test\ncoordinator" as TC
+
+cloud "llcap-server" as SERVER
+database "filesystem" as FS
+
+' ==== Main flow ====
+BR --> DEC : enter function\nselectedFoo
+DEC --> HOOK : selectedFoo\ncall shall be tested
+
+HOOK --> REPL : child
+REPL --> END : continue execution
+
+
+TC --> REPL : provide arg\nvalues
+HOOK --> TC
+
+TC --> END : monitor\nuntil timeout
+
+' ==== Monitoring / side channels ====
+
+
+SERVER <-- FS : load captured\narguments
+SERVER --> BR : monitor
+TC --> SERVER : report test\nresults
+
+' ==== Layout helpers (invisible links) ====
+
+BR -[hidden]-> SERVER
+DEC -[hidden]-> SERVER
+HOOK -[hidden]-> FS
+REPL -[hidden]-> TC
+@enduml
+```
 
 ## Tests
 

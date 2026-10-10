@@ -1,11 +1,27 @@
 use std::{io::Error, marker::PhantomData};
 
-use libc::{O_CREAT, O_EXCL, SEM_FAILED, c_int, mode_t, sem_open, sem_t};
+use libc::{
+  CLOCK_REALTIME, ETIMEDOUT, O_CREAT, O_EXCL, SEM_FAILED, c_int, clock_gettime, mode_t, sem_open,
+  sem_t,
+};
 
 use crate::log::Log;
 use anyhow::{Result, bail, ensure};
 
 use super::wrappers::{PERMS_PERMISSIVE, to_cstr};
+
+/// creates a timespec n seconds in the future from "now"
+fn mk_future_time(secs: u16) -> libc::timespec {
+  let mut tspec = libc::timespec {
+    tv_sec: 0,
+    tv_nsec: 0,
+  };
+  unsafe {
+    clock_gettime(CLOCK_REALTIME, &raw mut tspec);
+  }
+  tspec.tv_sec += i64::from(secs);
+  tspec
+}
 
 /// a semaphore for IPC
 pub enum Semaphore {
@@ -18,6 +34,7 @@ pub enum Semaphore {
   },
   /// this variant exists to disallow some interactions with semaphore after closing it
   Closed {
+    // Note: a closed semaphore should be a no-op for every single operation
     // for our API, the sem potiner is not needed anymore @ this point (can change anytime ofc)
     cname: String,
   },
@@ -43,7 +60,11 @@ impl Semaphore {
     }
   }
 
-  pub fn try_wait(&mut self) -> Result<()> {
+  /// Tries to wait on a semaphore with a timeout
+  /// ### Returns
+  /// `true` if the wait was successful, `false` if a timeout has occured, or an `Error` on any
+  /// other error
+  pub fn try_wait(&mut self, timeout_s: Option<u16>) -> Result<bool> {
     match self {
       Semaphore::Open {
         sem,
@@ -52,32 +73,43 @@ impl Semaphore {
       } =>
       // SAFETY: Self invariant
       {
-        ensure!(
-          unsafe { libc::sem_wait(*sem) } != -1,
-          "Failed to wait on semaphore: {}",
-          Error::last_os_error()
-        );
-        Ok(())
+        if let Some(s) = timeout_s {
+          let tm = mk_future_time(s);
+          let res = unsafe { libc::sem_timedwait(*sem, &raw const tm) };
+          let err = Error::last_os_error();
+          ensure!(
+            res != -1 || err.raw_os_error() == Some(ETIMEDOUT),
+            "Failed timedwait on semaphore: {err}"
+          );
+          Ok(err.raw_os_error() != Some(ETIMEDOUT))
+        } else {
+          ensure!(
+            unsafe { libc::sem_wait(*sem) } != -1,
+            "Failed to wait on semaphore: {}",
+            Error::last_os_error()
+          );
+          Ok(true)
+        }
       }
       Semaphore::Closed { cname } => bail!("Wait on closed semaphore {cname}"),
     }
   }
 
   /// Consumes self. The error variant contains the un-closed `self` along with an error message
-  pub fn try_close(self) -> Result<Semaphore, (Semaphore, String)> {
+  pub fn try_close(self) -> Result<Self, (Self, String)> {
     match self {
       Semaphore::Open {
         sem,
         cname,
-        marker: _pd,
+        marker: pd,
       } => {
         // SAFETY: Self invariant
         if unsafe { libc::sem_close(sem) } != 0 {
           Err((
-            Semaphore::Open {
+            Self::Open {
               sem,
               cname: cname.clone(),
-              marker: _pd,
+              marker: pd,
             },
             format!(
               "Failed to close semaphore {}: {}",
@@ -89,8 +121,8 @@ impl Semaphore {
           Ok(Self::Closed { cname })
         }
       }
-      Semaphore::Closed { cname } => Err((
-        Semaphore::Closed {
+      Self::Closed { cname } => Err((
+        Self::Closed {
           cname: cname.clone(),
         },
         format!("Close on closed semaphore {cname}"),
@@ -100,12 +132,12 @@ impl Semaphore {
 
   pub fn cname(&self) -> &String {
     match self {
-      Semaphore::Open {
+      Self::Open {
         sem: _,
         cname,
         marker: _pd,
       } => cname,
-      Semaphore::Closed { cname } => cname,
+      Self::Closed { cname } => cname,
     }
   }
 

@@ -4,6 +4,7 @@
 #ifdef __cplusplus
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // makes the library's linkage simpler in the LLVM IR modification phase (in the
 // LLVM plugin) however, I am not sure how exactly the C++ function
@@ -19,6 +20,10 @@ static_assert(sizeof(int) == 4, "Expecting int to be 4 bytes");
 #define GENFNDECLTEST(name, argt, argvar)                                      \
   void name(argt argvar, argt *target, uint32_t module, uint32_t fn)
 
+#define GEN_FN_VECDECL(id, type)                                               \
+  void llcap_vector_##id(std::vector<type> *vec, std::vector<type> **target,   \
+                         uint32_t module, uint32_t function)
+
 /*
 Hook function for function tracing.
 
@@ -33,6 +38,17 @@ Called first during argument capture or testing mode inside instrumented
 function. Ensures correct dispatch according to the test parameters.
 */
 void hook_arg_preamble(uint32_t module_id, uint32_t fn_id);
+/*
+Called as the last hook function in runtime argument instrumentation.
+Ensures the flush of the recorded protobuf, as well as setting some
+runtime flags when in testing mode.
+*/
+void hook_arg_epilogue(uint32_t module_id, uint32_t fn_id);
+
+/*
+Whether the specified function is being tested **right now**.
+*/
+int32_t hook_test_is_executing(uint32_t module_id, uint32_t fn_id);
 
 /*
 A testing hook.
@@ -70,6 +86,8 @@ GENFNDECLTEST(hook_uint64, ULLONG, a);
 #ifdef __cplusplus
 void llcap_hooklib_extra_cxx_string(std::string *str, std::string **target,
                                     uint32_t module, uint32_t function);
+GEN_FN_VECDECL(cint, int32_t);
+GEN_FN_VECDECL(stdstring, std::string);
 }
 #endif
 

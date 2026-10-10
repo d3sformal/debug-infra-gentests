@@ -3,19 +3,23 @@ pub mod call_tracing;
 pub mod hooklib_commons;
 pub mod mem_utils;
 use anyhow::{Result, anyhow, bail, ensure};
-use hooklib_commons::{META_MEM_NAME, META_SEM_ACK, META_SEM_DATA, ShmMeta};
-use std::ffi::CStr;
+use hooklib_commons::{META_MEM_NAME, META_MEM_SIZE_NAME, META_SEM_ACK, META_SEM_DATA, ShmMeta};
+use std::ffi::{self, CStr};
 use std::slice;
-use std::time::Duration;
 
 use crate::libc_wrappers::fd::try_shm_unlink_fd;
 use crate::libc_wrappers::sem::{FreeFullSemNames, Semaphore};
 use crate::libc_wrappers::shared_memory::ShmemHandle;
 use crate::libc_wrappers::wrappers::to_cstr;
 use crate::log::Log;
-use crate::modmap::{ExtModuleMap, NumFunUid};
+use crate::modmap::ExtModuleMap;
+use crate::shmem_capture::hooklib_commons::{
+  CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO, MODE_CHECKPOINT_TESTING_DO_CHECKPOINT,
+  MODE_CHECKPOINT_TESTING_NOCHECKPOINT, MODE_MT_TESTING, MODE_TESTING,
+};
 use crate::shmem_capture::mem_utils::{ptr_add_nowrap, ptr_add_nowrap_mut};
 use crate::stages::common::InfraParams;
+use crate::stages::test_registry::{TestRegisryItem, TestingMode};
 use crate::stages::testing::test_server_socket;
 use libc::O_CREAT;
 
@@ -89,7 +93,7 @@ pub struct ReadOnlyBufferPtr<'a> {
 }
 
 impl<'a> ReadOnlyBufferPtr<'a> {
-  fn len(&self) -> usize {
+  const fn len(&self) -> usize {
     self.slice.len()
   }
 
@@ -101,11 +105,11 @@ impl<'a> ReadOnlyBufferPtr<'a> {
     Self::new(self.slice.split_at(max_size).0)
   }
 
-  fn new(slice: &'a [u8]) -> Self {
+  const fn new(slice: &'a [u8]) -> Self {
     Self { slice }
   }
 
-  pub fn shift(&mut self, offset: usize) {
+  pub const fn shift(&mut self, offset: usize) {
     self.slice = self.slice.split_at(offset).1;
   }
 
@@ -135,7 +139,7 @@ impl<'a> ReadOnlyBufferPtr<'a> {
 
   // caller must ensure that the slice's pointer is never exposed or (worse) used as ptr to
   // mutable
-  pub fn as_slice(&self) -> &[u8] {
+  pub const fn as_slice(&self) -> &[u8] {
     self.slice
   }
 }
@@ -153,13 +157,15 @@ pub struct BorrowedOneshotWritePtr<'a, T> {
 impl<'a, T> BorrowedOneshotWritePtr<'a, T> {
   /// safety: ptr + offset must be a valid, unaliased pointer to T, caller also ensures T is
   /// trivial (as in a memcpy to size of T is a valid representation of T) and size of T is not less than 4 (see the write function for explanation)
-  pub unsafe fn new(ptr: std::cell::RefMut<'a, *mut u8>, offset: usize) -> Self {
+  pub unsafe fn at(ptr: std::cell::RefMut<'a, *mut u8>, offset: usize) -> Result<Self> {
     // safety: caller
     let data_ptr = unsafe { ptr.add(offset) };
-    Self {
+    ensure!(data_ptr.cast::<T>().is_aligned(), "Unaligned offset");
+
+    Ok(Self {
       _borrow_handle: ptr,
-      data: data_ptr as *mut T,
-    }
+      data: data_ptr.cast::<T>(),
+    })
   }
 
   pub fn write(self, value: T) {
@@ -173,8 +179,10 @@ impl<'a, T> BorrowedOneshotWritePtr<'a, T> {
 impl TracingInfra {
   /// blocks until a buffer has been filled by the instrumented applicaiton
   pub fn wait_for_full_buffer(&mut self) -> Result<BorrowedReadBuffer<'_>> {
-    let sem_res = self.sem_full.try_wait();
-    sem_res.map_err(|e| e.context("wait_for_full_buffer"))?;
+    self
+      .sem_full
+      .try_wait(None)
+      .map_err(|e| anyhow!("in wait_for_full_buffer: {e}"))?;
     self.got_buff_flag = true;
     Log::get("get_buff").trace(format!("get @ index {}", self.current_index));
     self.get_checked_base_ptr()
@@ -193,10 +201,10 @@ impl TracingInfra {
     ));
     let sem_res = self.sem_free.try_post();
     sem_res.map_err(|e| {
-      e.context(format!(
-        "While posting a free buffer (idx {}",
+      anyhow!(
+        "While posting a free buffer (idx {}): {e}",
         self.current_index
-      ))
+      )
     })?;
     self.got_buff_flag = false;
     self.current_index += 1;
@@ -206,12 +214,12 @@ impl TracingInfra {
 
   pub fn deinit(self) -> Result<()> {
     let (semfree, semfull, buffers_shm) = (self.sem_free, self.sem_full, self.backing_buffer);
-    let shm_uninit = deinit_shmem(buffers_shm);
+    let mem_deinit = deinit_shmem(buffers_shm);
     let sem_uninit = deinit_semaphores(semfree, semfull);
 
-    let goodbye_errors = [shm_uninit, sem_uninit]
+    let goodbye_errors = [mem_deinit, sem_uninit]
       .iter()
-      .fold("".to_string(), |acc, v| {
+      .fold(String::new(), |acc, v| {
         if let Err(e) = v {
           acc + &e.to_string()
         } else {
@@ -220,8 +228,7 @@ impl TracingInfra {
       });
     ensure!(
       goodbye_errors.is_empty(),
-      "Deinit failures: {}",
-      goodbye_errors
+      "Deinit failures: {goodbye_errors}"
     );
     Ok(())
   }
@@ -234,15 +241,14 @@ impl TracingInfra {
     let free_sem = Semaphore::try_open_exclusive(free_name, n_buffs)?;
     let full_sem = Semaphore::try_open_exclusive(full_name, 0);
 
-    if let Err(e) = full_sem {
-      match deinit_semaphore_single(free_sem) {
+    match full_sem {
+      Err(e) => match deinit_semaphore_single(free_sem) {
         Ok(()) => Err(anyhow!(e)),
         Err(e2) => Err(anyhow!(
           "Failed cleanup after FULL semaphore init failure: {e2}, init failure: {e}"
         )),
-      }
-    } else {
-      Ok((free_sem, full_sem.unwrap()))
+      },
+      Ok(v) => Ok((free_sem, v)),
     }
   }
 
@@ -285,33 +291,28 @@ impl TracingInfra {
   fn buffer_offset(&self, idx: usize) -> Result<usize> {
     ensure!(
       idx < self.logical_buffer_count,
-      "Invalid buffer index {}",
-      idx
+      "Invalid buffer index {idx}"
     );
     Ok(idx * self.logical_buffer_size)
   }
 
-  pub fn buffer_count(&self) -> usize {
+  pub const fn buffer_count(&self) -> usize {
     self.logical_buffer_count
   }
 
   /// returns a buffer pointing tho the base of a logical buffer (incl. length field)
-  fn get_checked_base_ptr_mut(&mut self) -> Result<BorrowedOneshotWritePtr<'_, u32>> {
+  fn get_checked_base_ptr_mut(&self) -> Result<BorrowedOneshotWritePtr<'_, u32>> {
     let buff_offset = self.buffer_offset(self.current_index)?;
     let backing_mem_len = self.backing_buffer.len() as usize;
     ensure!(
       buff_offset < backing_mem_len,
-      "Offset too large: {}, compared to the (mut) buffers len {}",
-      buff_offset,
-      backing_mem_len
+      "Offset too large: {buff_offset}, compared to the (mut) buffers len {backing_mem_len}",
     );
     let base_mem = self.backing_buffer.borrow_ptr_mut()?;
     let buffer_start = ptr_add_nowrap_mut(*base_mem, buff_offset)?;
     ensure!(
       !buffer_start.is_null() && buffer_start >= *base_mem,
-      "Buffer mut pointer is invalid: {:?}, offset: {}",
-      buffer_start,
-      buff_offset
+      "Buffer mut pointer is invalid: {buffer_start:?}, offset: {buff_offset}"
     );
     {
       let test_value_len = ptr_add_nowrap(buffer_start, std::mem::size_of::<u32>())?;
@@ -319,17 +320,15 @@ impl TracingInfra {
         !test_value_len.is_null()
           && test_value_len >= *base_mem
           && test_value_len < ptr_add_nowrap(*base_mem, backing_mem_len)?,
-        "Buffer mut pointer is invalid (u32 test): {:?}, offset: {}",
-        test_value_len,
-        buff_offset
+        "Buffer mut pointer is invalid (u32 test): {test_value_len:?}, offset: {buff_offset}"
       );
     }
     Log::get("writerptr").trace(format!("Ptr {buffer_start:?}"));
     // safety: base_mem RefMut, above checks, T is u32
-    Ok(unsafe { BorrowedOneshotWritePtr::new(base_mem, buff_offset) })
+    Ok(unsafe { BorrowedOneshotWritePtr::at(base_mem, buff_offset)? })
   }
 
-  /// returns Ok variant if base pointer + buff_offset are valid offset to a logical buffer
+  /// returns Ok variant if base pointer + `buff_offset` are valid offset to a logical buffer
   fn get_checked_base_ptr(&self) -> Result<BorrowedReadBuffer<'_>> {
     let buffers: &ShmemHandle = &self.backing_buffer;
     let buff_offset = self.buffer_offset(self.current_index)?;
@@ -348,9 +347,7 @@ impl TracingInfra {
       let test_value = ptr_add_nowrap(*base_mem, buff_offset)?;
       ensure!(
         !test_value.is_null() && test_value >= *base_mem,
-        "Buffer const pointer is invalid: {:?}, offset: {}",
-        test_value,
-        buff_offset
+        "Buffer const pointer is invalid: {test_value:?}, offset: {buff_offset}"
       );
       let test_value_end = ptr_add_nowrap(test_value, self.logical_buffer_size)?;
       ensure!(
@@ -387,19 +384,33 @@ impl TracingInfra {
 fn cleanup_sems(prefix: &str) {
   let lg = Log::get("cleanup_sems");
   let FreeFullSemNames { free, full } = FreeFullSemNames::new(prefix, "capture", "base");
-  for name in &[
-    free,
-    full,
-    String::from_utf8(META_SEM_DATA.split_last().unwrap().1.to_vec()).unwrap(),
-    String::from_utf8(META_SEM_ACK.split_last().unwrap().1.to_vec()).unwrap(),
-  ] {
+  let value_or_err = |v: &[u8]| -> Option<String> {
+    match v
+      .split_last()
+      .ok_or_else(|| "Wrong format of data sem name".to_owned())
+      .and_then(|v| String::from_utf8(v.1.to_vec()).map_err(|e| format!("Invalid string {e}")))
+    {
+      Ok(x) => Some(x),
+      Err(e) => {
+        lg.crit(e);
+        None
+      }
+    }
+  };
+  let (Some(nonull_data), Some(nonull_ack)) =
+    (value_or_err(META_SEM_DATA), value_or_err(META_SEM_ACK))
+  else {
+    return;
+  };
+  for name in &[free, full, nonull_data, nonull_ack] {
     lg.info(format!("Cleanup {name}"));
-    let res = Semaphore::try_open(name, 0, O_CREAT.into(), None);
-    if let Ok(sem) = res {
-      let _ = deinit_semaphore_single(sem)
-        .inspect_err(|e| lg.info(format!("Cleanup of opened {name}: {e}")));
-    } else {
-      lg.info(format!("Cleanup {name}: {}", res.err().unwrap()));
+    let res = Semaphore::try_open(name, 0, O_CREAT.into(), None)
+      .map_err(|e| format!("Cleanup {name}: {e}"))
+      .and_then(|sem| {
+        deinit_semaphore_single(sem).map_err(|e| format!("Cleanup of opened {name}: {e}"))
+      });
+    if let Err(e) = res {
+      lg.crit(e);
     }
   }
 }
@@ -420,9 +431,9 @@ fn deinit_semaphore_single(sem: Semaphore) -> Result<()> {
 
 pub fn deinit_semaphores(free_handle: Semaphore, full_handle: Semaphore) -> Result<()> {
   deinit_semaphore_single(free_handle)
-    .map_err(|e| e.context("When closing free semaphore"))
-    .and_then(|_| deinit_semaphore_single(full_handle))
-    .map_err(|e| e.context("When closing full semaphore"))
+    .map_err(|e| anyhow!("When closing free semaphore: {e}"))
+    .and_then(|()| deinit_semaphore_single(full_handle))
+    .map_err(|e| anyhow!("When closing full semaphore: {e}"))
 }
 
 fn get_shmem_name(prefix: &str) -> String {
@@ -440,9 +451,16 @@ fn init_shmem(prefix: &str, buff_count: u32, buff_len: u32) -> Result<ShmemHandl
 fn cleanup_shared_mem(prefix: &str) -> Result<()> {
   let lg = Log::get("cleanup_shared_mem");
   let metadata_shm_name = String::from_utf8(META_MEM_NAME.to_vec())?;
+  let metadata_shm_size_name = String::from_utf8(META_MEM_SIZE_NAME.to_vec())?;
   let buffs_shm_name: String = get_shmem_name(prefix); // keep type annotation for safety
   // SAFETY: line above
-  for name in unsafe { [to_cstr(&metadata_shm_name), to_cstr(&buffs_shm_name)] } {
+  for name in unsafe {
+    [
+      to_cstr(&metadata_shm_name),
+      to_cstr(&buffs_shm_name),
+      to_cstr(&metadata_shm_size_name),
+    ]
+  } {
     lg.info(format!("Cleanup {name:?}"));
     if let Err(e) = try_shm_unlink_fd(name) {
       lg.info(format!("Cleanup error: {name:?}: {e}"));
@@ -458,7 +476,7 @@ fn cleanup_shared_mem(prefix: &str) -> Result<()> {
 fn deinit_shmem(buffers_mem: ShmemHandle) -> Result<()> {
   buffers_mem
     .try_unmap()
-    .map_err(|e| e.context("deinit_shmem"))
+    .map_err(|e| anyhow!("deinit_shmem failed: {e}"))
 }
 
 pub fn send_call_tracing_metadata(chnl: &mut MetadataPublisher, infra: InfraParams) -> Result<()> {
@@ -472,10 +490,14 @@ pub fn send_call_tracing_metadata(chnl: &mut MetadataPublisher, infra: InfraPara
       target_fnid: 0,
       target_modid: 0,
       forked: 0,
-      arg_count: 0,
       test_count: 0,
       target_call_number: 0,
       test_timeout_seconds: 0,
+      thread_count: 0,
+      target_thread_lid: 0,
+      checkpoint_dump_dir: [0; 512],
+      checkpoint_id: 0,
+      shell_job: 0,
     },
   )
 }
@@ -491,47 +513,103 @@ pub fn send_arg_capture_metadata(chnl: &mut MetadataPublisher, infra: InfraParam
       target_fnid: 0,
       target_modid: 0,
       forked: 0,
-      arg_count: 0,
       test_count: 0,
       target_call_number: 0,
       test_timeout_seconds: 0,
+      thread_count: 0,
+      target_thread_lid: 0,
+      checkpoint_dump_dir: [0; 512],
+      checkpoint_id: 0,
+      shell_job: 0,
     },
   )
 }
 
-#[derive(Debug)]
-pub struct TestParams {
-  pub arg_count: u32,
-  pub test_count: u32,
-  pub target_call_number: u32,
-  pub timeout: Duration,
+pub trait ToLlcapRaw {
+  fn to_raw(&self) -> ffi::c_uint;
+}
+
+impl ToLlcapRaw for TestingMode {
+  fn to_raw(&self) -> ffi::c_uint {
+    match self {
+      Self::Testing => MODE_TESTING,
+      Self::MTCompatTesting => MODE_MT_TESTING,
+      Self::CheckpointedTesting(on) => {
+        if *on {
+          MODE_CHECKPOINT_TESTING_DO_CHECKPOINT
+        } else {
+          MODE_CHECKPOINT_TESTING_NOCHECKPOINT
+        }
+      }
+    }
+  }
 }
 
 pub fn send_test_metadata(
   chnl: &mut MetadataPublisher,
   infra: InfraParams,
-  fn_uid: NumFunUid,
-  params: TestParams,
+  test: &TestRegisryItem,
+  checkpoint_path: Option<&str>,
 ) -> Result<()> {
+  const MAX_CHARS: usize = (CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO - 1) as usize;
+  let checkpoint_id = u64::from(test.call_index.0) * 1000 * 1000 * 1000
+    + test.packet_index.0 * 1000 * 1000
+    + u64::from(test.target_call_number());
+
+  let checkpoint_path = checkpoint_path.unwrap_or("");
+  ensure!(
+    checkpoint_path.len() <= MAX_CHARS,
+    "Path to CRIU dumps too long!"
+  );
+
+  let mut dump_dir: [i8; CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO as usize] = [0; 512];
+
+  let v: Vec<u8> = checkpoint_path
+    .as_bytes()
+    .iter()
+    .take(MAX_CHARS)
+    .copied()
+    .collect();
+
+  assert!(v.len() <= MAX_CHARS);
+  v.iter().enumerate().for_each(
+    #[allow(clippy::cast_possible_wrap)]
+    |(i, val)| {
+      dump_dir[i] = *val as i8;
+    },
+  );
+
   send_metadata(
     chnl,
     ShmMeta {
       buff_count: infra.buff_count,
       buff_len: infra.buff_len,
       total_len: infra.buff_count * infra.buff_len,
-      mode: 2,
-      target_fnid: *fn_uid.function_id,
-      target_modid: *fn_uid.module_id,
+      mode: test.mode.to_raw(),
+      target_fnid: *test.uid.function_id,
+      target_modid: *test.uid.module_id,
       forked: 0,
-      arg_count: params.arg_count,
-      test_count: params.test_count,
-      target_call_number: params.target_call_number,
-      test_timeout_seconds: params.timeout.as_secs() as u16,
+      test_count: match test.mode {
+        TestingMode::Testing => test.test_count,
+        // in compat testing, testcount is always 1 and is re-used
+        // for the packet index
+        TestingMode::MTCompatTesting | TestingMode::CheckpointedTesting(_) => {
+          test.packet_index.0 as u32
+        }
+      },
+      target_call_number: test.target_call_number(),
+      test_timeout_seconds: test.test_timeout_s(),
+      thread_count: test.thread_count,
+      target_thread_lid: test.thread_lid.0 as u32,
+      checkpoint_dump_dir: dump_dir,
+      checkpoint_id,
+      shell_job: 1,
     },
   )
 }
 
 // sends the communication/testing parameters to the hooklib
+#[allow(clippy::large_types_passed_by_value)]
 fn send_metadata(meta_pub: &mut MetadataPublisher, target_descriptor: ShmMeta) -> Result<()> {
   Log::get("send_metadata").info("Waiting for a cooperating program");
   meta_pub.publish(target_descriptor)
@@ -539,6 +617,7 @@ fn send_metadata(meta_pub: &mut MetadataPublisher, target_descriptor: ShmMeta) -
 
 // do not derive clone/copy or define functions with similar semantics
 pub struct MetadataPublisher {
+  size_shm: ShmemHandle,
   shm: ShmemHandle,
   data_rdy_sem: Semaphore,
   data_ack_sem: Semaphore,
@@ -549,35 +628,90 @@ impl MetadataPublisher {
   // a "data_rdy" semaphore that signals that the metadata is ready to be read
   // a "data_ack" semaphore that indicates that the data has been read and can be rewritten/discarded
 
-  pub fn new(mem_path: &CStr, data_sem_path: &str, ack_sem_path: &str) -> Result<Self> {
+  fn mk_sems(rdy_sem_path: &str, ack_sem_path: &str) -> Result<(Semaphore, Semaphore)> {
     // initialize ready semaphore to zero as no data is ready
-    let data = Semaphore::try_open_exclusive(data_sem_path, 0)?;
+    let rdy = Semaphore::try_open_exclusive(rdy_sem_path, 0)?;
     // !! ack semaphore is initialized to ONE - this will be waited on in the first call of
     // Self::publish
     let ack = Semaphore::try_open_exclusive(ack_sem_path, 1)?;
-    let shm = ShmemHandle::try_mmap(mem_path, std::mem::size_of::<ShmemHandle>() as u32)?;
+    Ok((rdy, ack))
+  }
+
+  pub fn new(
+    mem_path: &CStr,
+    size_mem_path: &CStr,
+    rdy_sem_path: &str,
+    ack_sem_path: &str,
+  ) -> Result<Self> {
+    let (rdy, ack) = Self::mk_sems(rdy_sem_path, ack_sem_path)?;
+
+    // share the size-to-be allocated
+    let to_alloc = std::mem::size_of::<ShmMeta>() as u32;
+    let size_shm = ShmemHandle::try_mmap(size_mem_path, 4)?;
+    {
+      let mem = size_shm.borrow_ptr_mut()?;
+      unsafe { (*mem).cast::<u32>().write_unaligned(to_alloc) };
+    }
+
+    let shm = ShmemHandle::try_mmap(mem_path, to_alloc)?;
     Ok(Self {
+      size_shm,
       shm,
-      data_rdy_sem: data,
+      data_rdy_sem: rdy,
       data_ack_sem: ack,
     })
   }
 
-  pub fn publish(&mut self, meta: ShmMeta) -> Result<()> {
-    self.data_ack_sem.try_wait()?;
+  /// refreshes internals of the publisher so as to properly handle cases when
+  /// a faulty test case times out or terminates
+  ///
+  /// Note that this especially applies in the MT compat mode
+  pub fn re_new(&mut self) -> Result<()> {
+    let rdy_sem_path = self.data_rdy_sem.cname().clone();
+    let ack_sem_path = self.data_ack_sem.cname().clone();
 
-    {
-      let mem = self.shm.borrow_ptr_mut()?;
-      unsafe {
-        // unaligned write just to be sure
-        (*mem as *mut ShmMeta).write_unaligned(meta);
-      }
+    // hack because try_destroy takes ownership
+    let mut tmp_rdy = Semaphore::Closed {
+      cname: String::new(),
+    };
+    let mut tmp_ack = Semaphore::Closed {
+      cname: String::new(),
+    };
+    std::mem::swap(&mut tmp_rdy, &mut self.data_rdy_sem);
+    std::mem::swap(&mut tmp_ack, &mut self.data_ack_sem);
+    tmp_rdy.try_destroy().map_err(|e| anyhow!(e.1))?;
+    tmp_ack.try_destroy().map_err(|e| anyhow!(e.1))?;
+
+    let (rdy, ack) = Self::mk_sems(&rdy_sem_path, &ack_sem_path)?;
+    self.data_rdy_sem = rdy;
+    self.data_ack_sem = ack;
+    Ok(())
+  }
+
+  #[allow(clippy::large_types_passed_by_value)]
+  pub fn publish(&mut self, meta: ShmMeta) -> Result<()> {
+    if !self.data_ack_sem.try_wait(Some(5))? {
+      bail!("Publish timed out");
     }
 
+    {
+      Log::get("MetadataPublisher::publish").trace(format!(
+        "Threads: {}, Tests: {}",
+        meta.thread_count, meta.test_count
+      ));
+
+      let mem = self.shm.borrow_ptr_mut()?;
+      unsafe {
+        // SAFETY: allocation of self.shm (mainly the size)
+        // unaligned write just to be sure
+        (*mem).cast::<ShmMeta>().write_unaligned(meta);
+      }
+    }
     self.data_rdy_sem.try_post()
   }
 
   pub fn deinit(self) -> Result<()> {
+    self.size_shm.try_unmap()?;
     self.shm.try_unmap()?;
     self.data_ack_sem.try_destroy().map_err(|e| anyhow!(e.1))?;
     self.data_rdy_sem.try_destroy().map_err(|e| anyhow!(e.1))?;
@@ -610,10 +744,10 @@ trait CaptureLoop: Sized {
   /// the function is also responsible for incrementing a State-internal end-message counter
   /// which is used to detect the capture loop's termination sequence
   /// (see the implementation of [`Self::State::get_end_message_count`] for reference
-  fn update_from_buffer<'b>(
+  fn update_from_buffer(
     &mut self,
     state: Self::State,
-    buffer: BorrowedReadBuffer<'b>,
+    buffer: BorrowedReadBuffer<'_>,
     modules: &ExtModuleMap,
   ) -> Result<Self::State>;
 
@@ -644,7 +778,7 @@ trait CaptureLoop: Sized {
         st.reset_end_message_count();
         last_end_msg_count = 0;
       } else {
-        last_end_msg_count = st.get_end_message_count()
+        last_end_msg_count = st.get_end_message_count();
       }
       state = st;
     }

@@ -1,5 +1,5 @@
 #!/bin/sh
-set -e
+set -ex
 
 # Args: <tested binary directory> <function name> <timeout in seconds> <output-testing script/directory> <clang args>
 
@@ -14,12 +14,14 @@ OutputTestScriptDir=$1; shift
 IRTestScriptDir=$1; shift
 LlcapBufSz=$1; shift
 LlcapBufCnt=$1; shift
+MTTest=$1; shift # don't quote this - will either be --mt or empty
 CppArgs=$*;
 
 cd "$WorkingDir"
 WorkingDir=$(pwd)
-BuildDir="$WorkingDir"/build
-OutputsDir="$WorkingDir"/out
+TmpDir="/tmp/llcap-$(basename "$WorkingDir")"
+BuildDir="$TmpDir"/build
+OutputsDir="$TmpDir"/out
 
 # "testbin" name should be hardcoded into the cmakelists.txt file
 LlcapSvrBin="$WorkingDir/../../llcap-server/target/debug/llcap-server"
@@ -30,45 +32,43 @@ ModMapsPath="$BuildDir"/module-maps/
 cd ../../ipc-hooklib
 
 cmake ./ -DCFG_MANUAL=OFF
-make
+make -j4
 
 # build the first instrumentation stage
-rm -rf "$BuildDir"
-mkdir "$BuildDir"
+rm -rf "$TmpDir"
+mkdir -p "$BuildDir"
 cd "$BuildDir"
+
+ln -sf "$WorkingDir/../../ipc-hooklib/" /tmp/llcap-hooklib
 
 # ! assume llvm pass to be built 
 # (avoiding rebuild, because this is quite a long compilation)
-cp ../../../../01-llvm-ir/llvm-pass/libfn-pass.so "$BuildDir"
+cp "$WorkingDir/../../../01-llvm-ir/llvm-pass/libfn-pass.so" "$BuildDir"
 
 if [ -d "$IRTestScriptDir" ];
 then
-  # TODO: make this a local function (build dir + cmake args?)
-  # testing IR - create a twin build directory
-  # where we only generate IR and inspect it
-
   TmpBuildDir="$BuildDir"/../build-ir-test
   rm -rf "$TmpBuildDir"
-  mkdir "$TmpBuildDir"
+  mkdir -p "$TmpBuildDir"
 
-  cp ../../../../01-llvm-ir/llvm-pass/libfn-pass.so "$TmpBuildDir"
+  cp "$WorkingDir/../../../01-llvm-ir/llvm-pass/libfn-pass.so" "$TmpBuildDir"
   cd "$TmpBuildDir"
 
   
   cmake -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_COMPILER=clang++ \
-  ../
+  "$WorkingDir"
 
   cmake   -D CMAKE_C_COMPILER=clang \
   -D CMAKE_C_FLAGS="-mllvm -Call -mllvm -llcap-mapdir=./mmaps -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=../libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
   -D CMAKE_CXX_COMPILER=clang++ \
   -D CMAKE_CXX_FLAGS="-mllvm -Call -mllvm -llcap-mapdir=./mmaps -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so -S -emit-llvm" \
-  ../
+  "$WorkingDir"
  
   # initialize directory for llvm pass artifacts
   mkdir "./mmaps"
   make clean
-  make
+  make -j4
 
   echo "pre-testing LLVM IR $IRTestScriptDir"
   for File in "$IRTestScriptDir"/ir-*.sh; do
@@ -83,21 +83,22 @@ fi
 
 cmake -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_COMPILER=clang++ \
-  ../
+  "$WorkingDir"
 
-cmake -D CMAKE_C_COMPILER=clang \
-  -D CMAKE_C_FLAGS="-mllvm -Call -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
-  -D CMAKE_CXX_COMPILER=clang++ \
-  -D CMAKE_CXX_FLAGS="-mllvm -Call -mllvm -llcap-verbose -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
-  ../
-
-# re-initialize artifact directories
-mkdir -p "$OutputsDir"
 # initialize directory for llvm pass artifacts
 mkdir "$ModMapsPath"
 
+cmake -D CMAKE_C_COMPILER=clang \
+  -D CMAKE_C_FLAGS="-mllvm -Call -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-verbose -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
+  -D CMAKE_CXX_COMPILER=clang++ \
+  -D CMAKE_CXX_FLAGS="-mllvm -Call -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-verbose -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
+  "$WorkingDir"
+
+# re-initialize artifact directories
+mkdir -p "$OutputsDir"
+
 make clean
-make
+make -j4
 
 SelectionPath="$OutputsDir"/selected-fns.bin
 
@@ -109,36 +110,54 @@ echo "!!! Rebuilding"
 
 cmake -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_COMPILER=clang++ \
-  ../
+  "$WorkingDir"
 
 cmake   -D CMAKE_C_COMPILER=clang \
-  -D CMAKE_C_FLAGS="$CppArgs -mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
+  -D CMAKE_C_FLAGS="$CppArgs -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
   -D CMAKE_CXX_COMPILER=clang++ \
-  -D CMAKE_CXX_FLAGS="$CppArgs -mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
-  ../
+  -D CMAKE_CXX_FLAGS="$CppArgs -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
+  "$WorkingDir"
 
 make clean
-make
+make -j4
 
 ArgTraceDir="$OutputsDir"/arg-traces-dir
 TestOutputsDir="$OutputsDir"/test-outputs
 
 echo "!!! Capturing"
+set -x
 
 rm -rf "$ArgTraceDir" && "$LlcapSvrBin" $LlcapVerbosity -s "$LlcapBufSz" -c "$LlcapBufCnt" --modmap "$ModMapsPath"\
  capture-args -s "$SelectionPath" -o "$ArgTraceDir" "$InstrumentedBin"
+
+set +x
 
 echo "!!! Testing"
 
 mkdir -p "$TestOutputsDir"
 
-Output=$(rm -rf "${TestOutputsDir:?}"/* && "$LlcapSvrBin" $LlcapVerbosity -s "$LlcapBufSz" -c "$LlcapBufCnt" --modmap "$ModMapsPath"\
+rm -rf "${TestOutputsDir:?}"/*
+
+set -x
+
+Output=$("$LlcapSvrBin" $LlcapVerbosity -s "$LlcapBufSz" -c "$LlcapBufCnt" --modmap "$ModMapsPath"\
  test -s "$SelectionPath" -t "$TimeoutSec" -c "$ArgTraceDir"\
- -o "$TestOutputsDir" "$InstrumentedBin")
+ -o "$TestOutputsDir" $MTTest "$InstrumentedBin")
+
+set +x
+
+
+if [[ $LLCAP_ECHO_OUT ]]; then
+  echo "$Output"
+fi
 
 # transform output to a |-separated table with a single-line header
 # ModuleID|FunctionID|Call|Packet|Result
 Output=$(echo "$Output" | cut -d']' -f 2- | grep ".*|.*|.*" | tr -d '[:blank:]')
+
+if [[ $LLCAP_ECHO_OUT ]]; then
+  echo "$Output"
+fi
 
 if [[ "$OutputTestScriptDir" != "" ]]
 then

@@ -8,10 +8,12 @@ option(CFG_MANUAL "Library compiled without auto initialization and deinitializa
 
 cmake_minimum_required(VERSION 3.30)
 project(my-hook)
-
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_compile_options(-Wall -Wextra -Wconversion -Wpedantic -Wmost)
 
+find_package(Protobuf 3 REQUIRED)
+include_directories(${PROTOBUF_INCLUDE_DIRS} ./)
 
 # for a more thorough audit, you can use
 
@@ -19,12 +21,15 @@ add_compile_options(-Wall -Wextra -Wconversion -Wpedantic -Wmost)
   # with some selection of ignored warnings
 #-Wno-declaration-after-statement -Wno-pre-c23-compat -Wno-c++98-compat -Wno-pre-c11-compat -Wno-global-constructors -Wno-c++98-compat-pedantic -Wno-covered-switch-default -Wno-padded)
 
-add_library(my-hook SHARED ./hook.cpp ./llcap_state.c ./shm_write_channel.c ./shm_util.c ./shm_oneshot_rx.c)
+add_library(my-hook SHARED ./hook.cpp ./llcap_state.cpp ./shm_write_channel.c ./shm_util.c ./shm_oneshot_rx.c ./checkpoint.cpp)
+protobuf_generate(TARGET my-hook LANGUAGE cpp PROTOS ./protobuf/proto/main.proto)
+target_link_libraries(my-hook ${PROTOBUF_LIBRARY} criu)
 
 set_target_properties(my-hook PROPERTIES C_STANDARD 23)
 set_target_properties(my-hook PROPERTIES CXX_STANDARD 23)
 
 if(CFG_MANUAL)
-add_library(my-hook-manual SHARED ./hook.cpp ./llcap_state.c ./shm_write_channel.c ./shm_util.c ./shm_oneshot_rx.c)
+add_library(my-hook-manual SHARED ./hook.cpp ./llcap_state.cpp ./shm_write_channel.c ./shm_util.c ./shm_oneshot_rx.c ./protobuf/proto/main.pb.cc ./checkpoint.cpp)
 set_target_properties(my-hook-manual PROPERTIES COMPILE_DEFINITIONS "MANUAL_INIT_DEINIT=1")
+target_link_libraries(my-hook-manual ${PROTOBUF_LIBRARY} criu)
 endif()

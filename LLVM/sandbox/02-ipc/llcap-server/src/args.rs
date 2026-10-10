@@ -101,7 +101,8 @@ pub enum Stage {
     #[arg(short = 'o', long)]
     selection_path: Option<PathBuf>,
 
-    /// Command to execute the binary whose calls we want to trace
+    /// Command to execute the binary whose calls we want to trace.
+    /// Not desired when `import_path` is set
     #[arg(trailing_var_arg(true))]
     command: Option<Vec<String>>,
   },
@@ -125,7 +126,7 @@ pub enum Stage {
   },
 
   Test {
-    // path to the function selection file (generated in the call-tracing phase)
+    /// path to the function selection file (generated in the call-tracing phase) or "skip" to allow all functions from module maps
     #[arg(short, long, default_value = Constants::default_selected_functions_path())]
     selection_file: PathBuf,
 
@@ -133,9 +134,9 @@ pub enum Stage {
     #[arg(short, long, default_value = Constants::default_capture_out_path())]
     capture_dir: PathBuf,
 
-    /// capture read memory limit in MEBIBYTES
-    #[arg(short = 'l', long, default_value = "0")]
-    mem_limit: u32,
+    /// mode
+    #[arg(long = "mode", default_value = "basic")]
+    testing_mode: TestingMode,
 
     /// Redirects output to a file or a directory instead of the standard output (target directory must exist beforehand otherwise the path is treated as a file path)
     #[arg(short = 'o', long)]
@@ -149,12 +150,32 @@ pub enum Stage {
     #[arg(long)]
     global_timeout: Option<u16>,
 
+    /// Optional path to a final testing report. Enconding is determined by the file extension.
+    /// Supported formats: .txt/.out/.log for plain text and .json for JSON  
+    #[arg(long)]
+    report: Option<PathBuf>,
+
+    /// Whether the report produced shall be fully detailed (so far, only JSON report format is supported)
+    #[arg(long)]
+    detailed_report: bool,
+
     /// Command to execute tested binary
     #[arg(trailing_var_arg(true))]
     command: Vec<String>,
 
-    /// Print out information about a specific function argument packet and exit. Input format is in form MX-FX-DD where M/FX is 4-byte HEXAdecimal module/function id and DD is a DECIMAL index of the packet
+    /// Print out information about a specific function argument packet and exit. Input format is in form MX-FX-DD where M/FX is 4-byte hexadecimal module/function id and DD is a DECIMAL index of the packet
     #[arg(long, value_parser=parse_pkt_inspect)]
     inspect_packets: Option<PacketInspecSpec>,
+
+    /// capture read memory limit in MEBIBYTES
+    #[arg(short = 'l', long, default_value = "0")]
+    mem_limit: u32,
   },
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, clap::ValueEnum)]
+pub enum TestingMode {
+  Basic,
+  MTSupport,
+  Criu,
 }

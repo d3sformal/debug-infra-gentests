@@ -2,15 +2,10 @@
 set -e
 
 Out=$(echo "$1" | tail -n+2)
-# exception is detected inside the try block, and only inside of it
+# exception is detected in every call that throws it
 # we replace 4-th call with index 4 argument (from 5th recorded call)
+echo "$Out" | grep "1|4|Pass"
+echo "$Out" | grep "2|4|Exception"
+echo "$Out" | grep "3|4|Exception"
 echo "$Out" | grep "4|4|Exception"
-
-set +e
-# no idea why "| not" does not work here
-Res=$(echo "$Out" | grep -v "4|4|Exception" | grep "Exception")
-if [[ "$Res" != "" ]]
-then
-  echo "$Res"
-  exit 1
-fi
+echo "$Out" | grep "5|4|Exception"

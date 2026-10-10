@@ -1,7 +1,12 @@
+#include "debug.hpp"
 #include "hook.h"
 #include "llcap_state.h"
+#include "protoTraits.hpp"
+#include "protobuf/proto/main.pb.h"
 #include "shm_commons.h"
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <cassert>
 #include <csignal>
 #include <cstddef>
@@ -10,14 +15,25 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <format>
+#include <google/protobuf/arena.h>
 #include <iostream>
+#include <mutex>
+#include <ostream>
+#include <ranges>
 #include <string>
+#include <string_view>
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <thread>
+#include <type_traits>
+#include <unistd.h>
 #include <utility>
+#include <vector>
+
 #define ENDPASS_CODE 231
 
 #define HOOKLIB_EC_PKT_RD 232
@@ -29,14 +45,25 @@
 #define HOOKLIB_EC_TX_END 239
 #define HOOKLIB_EC_TX_FIN 240
 #define HOOKLIB_EC_IMPL 241
+#define HOOKLIB_EC_CHCKPNT 242
 
 static int s_server_socket = -1;
 
+template <typename T, std::size_t S> using Arr = std::array<T, S>;
+
+template <size_t Sz>
+static bool do_srv_send(const std::array<char, Sz> &message, const char *desc) {
+  if (send(s_server_socket, message.data(), message.size(), 0) == -1) {
+    perror(std::format("Failed to send {}\n", desc).c_str());
+    close(s_server_socket);
+    return false;
+  }
+  return true;
+}
+
 static bool connect_to_server(const char *path) {
   // https://beej.us/guide/bgipc/html/split/unixsock.html#unixsock
-  socklen_t len;
-  struct sockaddr_un remote;
-  remote.sun_family = AF_UNIX;
+  struct sockaddr_un remote{.sun_family = AF_UNIX, .sun_path = ""};
 
   s_server_socket = socket(AF_UNIX, SOCK_STREAM, 0);
   if (s_server_socket == -1) {
@@ -45,60 +72,90 @@ static bool connect_to_server(const char *path) {
   }
   // 108 is the limith of the sun_path field
   constexpr size_t SUN_PATH_MAX_LEN = 108;
-  strncpy(remote.sun_path, path, SUN_PATH_MAX_LEN);
-  len = static_cast<socklen_t>(strnlen(remote.sun_path, SUN_PATH_MAX_LEN) +
-                               sizeof(remote.sun_family));
-  // reinterpret_cast should be legal here... (otherwise there is only C-style
-  // cast)
-  if (connect(s_server_socket, reinterpret_cast<struct sockaddr *>(&remote),
-              len) == -1) {
+  strncpy(static_cast<char *>(remote.sun_path), path, SUN_PATH_MAX_LEN);
+  auto len = static_cast<socklen_t>(
+      strnlen(static_cast<char *>(remote.sun_path), SUN_PATH_MAX_LEN) +
+      sizeof(remote.sun_family));
+  auto *sockaddr = start_lifetime_as<struct sockaddr>(&remote);
+  if (connect(s_server_socket, sockaddr, len) == -1) {
     perror("Failed to connect\n");
     return false;
   }
 
-  return true;
-}
+  // the bitcast checks (at compile time) that pid_t fits the array
+  auto pid_bytes = std::bit_cast<std::array<char, 4>>(getpid());
 
-static bool do_srv_send(void *data, size_t size, const char *desc) {
-  if (send(s_server_socket, data, size, 0) == -1) {
-    std::cerr << "Failed to send " << desc << std::endl;
-    perror("");
-    close(s_server_socket);
-    return false;
-  }
-  return true;
+  // sends this process' PID so that llcap-server can monitor it
+  // (this is usually done by the "test coordinator", execpt in the MT support
+  // mode)
+  return do_srv_send(pid_bytes, "Connect - PID");
 }
 
 static bool do_srv_recv(void *target, size_t size, const char *desc) {
   ssize_t rcvd = recv(s_server_socket, target, size, 0);
   if (rcvd <= 0) {
-    std::cerr << "Failed to recv " << desc << ", rcvd: " << rcvd << std::endl;
-    perror("");
+    perror(
+        std::format("Failed to recv {0} - received {1}\n", desc, rcvd).c_str());
     close(s_server_socket);
     return false;
   } else if (static_cast<size_t>(rcvd) < size) {
-    std::cerr << "Failed to recv size at " << desc << ", got: " << rcvd
-              << " expected " << size << '\n';
-    perror("");
+    perror(std::format("Failed to recv size at {0} - got {1} - expected {2}\n",
+                       desc, rcvd, size)
+               .c_str());
     close(s_server_socket);
     return false;
   }
   return true;
 }
 
-#define MSG_SIZE 16
+template <size_t Shift, size_t OutSz, size_t InSz>
+static void copy_into_impl(Arr<char, OutSz> &target,
+                           const std::array<char, InSz> &in) {
+  namespace rang = std::ranges;
+  static_assert(Shift + InSz <= OutSz, "Target overflow (1)");
+  rang::copy(in, target.begin() + Shift);
+}
+
+template <size_t Shift, size_t OutSz, size_t InSz, size_t... InSzS>
+static void copy_into_impl(std::array<char, OutSz> &target,
+                           const std::array<char, InSz> &in,
+                           const std::array<char, InSzS> &...others) {
+  constexpr auto NEXT_SHIFT = Shift + in.size();
+  static_assert(OutSz > NEXT_SHIFT, "Target overflow (...)");
+  copy_into_impl<Shift>(target, in);
+  copy_into_impl<NEXT_SHIFT>(target, others...);
+}
+
+// recursively add "vals" into the target, checking their size
+template <size_t OutSz, typename... InS>
+static void copy_into(std::array<char, OutSz> &target, InS... vals) {
+  static_assert(target.size() >= (sizeof(vals) + ...),
+                "values must fit the target");
+  copy_into_impl<0UZ>(target, std::bit_cast<Arr<char, sizeof(vals)>>(vals)...);
+}
+
+// creates a compile-time-checked "mesasge" (bytes) of certain size.
+// The compile time checks ensure that the vals do in fact fit into the OutSz
+// size of the returned message (via sizeof)
+template <size_t OutSz, typename... InS>
+static Arr<char, OutSz> make_message(InS... vals) {
+  Arr<char, OutSz> result{'\0'};
+  copy_into(result, vals...);
+  return result;
+}
 
 static bool send_start_msg(uint32_t mod, uint32_t fun, uint32_t call_idx) {
-  char message[MSG_SIZE];
-  static_assert(sizeof(TAG_START) + sizeof(mod) + sizeof(fun) +
-                        sizeof(call_idx) <=
-                    MSG_SIZE &&
-                sizeof(TAG_START) == 2 && sizeof(mod) == 4 && sizeof(fun) == 4);
-  memcpy(message, &TAG_START, sizeof(TAG_START));
-  memcpy(message + 2, &mod, sizeof(mod));
-  memcpy(message + 6, &fun, sizeof(fun));
-  memcpy(message + 10, &call_idx, sizeof(call_idx));
-  return do_srv_send(message, sizeof(message), "msg start");
+  auto message = make_message<CLI_MSG_SIZE>(TAG_START, mod, fun, call_idx);
+  return do_srv_send(message, "msg start");
+}
+
+template <typename T, size_t InS>
+static T take_into(const std::array<char, InS> &in) {
+  static_assert(InS >= sizeof(T),
+                "input must be at least as large as the desired output");
+  std::array<char, sizeof(T)> tArr{'\0'};
+  std::ranges::copy(in | std::views::take(sizeof(T)), tArr.begin());
+  return std::bit_cast<T>(tArr);
 }
 
 // regardless of return type, the target must be freed by caller
@@ -106,20 +163,17 @@ static bool request_packet_from_server(uint64_t index, void **target,
                                        uint32_t *packet_size) {
   *target = NULL;
   *packet_size = 0;
-  char message[MSG_SIZE];
-  static_assert(sizeof(TAG_PKT) == 2 &&
-                sizeof(TAG_PKT) + sizeof(index) <= MSG_SIZE);
+  auto message = make_message<CLI_MSG_SIZE>(TAG_PKT, index);
+  if (!do_srv_send(message, "pktrq")) {
+    return false;
+  }
 
-  memcpy(message, &TAG_PKT, sizeof(TAG_PKT));
-  memcpy(message + 2, &index, sizeof(index));
-  if (!do_srv_send(message, sizeof(message), "pktrq")) {
-    return false;
-  }
   size_t pkt_size = 0;
-  if (!do_srv_recv(message, sizeof(uint32_t), "pkt sz")) {
+  auto *pMsg = message.data();
+  if (!do_srv_recv(pMsg, sizeof(uint32_t), "pkt sz")) {
     return false;
   }
-  pkt_size = static_cast<size_t>(*reinterpret_cast<uint32_t *>(message));
+  pkt_size = static_cast<size_t>(take_into<uint32_t>(message));
   void *buff = malloc(pkt_size);
   *target = buff;
   if (buff == NULL) {
@@ -148,33 +202,22 @@ enum class EMsgEnd : uint8_t {
 
 static uint16_t get_tag(EMsgEnd end_type) {
   constexpr uint8_t ENUM_LEN = std::to_underlying(EMsgEnd::MSG_END_COUNT);
-  return std::array<uint16_t, ENUM_LEN>{TAG_TIMEOUT, TAG_SGNL, TAG_EXIT,
-                                        TAG_PASS,    TAG_EXC,  TAG_FATAL}
-      [std::to_underlying(end_type)];
+  static constexpr std::array<uint16_t, ENUM_LEN> VALUES{
+      TAG_TIMEOUT, TAG_SGNL, TAG_EXIT, TAG_PASS, TAG_EXC, TAG_FATAL};
+  return VALUES[std::to_underlying(end_type)];
 }
 
 static bool send_test_end_message(uint64_t index, EMsgEnd end_type,
                                   int32_t status) {
   uint16_t tag = get_tag(end_type);
-
-  char message[MSG_SIZE];
-  static_assert(
-      sizeof(TAG_TEST_END) + sizeof(index) + sizeof(tag) + sizeof(status) <=
-          MSG_SIZE &&
-      sizeof(TAG_TEST_END) == 2 && sizeof(index) == 8 && sizeof(tag) == 2);
-  memcpy(message, &TAG_TEST_END, 2);
-  memcpy(message + 2, &index, sizeof(index));
-  memcpy(message + 10, &tag, sizeof(tag));
-  memcpy(message + 12, &status, sizeof(status));
-  return do_srv_send(message, sizeof(message), "test end msg");
+  auto message = make_message<CLI_MSG_SIZE>(TAG_TEST_END, get_thread_lid(),
+                                            index, tag, status);
+  return do_srv_send(message, "test end msg");
 }
 
 static bool send_finish_message() {
-  char message[MSG_SIZE];
-  static_assert(MSG_SIZE >= sizeof(TAG_TEST_FINISH));
-
-  memcpy(message, &TAG_TEST_FINISH, sizeof(TAG_TEST_FINISH));
-  return do_srv_send(message, sizeof(message), "test finish msg");
+  auto message = make_message<CLI_MSG_SIZE>(TAG_TEST_FINISH);
+  return do_srv_send(message, "test finish msg");
 }
 
 static bool try_wait_pid(pid_t pid, int32_t *status, EMsgEnd *result) {
@@ -269,8 +312,8 @@ static ERequestResult handle_requests(int rq_sock) {
     return ERequestResult::TestException;
   }
 
-  void *packet_ptr;
-  uint32_t packet_size;
+  void *packet_ptr = nullptr;
+  uint32_t packet_size = 0;
   if (!request_packet_from_server(packet_idx, &packet_ptr, &packet_size)) {
     std::cerr << "Pktrq failed pkt idx " << packet_idx << std::endl;
     free(packet_ptr);
@@ -292,11 +335,10 @@ static ERequestResult handle_requests(int rq_sock) {
   return ERequestResult::Continue;
 }
 
-static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
+static EMsgEnd serve_for_other_until_end(int test_requests_socket, pid_t pid,
                                          int timeout_s, int32_t *status) {
-  time_t seconds;
   EMsgEnd result = EMsgEnd::MSG_END_FATAL;
-  seconds = time(NULL);
+  time_t seconds = time(NULL);
   while (true) {
     if (try_wait_pid(pid, status, &result)) {
       if (result == EMsgEnd::MSG_END_STATUS && *status == ENDPASS_CODE) {
@@ -315,7 +357,7 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
         case ERequestResult::Continue:
           break;
         default:
-          std::cerr << "serve_for_child_until_end: invalid ERequestResult: "
+          std::cerr << "serve_for_other_until_end: invalid ERequestResult: "
                     << std::to_underlying(req_result);
           return EMsgEnd::MSG_END_FATAL;
         }
@@ -340,91 +382,192 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
     case ERequestResult::Continue:
       break;
     default:
-      std::cerr << "serve_for_child_until_end: invalid ending ERequestResult: "
+      std::cerr << "serve_for_other_until_end: invalid ending ERequestResult: "
                 << std::to_underlying(req_result);
       return EMsgEnd::MSG_END_FATAL;
     }
   }
 }
 
-static void perform_testing(uint32_t module_id, uint32_t function_id,
-                            uint32_t call_idx) {
+// *_setup functions shall terminate the program on failure
+
+// sets up the server connection
+static void pre_test_setup(uint32_t module_id, uint32_t function_id) {
+  if (shall_perform_checkpoint()) {
+    if (!perform_checkpoint()) {
+      std::cerr << "Failed to restore/checkpoint" << std::endl;
+      std::exit(HOOKLIB_EC_CHCKPNT);
+    }
+    // after restore, conditions may have changed, we must check again
+    //  (a caller has decided test setup takes place -> should_hijack_arg 
+    // was true at one point)
+    if (!should_hijack_arg()) {
+      return;
+    }
+  }
+  // we shall end up here after a restoration
+  // -> since restore is performed by the llcap-server, we can expect that
+  // "everything is the same" and we can just connect to the llcap-server
+  // "normally"
   if (!connect_to_server(TEST_SERVER_SOCKET_NAME)) {
     std::cerr << "Failed to connect" << std::endl;
-    exit(HOOKLIB_EC_CONN);
+    std::exit(HOOKLIB_EC_CONN);
+  }
+  if (!send_start_msg(module_id, function_id, get_call_num())) {
+    std::cerr << "Failed send start message" << std::endl;
+    std::exit(HOOKLIB_EC_START);
+  }
+}
+
+// testing mode-related decisions must be made exclusively when running in
+// MT-environment due to the checkpointing nature: if a restore happens "from a
+// thread (TX)" and a different thread (TZ) would access the testing mode before
+// TX can "retarget it", we could lose non-zero testing calls purely due to this
+// mis-timed decision
+static std::mutex s_testing_mode_retarget_mutex;
+
+// sets up the testing environment for the MT support mode testing
+static void multithread_test_setup() {
+  void *packet_ptr = nullptr;
+  uint32_t packet_size = 0;
+  // the index we'll be fetching from the llcap-server
+  auto idx = arg_pkt_index_to_fetch();
+  if (!request_packet_from_server(idx, &packet_ptr, &packet_size)) {
+    std::cerr << std::format("Packet request failed with idx {}", idx)
+              << std::endl;
+    std::exit(HOOKLIB_EC_RECV_PKT);
   }
 
-  if (!send_start_msg(module_id, function_id, call_idx)) {
-    std::cerr << "Failed send start message" << std::endl;
-    exit(HOOKLIB_EC_START);
+  if (packet_ptr == nullptr || !locally_initialize_arg_packet(
+                                   packet_ptr, static_cast<int>(packet_size))) {
+    std::cerr << std::format("Packet init failed with idx {0}, received size "
+                             "{1}, packet ptr {2}",
+                             idx, packet_size, packet_ptr)
+              << std::endl;
+    std::exit(HOOKLIB_EC_PAIR);
+  }
+}
+
+static void perform_testing(uint32_t module_id, uint32_t function_id) {
+  // *_setup functions terminate the program on failure
+  pre_test_setup(module_id, function_id);
+  // the above call could have performed a test retarget -> additional check
+  if (!should_hijack_arg()) {
+    // de/serializers use should_hijack_arg as well -> no way argument replacement 
+    // is attempted after retarget that passes here 
+    return;
   }
   set_fork_flag(); // setting the flag in both parent and the fork should not
                    // matter, this function never returns in the fork's parent
                    // (test coordinator)
+                   // ! for mt_compat_testing we don't actually fork
+                   // but the behavior should remain the same (call counts, ...)
+
+  if (mt_compat_testing()) {
+    multithread_test_setup();
+    // go back and hijack arguments
+    return;
+  }
 
   for (uint32_t test_idx = 0; test_idx < test_count(); ++test_idx) {
-    int sockets[2];
+    std::array<int, 2> sockets{0};
 
-    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == -1) {
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets.data()) == -1) {
       perror("socketpair");
-      exit(HOOKLIB_EC_PAIR);
+      std::exit(HOOKLIB_EC_PAIR);
     }
-    int child_socket = sockets[1];
-    int parent_socket = sockets[0];
-    // LLCAP-SERVER <---- UNIX domain socket ----> PARENT
-    // <--par_sock]-------[child_sock--> CHILD
+    int test_process_socket = sockets[1];
+    int coordinator_socket = sockets[0];
+    // LLCAP-SERVER <---- UNIX domain socket ----> COORDINATOR
+    // <--coor_sock]-------[test_sock--> TEST PROCESS
 
     pid_t pid = fork();
     if (pid == 0) {
-      // CHILD
-      init_packet_socket(child_socket, test_idx);
+      // TEST PROCESS
+      init_packet_socket(test_process_socket, test_idx);
       // populates "argument packet" that will be used by instrumentation
-      if (!receive_packet()) {
-        perror("Failed to receive argument packet\n");
-        exit(HOOKLIB_EC_RECV_PKT);
+      if (!receive_packet_proto()) {
+        perror("Failed to receive argument packet protobuf\n");
+        std::quick_exit(HOOKLIB_EC_RECV_PKT);
       }
-      // in child process, return to resume execution (start hijacking)
+      // in the test process, return to resume execution (start hijacking)
       return;
     }
-    // PARENT
+    // COORDINATOR
     int status = -1;
-    EMsgEnd result = serve_for_child_until_end(
-        parent_socket, pid, static_cast<int>(get_test_tout_secs()), &status);
+    EMsgEnd result = serve_for_other_until_end(
+        coordinator_socket, pid, static_cast<int>(get_test_tout_secs()),
+        &status);
     if (result == EMsgEnd::MSG_END_FATAL) {
       // attempt to provide all the errors
       std::cerr.flush();
       std::cout.flush();
     }
+
     if (result != EMsgEnd::MSG_END_STATUS &&
         result != EMsgEnd::MSG_END_SIGNAL && result != EMsgEnd::MSG_END_EXC &&
         result != EMsgEnd::MSG_END_PASS) {
-      // kill the child on non-exiting result (timeout, error, ...)
+      // kill the test process on non-exiting result (timeout, error, ...)
       // KILL and STOP cannot be ignored
       kill(pid, SIGSTOP);
     }
 
     if (!send_test_end_message(test_idx, result, status)) {
-      exit(HOOKLIB_EC_TX_END);
+      std::exit(HOOKLIB_EC_TX_END);
     }
   }
 
   if (!send_finish_message()) {
-    exit(HOOKLIB_EC_TX_FIN);
+    std::exit(HOOKLIB_EC_TX_FIN);
   }
 
-  exit(0);
+  std::exit(0);
 }
+thread_local ::llcaproto::Arguments *s_capptured_args;
+thread_local google::protobuf::Arena s_arena;
+// # in argument tracing
+// the hook_arg_preamble and hook_arg_epilogue
+// use this mutex to ensure no other argument instrumentation is taking place
+// Note: the current implementation guarantees the thread
+// that is permitted to enter hook_arg_preamble is the only one (by keeping a a
+// unique logical ID per thread) and thus this mutex is "paranoid" in argument
+// tracing mode
+
+// # in call tracing, the mutex is used to make the pair (Module ID, Function
+// ID) transferred atomically without interleavings with other threads' ID
+// transfers
+static std::mutex s_data_push_mutex;
 
 void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
   // CONTEXT TO KEEP IN MIND:
   // we just entered an instrumented function
   if (!in_testing_mode()) {
+    s_data_push_mutex.lock();
     // we are capturing function arguments, first we inform of the function
     // itself
     push_data(&module_id, sizeof(module_id));
     push_data(&fn_id, sizeof(fn_id));
+    auto tid = std::this_thread::get_id();
+    static_assert(sizeof(tid) == 8, "Unexpected Thread ID size");
+    push_data(&tid, sizeof(tid));
+    s_capptured_args =
+        google::protobuf::Arena::Create<::llcaproto::Arguments>(&s_arena);
     // the rest of this function concerns only the testing mode
     return;
+  }
+
+  std::unique_lock<std::mutex> guard;
+  if (performs_retarget()) {
+    if constexpr (DBG) {
+      std::cerr << "Locking..." << std::endl;
+    }
+    // locks this section as a retarget might happen
+    // read more at s_testing_mode_retarget_mutex
+    guard = std::unique_lock{s_testing_mode_retarget_mutex};
+    // note that performs_retarget is only true for when checkpointing happens
+    // this means that perform_testing returns (in checkpointing mode testing
+    // phase does not fork) and this lock will thus be unlocked by leaving the
+    // scope or terminating
   }
 
   // in testing mode we discriminate based on the function that is under the
@@ -432,32 +575,84 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
   // desired one we must furhter determine whether we are in the "right" call
   // (n-th call)
   if (!in_testing_fork() && is_fn_under_test(module_id, fn_id)) {
-    // modifies call counter
+    // modifies call counter for this thread
     register_call();
 
     // should_hijack_arg becomes true as soon as the coutner updated above
     // indicates that we "should instrument this call"
     if (should_hijack_arg()) {
-      perform_testing(module_id, fn_id, get_call_num());
+      perform_testing(module_id, fn_id);
       // PARENT process never returns from the first call to instrumented
       // function CHILD process simply continues execution, should_hijack_arg is
       // used further in the type-hijacking functions
     }
   }
+  // s_testing_mode_retarget_mutex gets unlocked here if locked via `guard`
+}
+
+void hook_arg_epilogue(uint32_t module_id, uint32_t fn_id) {
+  if (in_testing_mode()) {
+    if (is_fn_under_test(module_id, fn_id) && should_hijack_arg()) {
+      // we're done with hijacking of the function
+      disable_hijacking();
+    }
+    return;
+  }
+  // FIXME: implement a ZeroCopyOutputStream
+  static std::vector<std::byte> buff(4096);
+  uint64_t size = static_cast<uint32_t>(s_capptured_args->ByteSizeLong());
+  if (size == 0) {
+    s_data_push_mutex.unlock();
+    return;
+  }
+  if (size > buff.size()) {
+    buff.resize(size);
+  }
+
+  push_data(&size, sizeof(size));
+  s_capptured_args->SerializeToArray(buff.data(), static_cast<int>(size));
+  push_data(buff.data(), static_cast<uint32_t>(size));
+  s_arena.Reset();
+  s_data_push_mutex.unlock();
+}
+
+int32_t hook_test_is_executing(uint32_t module_id, uint32_t fn_id) {
+  // The one and zero result as well as its type is crucial here
+  // as the result is also used in the LLVM IR plugin (on LLVM IR level)
+  int32_t res = (in_testing_mode() && in_testing_fork() &&
+                 is_fn_under_test(module_id, fn_id))
+                    ? 1
+                    : 0;
+  return res;
 }
 
 static void hook_test_epilogue_impl(uint32_t module_id, uint32_t fn_id,
                                     bool exception) {
-  if (!in_testing_mode() || !in_testing_fork() ||
-      !is_fn_under_test(module_id, fn_id)) {
+  if (0 == hook_test_is_executing(module_id, fn_id)) {
     return;
   }
 
-  if (!send_test_pass_to_monitor(exception)) {
-    perror("signal end to monitor");
+  if (mt_compat_testing()) {
+    // status sent as -1 - the status will not be inspected because if code
+    // reaches here, we are finishing via instrumented code (this function) in
+    // other words, if the program fails, execution will not reach here and
+    // llcap-server will have to deal with our status code on its own
+    if (!send_test_end_message(
+            test_count(),
+            exception ? EMsgEnd::MSG_END_EXC : EMsgEnd::MSG_END_PASS, -1)) {
+      perror("signal end to monitor from mt_compat\n");
+    }
+
+    // the ENDPASS_CODE is needed only for the forking testing mode (we already
+    // sent it via the send_test_end_message)
+    std::exit(0);
   }
 
-  exit(ENDPASS_CODE);
+  // this means we are in a child process
+  if (!send_test_pass_to_monitor(exception)) {
+    perror("signal end to monitor\n");
+  }
+  std::quick_exit(ENDPASS_CODE);
 }
 
 // here are all the hooks used by the llvm-pass
@@ -466,6 +661,7 @@ static void hook_test_epilogue_impl(uint32_t module_id, uint32_t fn_id,
 
 void hook_start(uint32_t module_id, uint32_t fn_id) {
   // called during call tracing
+  auto guard = std::unique_lock{s_data_push_mutex};
   push_data(&module_id, sizeof(module_id));
   push_data(&fn_id, sizeof(fn_id));
 }
@@ -485,58 +681,98 @@ void hook_test_epilogue_exc(uint32_t module_id, uint32_t fn_id) {
   hook_test_epilogue_impl(module_id, fn_id, true);
 }
 
-// The following function template is the (de)serializing code for "primitive"
-// types name - fn name argt - type of the captured argument (by value) argvar -
-// a unique name for the scope of the function GENFNDECLTEST merely creates the
-// declaration this creates the function name(argt argvar, argt& target, uint32t
-// module, uint32t fn)
-#define GENFN_TEST_PRIMITIVE(name, argt, argvar)                               \
-  GENFNDECLTEST(name, argt, argvar) {                                          \
-    if (in_testing_mode()) {                                                   \
-      if (!is_fn_under_test((module), (fn))) {                                 \
-        goto just_copy_arg;                                                    \
-      } else {                                                                 \
-        /* Makes sure this is the right call (call order-wise) */              \
-        if (!should_hijack_arg()) {                                            \
-          goto just_copy_arg;                                                  \
-        }                                                                      \
-        register_argument();                                                   \
-        /* This is where argument replacement happens, we copy data from the   \
-        argument packet to the target ptr */                                   \
-        if (!consume_bytes_from_packet(sizeof((argvar)), (target))) {          \
-          std::cerr << "Failed to get " << sizeof((argvar)) << " bytes"        \
-                    << std::endl;                                              \
-          perror("");                                                          \
-          exit(HOOKLIB_EC_PKT_RD);                                             \
-        }                                                                      \
-      }                                                                        \
-      /* in the testing phase, we do not push_data, we either jumped to        \
-      just_copy_arg or we performed argument replacement */                    \
-      return;                                                                  \
-    }                                                                          \
-    /* this part performs argument capture and                                 \
-    copies the argument */                                                     \
-    push_data(&(argvar), sizeof((argvar)));                                    \
-                                                                               \
-  just_copy_arg:                                                               \
-    *(target) = (argvar);                                                      \
-    return;                                                                    \
+// creates a simple wrapper that properly calls the template fn defined
+// below (hook_t)
+#define GEN_HOOK_FN(name, argt, storaget)                                      \
+  GENFNDECLTEST(name, argt, n) {                                               \
+    hook_t<argt, storaget>(n, target, module, fn);                             \
   }
+
+// A simple debugging utility copied from StackOverflow
+// that creates a stringview of a type
+//
+// source:
+// https://stackoverflow.com/questions/81870/is-it-possible-to-print-the-name-of-a-variables-type-in-standard-c
+template <class T> constexpr static std::string_view type_name() {
+  using std::string_view;
+#ifdef __clang__
+  string_view p = __PRETTY_FUNCTION__;
+  return {p.data() + 34, p.size() - 34 - 1};
+#elif defined(__GNUC__)
+  string_view p = __PRETTY_FUNCTION__;
+#if __cplusplus < 201402
+  return {p.data() + 36, p.size() - 36 - 1};
+#else
+  return {p.data() + 49, p.find(';', 49) - 49};
+#endif
+#elif defined(_MSC_VER)
+  string_view p = __FUNCSIG__;
+  return {p.data() + 84, p.size() - 84 - 7};
+#endif
+}
+
+// NumT - numeric type for which we're creating the hook
+// StorageT - the type to be used to store the NumT inside a protobuf
+
+// extracts value from the protobuff message into the target poitner
+template <class NumT, class StorageT>
+  requires ConvertibleIsh<StorageT, NumT>
+static void hook_t_deserialize(NumT *target) {
+  const auto *arg = get_next_arg();
+  if (nullptr == arg) {
+    perror("hookt terr: size, capacity\n");
+    std::quick_exit(HOOKLIB_EC_PKT_RD);
+  }
+
+  // 1. check protobuf type
+  // 2. obtain the value from the protobuf
+  // 3. rewrite the target (hijack)
+  using NestTrait = ProtobufNestTrait<StorageT>;
+  if (!NestTrait::check(*arg)) {
+    perror("Serious error - unexpected argument type @ hook_t \n");
+    std::cerr << type_name<NumT>() << ' ' << type_name<VariantChecker>()
+              << std::endl;
+    std::quick_exit(HOOKLIB_EC_TX_FIN);
+  }
+  /* is safe assuming the incoming messages are of correct order */
+  *target = static_cast<NumT>(NestTrait::extract(*arg));
+}
+
+// NumT - see above
+// StorageT - see above
+template <class NumT, class StorageT>
+  requires ConvertibleIsh<StorageT, NumT>
+static void hook_t(NumT n, NumT *target, uint32_t module, uint32_t fn) {
+  if (in_testing_mode()) {
+    if (!is_fn_under_test(module, fn) || !should_hijack_arg()) {
+      assign<NumT>(*target, n);
+      return;
+    }
+
+    hook_t_deserialize<NumT, StorageT>(target);
+    return;
+  }
+  // register value into the static argument packet protobuf
+  auto *v = s_capptured_args->add_values();
+  ProtobufNestTrait<StorageT>::variant_capture(v, n);
+  assign<NumT>(*target, n);
+}
+
 // as mentioned in llvm-pass, the variations for same-sized primitives
 // are redundant at this point, we keep them, however, since they do not add
 // that much clutter and may prove useful in the future (to handle specific
 // types differently)
-GENFN_TEST_PRIMITIVE(hook_float, float, n)
-GENFN_TEST_PRIMITIVE(hook_double, double, n)
+GEN_HOOK_FN(hook_float, float, float)
+GEN_HOOK_FN(hook_double, double, double)
 
-GENFN_TEST_PRIMITIVE(hook_char, char, c)
-GENFN_TEST_PRIMITIVE(hook_uchar, UCHAR, c)
-GENFN_TEST_PRIMITIVE(hook_short, short, s)
-GENFN_TEST_PRIMITIVE(hook_ushort, USHORT, s)
-GENFN_TEST_PRIMITIVE(hook_int32, int, i)
-GENFN_TEST_PRIMITIVE(hook_uint32, UINT, i)
-GENFN_TEST_PRIMITIVE(hook_int64, LLONG, d)
-GENFN_TEST_PRIMITIVE(hook_uint64, ULLONG, d)
+GEN_HOOK_FN(hook_char, char, int32_t)
+GEN_HOOK_FN(hook_uchar, UCHAR, uint32_t)
+GEN_HOOK_FN(hook_short, short, int32_t)
+GEN_HOOK_FN(hook_ushort, USHORT, uint32_t)
+GEN_HOOK_FN(hook_int32, int, int)
+GEN_HOOK_FN(hook_uint32, UINT, UINT)
+GEN_HOOK_FN(hook_int64, LLONG, int64_t)
+GEN_HOOK_FN(hook_uint64, ULLONG, uint64_t)
 
 // implements the above, just for a "custom" type, the std::string
 //
@@ -545,56 +781,121 @@ GENFN_TEST_PRIMITIVE(hook_uint64, ULLONG, d)
 // quite a bit more data (size, capacity, content)
 void llcap_hooklib_extra_cxx_string(std::string *str, std::string **target,
                                     uint32_t module, uint32_t function) {
+  using NestTrait = ProtobufNestTrait<std::string>;
   if (in_testing_mode()) {
     if (!is_fn_under_test(module, function) || !should_hijack_arg()) {
       goto move_string_to_target;
     }
-    register_argument();
-    // up tho this point, the logic is the same as with primitive types
+    // up to this point, the logic is the same as with primitive types
     *target = new std::string();
-    uint32_t cstr_size = 0;
-    uint32_t capacity = 0;
-
-    // this is "our" capture format
     // we "consume" from the packet in the exact same order as we
-    // "push" in the argument capture (below) without the TOTAL SIZE of the
-    // argument packet
-    if (!consume_bytes_from_packet(4, &cstr_size) ||
-        !consume_bytes_from_packet(4, &capacity)) {
+    // "push" in the argument capture (below)
+    const auto *arg = get_next_arg();
+    if (nullptr == arg) {
       perror("strhook terr: size, capacity\n");
       exit(HOOKLIB_EC_PKT_RD);
     }
-    if (cstr_size > capacity) {
-      perror("strhook terr: invalid size\n");
-      exit(HOOKLIB_EC_IMPL);
+    if (!NestTrait::check(*arg)) {
+      perror("Serious error - unexpected argument type @ hook str\n");
+      exit(HOOKLIB_EC_TX_FIN);
     }
-    (*target)->reserve(capacity);
-    (*target)->resize(cstr_size);
-    if (!consume_bytes_from_packet(cstr_size, (*target)->data())) {
-      perror("strhook terr: string content");
-      exit(HOOKLIB_EC_PKT_RD);
-    }
+    const auto &str_arg = NestTrait::extract(*arg);
+    NestTrait::construct(**target, str_arg);
     return;
   } else {
     // argument capture
-    uint32_t cstring_size = static_cast<uint32_t>(str->size());
-    uint32_t capacity = static_cast<uint32_t>(str->capacity());
-    uint64_t size = cstring_size + sizeof(capacity) + sizeof(cstring_size);
-    if (str->size() > UINT32_MAX) {
-      perror("strhook cerr: size error");
+    auto *v = s_capptured_args->add_values();
+    if (!NestTrait::variant_capture(v, *str)) {
       return;
     }
-
-    // we are required to push the TOTAL SIZE of the argument payload first
-    // (this corresponds to the semantics of the LLSZ_CUSTOM marker)
-    push_data(&size, sizeof(size));
-    // the rest of the pushes are up to us
-    push_data(&cstring_size, sizeof(cstring_size));
-    push_data(&capacity, sizeof(capacity));
-    push_data(str->c_str(), cstring_size);
   }
 move_string_to_target:
   // implementation detail: it str is an in/out argument, the caller of the
   // instrumented function will not
   *target = str;
 }
+
+// creates an element of type T from the ArgVariant
+// returns true if the element was created
+// Note: the type T shall implement ProtobufNestTrait<T> (see ProtobufNestTrait<std::string>) 
+template <typename T>
+static bool make_one_at(T &target, const llcaproto::SingleArgVariant &source) {
+  using NestTrait = ProtobufNestTrait<T>;
+
+  if (!NestTrait::check(source)) {
+    return false;
+  } else {
+    auto ex = NestTrait::extract(source);
+    return NestTrait::construct(target, ex);
+  }
+}
+
+template <typename T>
+  requires(!std::is_same_v<bool, T>)
+static void llcap_gen_vec_not_bool(std::vector<T> *vec, std::vector<T> **target,
+                                   uint32_t module, uint32_t function) {
+  if (in_testing_mode()) {
+    if (!is_fn_under_test(module, function) || !should_hijack_arg()) {
+      goto move_vec_to_target;
+    }
+    // up to this point, the logic is the same as with primitive types
+    *target = new std::vector<T>();
+    // we "consume" from the packet in the exact same order as we
+    // "push" in the argument capture (below)
+    const auto *arg = get_next_arg();
+    if (nullptr == arg) {
+      perror("strhook terr: size, capacity\n");
+      exit(HOOKLIB_EC_PKT_RD);
+    }
+    if (!arg->has_vec()) {
+      perror("Serious error - unexpected argument type @ hook gvec\n");
+      exit(HOOKLIB_EC_TX_FIN);
+    }
+    const auto &vec_arg = arg->vec();
+    (*target)->reserve(vec_arg.capacity());
+    (*target)->resize(static_cast<size_t>(vec_arg.values_size()));
+
+    std::vector<T> &target_vec = **target;
+    for (int i = 0; i < vec_arg.values_size(); ++i) {
+      const auto &source_val = vec_arg.values(i);
+      auto &target_val = target_vec[static_cast<size_t>(i)];
+      if (!make_one_at<T>(target_val, source_val)) {
+        perror("Could not make element at index");
+        return;
+      }
+    }
+    return;
+  } else {
+    // argument capture
+    auto *v = s_capptured_args->add_values();
+    llcaproto::Vector *protoVec = v->mutable_vec();
+    if (nullptr == protoVec) {
+      exit(HOOKLIB_EC_IMPL);
+    }
+    auto it = vec->cbegin();
+    protoVec->set_capacity(vec->capacity());
+    for (; it != vec->cend(); ++it) {
+      auto *vecItemVariant = protoVec->add_values();
+      if (!ProtobufNestTrait<T>::variant_capture(vecItemVariant, *it)) {
+        perror("Failure capturing item");
+      }
+    }
+  }
+move_vec_to_target:
+  *target = vec;
+}
+
+#define MAKE_VECTOR_HOOK(id, type)                                             \
+  GEN_FN_VECDECL(id, type) {                                                   \
+    llcap_gen_vec_not_bool<type>(vec, target, module, function);               \
+  }
+
+// creates a vector hooking function under the name "llcap_vector_<id>" (here
+// <id> == cint) that captures std::vector<T> (here T == int32_t) currently, T
+// cannot be bool and other custom types have to be registered via ProtobufNestTrait.
+// For reference, see the std::string specialization:
+// ProtobufNestTrait<std::string> in protoTraits.hpp
+MAKE_VECTOR_HOOK(cint, int32_t)
+// MAKE_VECTOR_HOOK(cuint, uint32_t)
+// MAKE_VECTOR_HOOK(cfloat, float)
+MAKE_VECTOR_HOOK(stdstring, std::string)

@@ -1,5 +1,67 @@
 # TODO:
 
+**based on** [Future work](#future-work) of the original [research project](#original-research-project-progress-tracker)
+
+* ~~investigate exceptions - try to implement~~
+    * ~~look at the noted implementation ~~
+    * ~~add e2e-test that fails~~
+    * ~~quick prototype in plugin~~
+* ~~investigate `protobuf` as a serialization tool~~
+    * ~~payloads become [len + protobuff-part], types encoded in the protobuf schema?~~
+    * ~~performance compared to current approach? - memory, cpu~~
+        * ~~how large of a tradeoff is this against dependency delegation and overall better maintainability bring?~~ (medium, but worth it)
+    * ~~usability?~~
+    * ~~usable from the Rust `llcap-server`?~~
+* ~~decide on the overall approach of tackling multithreading~~
+    * experimentation with the role swap is easier to implement
+    * ~~runtime snapshots will bring more usability (easier restart, ensured program state reconstruction)~~
+* ~~type extension~~
+    * ~~re-architecture~~ - at least split the functions
+    * investigate constant autogeneration
+        * provide data in config regarding custom types instead of requiring recompilation
+* addres config mess
+    * ~~look at defaults - required/nonrequired existence of directories/files~~
+    * ~~ overall architecture - delegation of the option values further down the line~~
+    * ~~config architecture - what can be abstracted into configs~~
+
+# TOPIC: Multithreading support
+
+* ~~selected approach: inversion of fork mechanism~~
+    * ~~split LLCAP functionality (switch)~~
+    * ~~split hooklib functionality (add metadata to select fork mode at runtime)~~
+* thread-ID mapping 
+    * in `llcap-server`
+    * in `hooklib`
+* thread-safety of `hooklib` in `mt` mode
+* try each combination (thread ID needed) of args/thread
+    * ~~craft e2e test code~~
+    * craft e2e test cases
+* ~~tackle killing of a detached child process~~
+    * ~~if parent dies and child remains, IMO llcap-server cannot reach the child process~~
+        * ~~this is not handled explicitly by `llcap-server`, but by the `hooklib` (child detects parent's timeout -> exits)~~
+    * ~~also tackle the **wrong** `exit` calls~~
+        * ~~exit in a child can cause parent to hang, etc.~~
+        * ~~in child, always use `std:::quick_exit`~~
+
+
+# TOPIC: Type extensions
+* ~~protobuf~~
+* split functionality, make extensions more bearable
+* document - update [docs](./development-manual.md)
+
+# TOPIC: LLVM metadata patch removal?
+* TODO
+
+# TOPIC: Configuration (low priority)
+
+* common TOML structure
+* TOML parser in hooklib, clang/llvm plugins, llcap-server
+* if done, document
+
+
+Original Research Project progress tracker:
+---
+
 * ~~prepare examples for function tracing prototype~~
 * ~~prepare examples for parameter capture prototype~~
 * ~~think about non-deterministic traces~~
@@ -202,7 +264,7 @@
 ```
 
 
-# **[DONE]** Revamp of buffer reading and writing
+# **[DONE]** TOPIC: Revamp of buffer reading and writing
 
 * implemented via `BorrowedReadBuffer` and `BorrowedOneshotWritePtr`
 
@@ -212,7 +274,7 @@ memory buffers are enforced by `RefCell` and a check that "no raw pointer is eve
 
 # Future Work
 
-## Ensuring all exceptions are always detected
+## (DONE as part of Master Thesis) Ensuring all exceptions are always detected
 
 In the `fn-exit` instrumentation mode of the [LLVM pass](../sandbox/01-llvm-ir/llvm-pass/) (used by passing `-mllvm -llcap-instrument-fn-exit` to `clang`), only `ret` and `resume` IR instructions are
 instrumented. The instrumentation simply inserts a `call hook_test_epilogue` or `hook_test_epilogue_exc` before `ret` and `resume` respectively.
